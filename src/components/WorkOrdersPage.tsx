@@ -4,16 +4,17 @@ import { Plus, AlertCircle, Clock, GripVertical } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
+import { WorkOrder, Customer, Reservation } from '../types';
 
 const ItemType = 'WORK_ORDER';
 
 interface WorkOrderRowProps {
-  workOrder: any;
+  workOrder: WorkOrder;
   index: number;
   moveCard: (dragIndex: number, hoverIndex: number) => void;
-  onEdit: (workOrder: any) => void;
-  customers: any[];
-  reservations: any[];
+  onEdit: (workOrder: WorkOrder) => void;
+  customers: Customer[];
+  reservations: Reservation[];
 }
 
 function WorkOrderRow({ workOrder, index, moveCard, onEdit, customers, reservations }: WorkOrderRowProps) {
@@ -106,13 +107,13 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, customers, reservati
 }
 
 export function WorkOrdersPage() {
-  const [workOrders, setWorkOrders] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [reservations, setReservations] = useState<any[]>([]);
-  const [menuItems, setMenuItems] = useState<any[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingWorkOrder, setEditingWorkOrder] = useState<any>(null);
+  const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   useEffect(() => {

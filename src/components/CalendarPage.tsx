@@ -2,16 +2,17 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
+import { Reservation, Customer, Location, User, MenuItem } from '../types';
 
 export function CalendarPage({ userRole }: { userRole: string }) {
-  const [reservations, setReservations] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
-  const [menuItems, setMenuItems] = useState<any[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingReservation, setEditingReservation] = useState<any>(null);
+  const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
   
   // Initialize with Japan's current date

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { LoginPage } from './components/LoginPage';
-import { InitializePage } from './components/InitializePage';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { CalendarPage } from './components/CalendarPage';
@@ -10,41 +9,39 @@ import { IncentivesPage } from './components/IncentivesPage';
 import { StaffManagementPage } from './components/StaffManagementPage';
 import { LocationsPage } from './components/LocationsPage';
 import { MenuSettingsPage } from './components/MenuSettingsPage';
-import { apiRequest } from './utils/api';
+import { apiRequest, setUnauthorizedCallback } from './utils/api';
+import { User, MeResponse } from './types';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const [showInitialize, setShowInitialize] = useState(false);
 
   useEffect(() => {
+    // 401エラー時のコールバックを設定
+    setUnauthorizedCallback(() => {
+      handleLogout();
+    });
+    
     checkAuth();
   }, []);
 
   const checkAuth = async () => {
     try {
       const token = localStorage.getItem('access_token');
-      console.log('Checking auth, token exists:', !!token);
-      console.log('Token length:', token?.length);
-      console.log('Token preview:', token?.substring(0, 20) + '...');
       
       if (!token) {
-        console.log('No token found, user not authenticated');
         setIsAuthenticated(false);
         setCurrentUser(null);
         setLoading(false);
         return;
       }
 
-      console.log('Fetching user data with token...');
-      const userData = await apiRequest('/me');
-      console.log('User data received:', userData);
+      const userData = await apiRequest<MeResponse>('/me');
       setCurrentUser(userData.user);
       setIsAuthenticated(true);
     } catch (err) {
-      console.error('Auth check error:', err);
       localStorage.removeItem('access_token');
       setIsAuthenticated(false);
       setCurrentUser(null);
@@ -54,9 +51,6 @@ export default function App() {
   };
 
   const handleLogin = async () => {
-    console.log('handleLogin called, checking token after login...');
-    const token = localStorage.getItem('access_token');
-    console.log('Token immediately after login:', !!token);
     await checkAuth();
   };
 
@@ -76,13 +70,12 @@ export default function App() {
   }
 
   if (!isAuthenticated) {
-    if (showInitialize) {
-      return <InitializePage onComplete={() => setShowInitialize(false)} />;
-    }
-    return <LoginPage onLogin={handleLogin} onShowInitialize={() => setShowInitialize(true)} />;
+    return <LoginPage onLogin={handleLogin} />;
   }
 
   const renderPage = () => {
+    if (!currentUser) return <Dashboard />;
+    
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard />;
@@ -110,7 +103,7 @@ export default function App() {
       currentPage={currentPage}
       onNavigate={setCurrentPage}
       onLogout={handleLogout}
-      userRole={currentUser.role}
+      userRole={currentUser?.role || 'staff'}
     >
       {renderPage()}
     </Layout>

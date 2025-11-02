@@ -4,10 +4,9 @@ import { LogIn } from 'lucide-react';
 
 interface LoginPageProps {
   onLogin: () => void;
-  onShowInitialize: () => void;
 }
 
-export function LoginPage({ onLogin, onShowInitialize }: LoginPageProps) {
+export function LoginPage({ onLogin }: LoginPageProps) {
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -36,25 +35,14 @@ export function LoginPage({ onLogin, onShowInitialize }: LoginPageProps) {
       if (!response.ok) {
         throw new Error(data.error || 'ログインに失敗しました');
       }
-
-      console.log('Login successful, token received:', data.access_token ? 'Yes' : 'No');
-      console.log('Token length:', data.access_token?.length);
       
       if (data.access_token) {
         localStorage.setItem('access_token', data.access_token);
-        console.log('Token saved to localStorage');
-        
-        // Verify token was saved
-        const savedToken = localStorage.getItem('access_token');
-        console.log('Token verification - saved successfully:', !!savedToken);
-        console.log('Saved token length:', savedToken?.length);
-        
         onLogin();
       } else {
         throw new Error('アクセストークンが返されませんでした');
       }
     } catch (err: any) {
-      console.error('Login error:', err);
       setError(err.message || 'ログインに失敗しました');
     } finally {
       setLoading(false);
@@ -112,15 +100,6 @@ export function LoginPage({ onLogin, onShowInitialize }: LoginPageProps) {
               {loading ? 'ログイン中...' : 'ログイン'}
             </button>
           </form>
-
-          <div className="mt-6 pt-6 border-t border-slate-200">
-            <button
-              onClick={onShowInitialize}
-              className="w-full text-slate-600 hover:text-blue-600 py-2 text-sm transition"
-            >
-              初回セットアップはこちら
-            </button>
-          </div>
         </div>
 
         <p className="text-center text-slate-600 mt-6 text-sm">

@@ -2,17 +2,18 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { Plus, Edit2, Search, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import { CustomerModal } from './CustomerModal';
+import { Customer, Reservation, MenuItem, Location, User } from '../types';
 
 export function CustomersPage() {
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [reservations, setReservations] = useState<any[]>([]);
-  const [menuItems, setMenuItems] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
-  const [staffData, setStaffData] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [staffData, setStaffData] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingCustomer, setEditingCustomer] = useState<any>(null);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [expandedCustomers, setExpandedCustomers] = useState<Set<string>>(new Set());
 
   useEffect(() => {

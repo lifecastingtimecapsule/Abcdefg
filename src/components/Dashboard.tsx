@@ -2,15 +2,26 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { Calendar, AlertCircle, Clock, Package } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
+import { WorkOrder, Reservation, Customer } from '../types';
+
+interface DashboardData {
+  work_orders: WorkOrder[];
+  upcoming_reservations: Reservation[];
+  stats: {
+    total_customers: number;
+    active_work_orders: number;
+    upcoming_reservations: number;
+  };
+}
 
 export function Dashboard() {
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
-  const [selectedWorkOrder, setSelectedWorkOrder] = useState<any>(null);
+  const [selectedWorkOrder, setSelectedWorkOrder] = useState<WorkOrder | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [reservations, setReservations] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
 
   useEffect(() => {
     loadDashboard();
@@ -20,10 +31,9 @@ export function Dashboard() {
   const loadDashboard = async () => {
     try {
       setLoading(true);
-      const result = await apiRequest('/dashboard');
+      const result = await apiRequest<DashboardData>('/dashboard');
       setData(result);
     } catch (err: any) {
-      console.error('Dashboard load error:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -33,17 +43,17 @@ export function Dashboard() {
   const loadAdditionalData = async () => {
     try {
       const [resData, custData] = await Promise.all([
-        apiRequest('/reservations'),
-        apiRequest('/customers'),
+        apiRequest<{ reservations: Reservation[] }>('/reservations'),
+        apiRequest<{ customers: Customer[] }>('/customers'),
       ]);
       setReservations(resData.reservations);
       setCustomers(custData.customers);
     } catch (err: any) {
-      console.error('Failed to load additional data:', err);
+      // エラーは静かに処理（ダッシュボードの主要データではない）
     }
   };
 
-  const handleWorkOrderClick = (workOrder: any) => {
+  const handleWorkOrderClick = (workOrder: WorkOrder) => {
     setSelectedWorkOrder(workOrder);
     setModalOpen(true);
   };

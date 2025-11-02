@@ -2,21 +2,21 @@ import { projectId, publicAnonKey } from './supabase/info';
 
 const BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
 
-export async function apiRequest(endpoint: string, options: RequestInit = {}) {
+// 401エラー時のコールバック（App.tsxから設定）
+let onUnauthorizedCallback: (() => void) | null = null;
+
+export function setUnauthorizedCallback(callback: () => void) {
+  onUnauthorizedCallback = callback;
+}
+
+export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('access_token');
   
-  console.log(`[API Request] Endpoint: ${endpoint}`);
-  console.log(`[API Request] Token exists: ${!!token}`);
-  console.log(`[API Request] Token length: ${token?.length}`);
-  
   if (!token) {
-    console.error('No access token found in localStorage');
-    console.error('Available localStorage keys:', Object.keys(localStorage));
     throw new Error('Unauthorized - Please login again');
   }
   
   const url = `${BASE_URL}${endpoint}`;
-  console.log(`[API Request] Full URL: ${url}`);
   
   const response = await fetch(url, {
     ...options,
@@ -26,25 +26,26 @@ export async function apiRequest(endpoint: string, options: RequestInit = {}) {
       ...options.headers,
     },
   });
-
-  console.log(`[API Request] Response status: ${response.status}`);
   
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    console.error(`[API Error] Endpoint: ${endpoint}`, error);
-    console.error(`[API Error] Status: ${response.status}`);
     
-    // If unauthorized, clear token and redirect to login
+    // 401エラー時は適切なエラーハンドリング
     if (response.status === 401) {
-      console.error('[API Error] Unauthorized - clearing token and reloading');
       localStorage.removeItem('access_token');
-      window.location.reload();
+      
+      // コールバックが設定されていれば実行（再ログインモーダル表示など）
+      if (onUnauthorizedCallback) {
+        onUnauthorizedCallback();
+      } else {
+        // フォールバック：リロード
+        window.location.reload();
+      }
     }
     
     throw new Error(error.error || `HTTP ${response.status}`);
   }
 
   const data = await response.json();
-  console.log(`[API Success] Endpoint: ${endpoint}`, data);
-  return data;
+  return data as T;
 }
