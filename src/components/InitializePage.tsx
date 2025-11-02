@@ -10,6 +10,7 @@ export function InitializePage({ onComplete }: InitializePageProps) {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [alreadyInitialized, setAlreadyInitialized] = useState(false);
 
   const handleInitialize = async () => {
     setError('');
@@ -30,6 +31,11 @@ export function InitializePage({ onComplete }: InitializePageProps) {
       const data = await response.json();
 
       if (!response.ok) {
+        // Check if already initialized
+        if (data.error && data.error.includes('既に初期化されています')) {
+          setAlreadyInitialized(true);
+          return;
+        }
         throw new Error(data.error || 'システムの初期化に失敗しました');
       }
 
@@ -57,7 +63,38 @@ export function InitializePage({ onComplete }: InitializePageProps) {
             <p className="text-slate-600">アマレット管理システムへようこそ</p>
           </div>
 
-          {!success ? (
+          {alreadyInitialized ? (
+            <div className="text-center py-8">
+              <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full mb-4">
+                <Check className="w-10 h-10 text-blue-600" />
+              </div>
+              <h2 className="text-slate-900 mb-2">既に初期化済みです</h2>
+              <p className="text-slate-600 mb-6">
+                システムは既に初期化されており、ユーザーが存在します。
+                <br />
+                ログインページから既存のアカウントでログインしてください。
+              </p>
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+                <p className="text-sm text-slate-700">
+                  デフォルトの管理者アカウント情報:
+                </p>
+                <div className="mt-2 space-y-1">
+                  <p className="text-slate-900">
+                    <span className="text-slate-600">ログインID:</span> <span className="font-mono">admin</span>
+                  </p>
+                  <p className="text-slate-900">
+                    <span className="text-slate-600">パスワード:</span> <span className="font-mono">amaretto2024</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={onComplete}
+                className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
+              >
+                ログインページへ戻る
+              </button>
+            </div>
+          ) : !success ? (
             <div className="space-y-6">
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
                 <h3 className="text-slate-900 mb-4">初回セットアップ</h3>

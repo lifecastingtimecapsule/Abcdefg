@@ -38,13 +38,20 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, customers, reservati
   const reservation = reservations.find(r => r.reservation_id === workOrder.reservation_id);
   const customer = customers.find(c => c.customer_id === reservation?.customer_id);
 
-  const isOverdue = workOrder.status !== '引渡し済' && new Date(workOrder.due_date) < new Date();
+  const getJapanToday = () => {
+    const now = new Date();
+    const japanDateStr = now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
+    return new Date(japanDateStr);
+  };
+
+  const isOverdue = workOrder.status !== '引渡し済' && new Date(workOrder.due_date) < getJapanToday();
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return new Intl.DateTimeFormat('ja-JP', {
       month: 'numeric',
       day: 'numeric',
+      timeZone: 'Asia/Tokyo',
     }).format(date);
   };
 
@@ -60,7 +67,9 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, customers, reservati
       </td>
       <td className="px-4 py-3">
         <div className="text-slate-900">{customer?.child_name || '-'}</div>
-        <div className="text-sm text-slate-600">{customer?.customer_code || '-'}</div>
+        {customer?.external_customer_number && (
+          <div className="text-sm text-slate-600">顧客番号: {customer.external_customer_number}</div>
+        )}
       </td>
       <td className="px-4 py-3 text-slate-700">{workOrder.product_type}</td>
       <td className="px-4 py-3">
@@ -100,6 +109,7 @@ export function WorkOrdersPage() {
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [reservations, setReservations] = useState<any[]>([]);
+  const [menuItems, setMenuItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWorkOrder, setEditingWorkOrder] = useState<any>(null);
@@ -112,14 +122,27 @@ export function WorkOrdersPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [woData, custData, resData] = await Promise.all([
+      const [woData, custData, resData, menuData] = await Promise.all([
         apiRequest('/work-orders'),
         apiRequest('/customers'),
         apiRequest('/reservations'),
+        apiRequest('/menu-items'),
       ]);
 
+      setMenuItems(menuData.menu_items || []);
+
+      // Auto-create work orders for past confirmed reservations
+      await autoCreateWorkOrders(
+        resData.reservations, 
+        menuData.menu_items || [], 
+        woData.work_orders
+      );
+
+      // Reload work orders after auto-creation
+      const updatedWoData = await apiRequest('/work-orders');
+
       // Sort work orders
-      const sorted = woData.work_orders.sort((a: any, b: any) => {
+      const sorted = updatedWoData.work_orders.sort((a: any, b: any) => {
         if (a.priority_order !== null && b.priority_order !== null) {
           return a.priority_order - b.priority_order;
         }
@@ -149,6 +172,85 @@ export function WorkOrdersPage() {
       console.error('Load data error:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const autoCreateWorkOrders = async (
+    reservationsList: any[], 
+    menuItemsList: any[], 
+    existingWorkOrders: any[]
+  ) => {
+    try {
+      // Get current Japan time
+      const now = new Date();
+      const japanNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+
+      // Find past confirmed reservations
+      const pastConfirmedReservations = reservationsList.filter((reservation) => {
+        const reservationDate = new Date(reservation.reservation_date_time);
+        return (
+          reservation.status === 'confirmed' &&
+          reservationDate < japanNow
+        );
+      });
+
+      if (pastConfirmedReservations.length === 0) {
+        return; // No past confirmed reservations
+      }
+
+      // Get existing reservation IDs that already have work orders
+      const existingReservationIds = new Set(
+        existingWorkOrders.map((wo: any) => wo.reservation_id).filter(Boolean)
+      );
+
+      // Filter out reservations that already have work orders
+      const reservationsNeedingWorkOrders = pastConfirmedReservations.filter(
+        (reservation) => !existingReservationIds.has(reservation.reservation_id)
+      );
+
+      if (reservationsNeedingWorkOrders.length === 0) {
+        return; // All past confirmed reservations already have work orders
+      }
+
+      // Create work orders for reservations that don't have them
+      let createdCount = 0;
+      for (const reservation of reservationsNeedingWorkOrders) {
+        try {
+          const reservationDate = new Date(reservation.reservation_date_time);
+          
+          // Calculate due date: 4 weeks (28 days) after reservation date
+          const dueDate = new Date(reservationDate);
+          dueDate.setDate(dueDate.getDate() + 28);
+          const dueDateStr = dueDate.toISOString().split('T')[0];
+
+          // Get menu name as work type
+          const menuItem = menuItemsList.find((m) => m.menu_item_id === reservation.menu_item_id);
+          const workType = menuItem ? menuItem.name : 'メニュー不明';
+
+          // Create work order
+          await apiRequest('/work-orders', {
+            method: 'POST',
+            body: JSON.stringify({
+              reservation_id: reservation.reservation_id,
+              product_type: workType,
+              due_date: dueDateStr,
+              status: '制作中',
+              notes_internal: '予約確定により自動作成',
+            }),
+          });
+
+          createdCount++;
+          console.log(`Work order created for reservation ${reservation.reservation_id}`);
+        } catch (err) {
+          console.error(`Failed to create work order for reservation ${reservation.reservation_id}:`, err);
+        }
+      }
+
+      if (createdCount > 0) {
+        console.log(`✅ ${createdCount}件の制作物を自動作成しました`);
+      }
+    } catch (err) {
+      console.error('Auto-create work orders error:', err);
     }
   };
 

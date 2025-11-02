@@ -14,6 +14,8 @@ export function StaffManagementPage() {
     password: '',
     role: 'staff',
     active_flag: true,
+    update_login_id: '',
+    update_password: '',
   });
   const [formLoading, setFormLoading] = useState(false);
   const [error, setError] = useState('');
@@ -44,6 +46,8 @@ export function StaffManagementPage() {
         password: '',
         role: user.role || 'staff',
         active_flag: user.active_flag ?? true,
+        update_login_id: '',
+        update_password: '',
       });
     } else {
       setEditingUser(null);
@@ -54,6 +58,8 @@ export function StaffManagementPage() {
         password: '',
         role: 'staff',
         active_flag: true,
+        update_login_id: '',
+        update_password: '',
       });
     }
     setModalOpen(true);
@@ -75,6 +81,8 @@ export function StaffManagementPage() {
             name: formData.name,
             role: formData.role,
             active_flag: formData.active_flag,
+            update_login_id: formData.update_login_id || undefined,
+            update_password: formData.update_password || undefined,
           }),
         });
       } else {
@@ -288,17 +296,48 @@ export function StaffManagementPage() {
               </div>
 
               {editingUser && (
-                <div>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formData.active_flag}
-                      onChange={(e) => setFormData({ ...formData, active_flag: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-slate-700">アカウント有効</span>
-                  </label>
-                </div>
+                <>
+                  <div className="border-t border-slate-200 pt-4">
+                    <p className="text-sm text-slate-600 mb-3">認証情報を変更する場合のみ入力してください</p>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-slate-700 mb-2">新しいログインID</label>
+                        <input
+                          type="text"
+                          value={formData.update_login_id}
+                          onChange={(e) => setFormData({ ...formData, update_login_id: e.target.value })}
+                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="変更する場合のみ入力"
+                        />
+                        <p className="text-xs text-slate-500 mt-1">現在: {editingUser.login_id || '未設定'}</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-700 mb-2">新しいパスワード</label>
+                        <input
+                          type="password"
+                          value={formData.update_password}
+                          onChange={(e) => setFormData({ ...formData, update_password: e.target.value })}
+                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="変更する場合のみ入力"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={formData.active_flag}
+                        onChange={(e) => setFormData({ ...formData, active_flag: e.target.checked })}
+                        className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                      />
+                      <span className="text-slate-700">アカウント有効</span>
+                    </label>
+                  </div>
+                </>
               )}
 
               {error && (
@@ -311,14 +350,14 @@ export function StaffManagementPage() {
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="flex-1 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition"
+                  className="flex-1 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition text-center"
                 >
                   キャンセル
                 </button>
                 <button
                   type="submit"
                   disabled={formLoading}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition disabled:opacity-50"
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition disabled:opacity-50 text-center"
                 >
                   {formLoading ? '保存中...' : '保存'}
                 </button>

@@ -3,14 +3,14 @@ import { LoginPage } from './components/LoginPage';
 import { InitializePage } from './components/InitializePage';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
-import { ReservationsPage } from './components/ReservationsPage';
+import { CalendarPage } from './components/CalendarPage';
 import { CustomersPage } from './components/CustomersPage';
 import { WorkOrdersPage } from './components/WorkOrdersPage';
 import { IncentivesPage } from './components/IncentivesPage';
 import { StaffManagementPage } from './components/StaffManagementPage';
 import { LocationsPage } from './components/LocationsPage';
+import { MenuSettingsPage } from './components/MenuSettingsPage';
 import { apiRequest } from './utils/api';
-import { createClient } from './utils/supabase/client';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -25,27 +25,43 @@ export default function App() {
 
   const checkAuth = async () => {
     try {
-      const supabase = createClient();
-      const { data } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
+      console.log('Checking auth, token exists:', !!token);
+      console.log('Token length:', token?.length);
+      console.log('Token preview:', token?.substring(0, 20) + '...');
       
-      if (data.session?.access_token) {
-        localStorage.setItem('access_token', data.session.access_token);
-        const userData = await apiRequest('/me');
-        setCurrentUser(userData.user);
-        setIsAuthenticated(true);
+      if (!token) {
+        console.log('No token found, user not authenticated');
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+        setLoading(false);
+        return;
       }
+
+      console.log('Fetching user data with token...');
+      const userData = await apiRequest('/me');
+      console.log('User data received:', userData);
+      setCurrentUser(userData.user);
+      setIsAuthenticated(true);
     } catch (err) {
       console.error('Auth check error:', err);
+      localStorage.removeItem('access_token');
+      setIsAuthenticated(false);
+      setCurrentUser(null);
     } finally {
       setLoading(false);
     }
   };
 
   const handleLogin = async () => {
+    console.log('handleLogin called, checking token after login...');
+    const token = localStorage.getItem('access_token');
+    console.log('Token immediately after login:', !!token);
     await checkAuth();
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('access_token');
     setIsAuthenticated(false);
     setCurrentUser(null);
     setCurrentPage('dashboard');
@@ -70,8 +86,8 @@ export default function App() {
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard />;
-      case 'reservations':
-        return <ReservationsPage userRole={currentUser.role} />;
+      case 'calendar':
+        return <CalendarPage userRole={currentUser.role} />;
       case 'customers':
         return <CustomersPage />;
       case 'work-orders':
@@ -82,6 +98,8 @@ export default function App() {
         return currentUser.role === 'admin' ? <StaffManagementPage /> : <Dashboard />;
       case 'locations':
         return currentUser.role === 'admin' ? <LocationsPage /> : <Dashboard />;
+      case 'menu-settings':
+        return currentUser.role === 'admin' ? <MenuSettingsPage /> : <Dashboard />;
       default:
         return <Dashboard />;
     }

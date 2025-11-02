@@ -24,10 +24,31 @@ const DEFAULT_ADMIN = {
 
 // ========== Auth Helpers ==========
 async function getAuthUser(request: Request) {
-  const accessToken = request.headers.get('Authorization')?.split(' ')[1];
-  if (!accessToken) return null;
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader) {
+    console.log('[Auth] No Authorization header found');
+    return null;
+  }
+  
+  console.log('[Auth] Authorization header present');
+  const accessToken = authHeader.split(' ')[1];
+  if (!accessToken) {
+    console.log('[Auth] No access token in Authorization header');
+    return null;
+  }
+  
+  console.log('[Auth] Access token extracted, length:', accessToken.length);
   const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-  if (error || !user) return null;
+  if (error) {
+    console.log(`[Auth] Supabase auth error: ${error.message}`);
+    return null;
+  }
+  if (!user) {
+    console.log('[Auth] No user found for token');
+    return null;
+  }
+  
+  console.log('[Auth] User authenticated successfully:', user.id);
   return user;
 }
 
@@ -134,19 +155,24 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
 // Get current user
 app.get('/make-server-fe84bde0/me', async (c) => {
   try {
+    console.log('[/me] Request received');
     const user = await getAuthUser(c.req.raw);
     if (!user) {
+      console.log('[/me] Authentication failed');
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
+    console.log('[/me] User authenticated, fetching user data for:', user.id);
     const userData = await kv.get(`user:${user.id}`);
     if (!userData) {
+      console.log('[/me] User data not found in KV store for:', user.id);
       return c.json({ error: 'User not found' }, 404);
     }
 
+    console.log('[/me] User data found, returning:', userData.user_id);
     return c.json({ user: userData });
   } catch (error) {
-    console.log(`Get current user error: ${error}`);
+    console.log(`[/me] Error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -156,7 +182,7 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
   try {
     console.log('System initialization requested...');
     
-    // Check if any users exist
+    // Check if any users exist in KV store
     const users = await kv.getByPrefix('user:');
     if (users.length > 0) {
       return c.json({ 
@@ -167,19 +193,41 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
     
     console.log('Creating default admin account...');
     
-    // Create admin user in Supabase Auth
-    const { data, error } = await supabase.auth.admin.createUser({
-      email: DEFAULT_ADMIN.email,
-      password: DEFAULT_ADMIN.password,
-      email_confirm: true,
-    });
+    // Try to get existing user by email first
+    const { data: existingUsers } = await supabase.auth.admin.listUsers();
+    const existingAdmin = existingUsers?.users?.find(u => u.email === DEFAULT_ADMIN.email);
     
-    if (error) {
-      console.error(`Failed to create admin account: ${error.message}`);
-      return c.json({ error: `管理者アカウントの作成に失敗しました: ${error.message}` }, 500);
+    let userId: string;
+    
+    if (existingAdmin) {
+      // Admin user exists in Auth but not in KV - recover it
+      console.log('Admin user exists in Auth, recovering to KV store...');
+      userId = existingAdmin.id;
+      
+      // Update password to ensure it matches default
+      const { error: updateError } = await supabase.auth.admin.updateUserById(
+        userId,
+        { password: DEFAULT_ADMIN.password }
+      );
+      
+      if (updateError) {
+        console.error(`Failed to update admin password: ${updateError.message}`);
+      }
+    } else {
+      // Create admin user in Supabase Auth
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: DEFAULT_ADMIN.email,
+        password: DEFAULT_ADMIN.password,
+        email_confirm: true,
+      });
+      
+      if (error) {
+        console.error(`Failed to create admin account: ${error.message}`);
+        return c.json({ error: `管理者アカウントの作成に失敗しました: ${error.message}` }, 500);
+      }
+      
+      userId = data.user.id;
     }
-    
-    const userId = data.user.id;
     
     // Store admin profile in KV store
     await kv.set(`user:${userId}`, {
@@ -280,7 +328,7 @@ app.get('/make-server-fe84bde0/customers', async (c) => {
   }
 });
 
-// Search customer by phone
+// Search customer by phone, code, or name
 app.get('/make-server-fe84bde0/customers/search', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -289,8 +337,25 @@ app.get('/make-server-fe84bde0/customers/search', async (c) => {
     }
 
     const phone = c.req.query('phone');
+    const code = c.req.query('code');
+    const name = c.req.query('name');
+    
     const customers = await kv.getByPrefix('customer:');
-    const found = customers.filter((cust: any) => cust.phone === phone && cust.active_flag !== false);
+    let found = customers.filter((cust: any) => cust.active_flag !== false);
+    
+    if (phone) {
+      found = found.filter((cust: any) => cust.phone === phone);
+    } else if (code) {
+      found = found.filter((cust: any) => cust.customer_code && cust.customer_code.toLowerCase() === code.toLowerCase());
+    } else if (name) {
+      const searchName = name.toLowerCase();
+      found = found.filter((cust: any) => 
+        (cust.child_name && cust.child_name.toLowerCase().includes(searchName)) ||
+        (cust.parent_name && cust.parent_name.toLowerCase().includes(searchName)) ||
+        (cust.child_name_kana && cust.child_name_kana.toLowerCase().includes(searchName)) ||
+        (cust.parent_name_kana && cust.parent_name_kana.toLowerCase().includes(searchName))
+      );
+    }
     
     return c.json({ customers: found });
   } catch (error) {
@@ -308,10 +373,25 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
     }
 
     const body = await c.req.json();
-    const { customer_id, parent_name, child_name, phone, postal_code, address_text, notes_internal } = body;
+    const { 
+      customer_id, 
+      parent_name, 
+      parent_name_kana,
+      child_name, 
+      child_name_kana,
+      child_age_years,
+      child_age_months,
+      phone,
+      line_url,
+      postal_code, 
+      address_text, 
+      notes_internal,
+      external_customer_number
+    } = body;
 
     let customerId = customer_id;
     let customerCode = body.customer_code;
+    let createdAt = body.created_at;
 
     if (!customerId) {
       customerId = crypto.randomUUID();
@@ -326,19 +406,33 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
         return max;
       }, 1000);
       customerCode = `A-${maxCode + 1}`;
+      createdAt = new Date().toISOString();
+    } else {
+      // Updating existing customer - preserve existing code and created_at
+      const existingCustomer = await kv.get(`customer:${customerId}`);
+      if (existingCustomer) {
+        customerCode = existingCustomer.customer_code;
+        createdAt = existingCustomer.created_at;
+      }
     }
 
     const customerData = {
       customer_id: customerId,
       customer_code: customerCode,
+      external_customer_number: external_customer_number || null,
       parent_name,
+      parent_name_kana: parent_name_kana || null,
       child_name,
+      child_name_kana: child_name_kana || null,
+      child_age_years: child_age_years !== null && child_age_years !== undefined ? child_age_years : null,
+      child_age_months: child_age_months !== null && child_age_months !== undefined ? child_age_months : null,
       phone,
+      line_url: line_url || null,
       postal_code,
       address_text,
       notes_internal,
       active_flag: true,
-      created_at: body.created_at || new Date().toISOString(),
+      created_at: createdAt || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
@@ -391,6 +485,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
     const {
       reservation_id,
       reservation_date_time,
+      duration_minutes,
       location_id,
       customer_id,
       staff_id_main,
@@ -399,6 +494,8 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       payment_method,
       work_required,
       notes_staff,
+      menu_item_id,
+      additional_units,
     } = body;
 
     const reservationId = reservation_id || crypto.randomUUID();
@@ -406,6 +503,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
     const reservationData = {
       reservation_id: reservationId,
       reservation_date_time,
+      duration_minutes: duration_minutes || 30,
       location_id,
       customer_id,
       staff_id_main,
@@ -414,6 +512,8 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       payment_method,
       work_required,
       notes_staff,
+      menu_item_id: menu_item_id || null,
+      additional_units: additional_units || 0,
       created_at: body.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
       updated_by_user_id: user.id,
@@ -742,7 +842,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     }
 
     const body = await c.req.json();
-    const { user_id, name, role: newRole, active_flag } = body;
+    const { user_id, name, role: newRole, active_flag, update_login_id, update_password } = body;
 
     const userData = await kv.get(`user:${user_id}`);
     if (!userData) {
@@ -752,6 +852,25 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     userData.name = name ?? userData.name;
     userData.role = newRole ?? userData.role;
     userData.active_flag = active_flag ?? userData.active_flag;
+    
+    // Update login_id if provided
+    if (update_login_id) {
+      userData.login_id = update_login_id;
+    }
+    
+    // Update password in Supabase Auth if provided
+    if (update_password) {
+      const { error: passwordError } = await supabase.auth.admin.updateUserById(
+        user_id,
+        { password: update_password }
+      );
+      
+      if (passwordError) {
+        console.error(`Failed to update password: ${passwordError.message}`);
+        return c.json({ error: `パスワード更新に失敗しました: ${passwordError.message}` }, 500);
+      }
+    }
+    
     userData.updated_at = new Date().toISOString();
 
     await kv.set(`user:${user_id}`, userData);
@@ -759,6 +878,134 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     return c.json({ success: true, user: userData });
   } catch (error) {
     console.log(`Update user error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ========== Menu Items ==========
+
+// Get all menu items
+app.get('/make-server-fe84bde0/menu-items', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const menuItems = await kv.getByPrefix('menu_item:');
+    return c.json({ menu_items: menuItems });
+  } catch (error) {
+    console.log(`Get menu items error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Create/Update menu item
+app.post('/make-server-fe84bde0/menu-items', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const body = await c.req.json();
+    const {
+      menu_item_id,
+      name,
+      base_price,
+      additional_unit_price,
+      description,
+      is_active,
+    } = body;
+
+    const menuItemId = menu_item_id || crypto.randomUUID();
+
+    const menuItemData = {
+      menu_item_id: menuItemId,
+      name,
+      base_price,
+      additional_unit_price,
+      description: description || '',
+      is_active: is_active ?? true,
+      created_at: body.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    await kv.set(`menu_item:${menuItemId}`, menuItemData);
+
+    // Audit log
+    await kv.set(`audit:${crypto.randomUUID()}`, {
+      ref_table: 'menu_items',
+      ref_id: menuItemId,
+      action_type: menu_item_id ? 'update' : 'create',
+      after_json: menuItemData,
+      acted_by_user_id: user.id,
+      acted_at: new Date().toISOString(),
+    });
+
+    return c.json({ success: true, menu_item: menuItemData });
+  } catch (error) {
+    console.log(`Create/Update menu item error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Delete menu item
+app.delete('/make-server-fe84bde0/menu-items/:id', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const menuItemId = c.req.param('id');
+    const menuItem = await kv.get(`menu_item:${menuItemId}`);
+
+    await kv.del(`menu_item:${menuItemId}`);
+
+    // Audit log
+    await kv.set(`audit:${crypto.randomUUID()}`, {
+      ref_table: 'menu_items',
+      ref_id: menuItemId,
+      action_type: 'delete',
+      before_json: menuItem,
+      acted_by_user_id: user.id,
+      acted_at: new Date().toISOString(),
+    });
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Delete menu item error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ========== Staff (alias for users, for compatibility) ==========
+
+// Get all staff
+app.get('/make-server-fe84bde0/staff', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const users = await kv.getByPrefix('user:');
+    // Filter active users only
+    const activeUsers = users.filter((u: any) => u.active_flag !== false);
+    return c.json({ staff: activeUsers });
+  } catch (error) {
+    console.log(`Get staff error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -819,18 +1066,26 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       };
     });
 
-    // Today's reservations
-    const today = new Date().toISOString().slice(0, 10);
+    // Today's reservations (in Japan timezone)
+    const getJapanDateString = (date: Date) => {
+      return new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
+        .toISOString()
+        .slice(0, 10);
+    };
+    
+    const today = getJapanDateString(new Date());
     const todayReservations = reservations.filter((r: any) => {
-      const resDate = new Date(r.reservation_date_time).toISOString().slice(0, 10);
+      const resDate = getJapanDateString(new Date(r.reservation_date_time));
       return resDate === today;
     }).map((r: any) => {
       const customer = customers.find((c: any) => c.customer_id === r.customer_id);
       return { ...r, customer };
     });
 
-    // Tentative reservations
-    const tentativeReservations = reservations.filter((r: any) => r.status === 'tentative').map((r: any) => {
+    // Tentative reservations (including modified status)
+    const tentativeReservations = reservations.filter((r: any) => 
+      r.status === 'tentative' || r.status === 'modified'
+    ).map((r: any) => {
       const customer = customers.find((c: any) => c.customer_id === r.customer_id);
       return { ...r, customer };
     });

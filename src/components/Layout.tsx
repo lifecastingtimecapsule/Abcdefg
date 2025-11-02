@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed } from 'lucide-react';
 import { createClient } from '../utils/supabase/client';
 
 interface LayoutProps {
@@ -15,12 +15,13 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole }
 
   const navItems = [
     { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard, roles: ['admin', 'staff'] },
-    { id: 'reservations', label: '予約管理', icon: Calendar, roles: ['admin', 'staff'] },
+    { id: 'calendar', label: 'カレンダー', icon: Calendar, roles: ['admin', 'staff'] },
     { id: 'customers', label: '顧客管理', icon: Users, roles: ['admin', 'staff'] },
     { id: 'work-orders', label: '納期管理', icon: Package, roles: ['admin', 'staff'] },
     { id: 'incentives', label: 'インセンティブ', icon: DollarSign, roles: ['admin', 'staff'] },
     { id: 'staff', label: 'スタッフ管理', icon: UserCog, roles: ['admin'] },
     { id: 'locations', label: '拠点管理', icon: MapPin, roles: ['admin'] },
+    { id: 'menu-settings', label: 'メニュー設定', icon: UtensilsCrossed, roles: ['admin'] },
   ];
 
   const filteredNavItems = navItems.filter(item => item.roles.includes(userRole));

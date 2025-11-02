@@ -62,7 +62,10 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
     const reservation = reservations.find(r => r.reservation_id === reservationId);
     if (!reservation) return '';
     const customer = customers.find(c => c.customer_id === reservation.customer_id);
-    return customer ? `${customer.child_name || customer.parent_name} (${customer.customer_code})` : '';
+    if (!customer) return '';
+    const name = customer.child_name || customer.parent_name;
+    const customerNumber = customer.external_customer_number;
+    return customerNumber ? `${name} (顧客番号: ${customerNumber})` : name;
   };
 
   return (
@@ -75,7 +78,7 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} className="p-6 space-y-6">
           <div>
             <label className="block text-slate-700 mb-2">予約</label>
             <select
