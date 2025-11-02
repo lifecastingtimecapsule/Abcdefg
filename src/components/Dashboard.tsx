@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { Calendar, AlertCircle, Clock, Package } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
 import { WorkOrder, Reservation, Customer } from '../types';
@@ -34,7 +35,9 @@ export function Dashboard() {
       const result = await apiRequest<DashboardData>('/dashboard');
       setData(result);
     } catch (err: any) {
+      console.error('Load dashboard error:', err);
       setError(err.message);
+      toast.error('ダッシュボードの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
@@ -49,6 +52,7 @@ export function Dashboard() {
       setReservations(resData.reservations);
       setCustomers(custData.customers);
     } catch (err: any) {
+      console.error('Load additional data error:', err);
       // エラーは静かに処理（ダッシュボードの主要データではない）
     }
   };

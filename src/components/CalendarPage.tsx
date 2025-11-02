@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { Reservation, Customer, Location, User, MenuItem } from '../types';
@@ -58,6 +59,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
       await autoCreateWorkOrders(resData.reservations, menuData.menu_items || []);
     } catch (err: any) {
       console.error('Load data error:', err);
+      toast.error('データの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }

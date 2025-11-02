@@ -85,6 +85,18 @@ app.post('/make-server-fe84bde0/login', async (c) => {
       return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
 
+    // Update last login timestamp
+    try {
+      const updatedUser = {
+        ...user,
+        last_login_at: new Date().toISOString(),
+      };
+      await kv.set(`user:${user.user_id}`, updatedUser);
+    } catch (updateError) {
+      console.log(`Failed to update last login time: ${updateError}`);
+      // Don't fail the login if we can't update the timestamp
+    }
+
     return c.json({
       success: true,
       access_token: data.session.access_token,
@@ -109,6 +121,11 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
 
     if (!login_id) {
       return c.json({ error: 'ログインIDが必要です' }, 400);
+    }
+
+    // Validate password length
+    if (!password || password.length < 6) {
+      return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
     }
 
     // Check if login_id already exists
@@ -312,7 +329,7 @@ app.post('/make-server-fe84bde0/locations', async (c) => {
 
 // ========== Customers ==========
 
-// Get all customers
+// Get all customers with pagination and search
 app.get('/make-server-fe84bde0/customers', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -320,8 +337,63 @@ app.get('/make-server-fe84bde0/customers', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const customers = await kv.getByPrefix('customer:');
-    return c.json({ customers: customers.filter((c: any) => c.active_flag !== false) });
+    // Get pagination parameters
+    const page = parseInt(c.req.query('page') || '1');
+    const pageSizeParam = c.req.query('pageSize');
+    const pageSize = pageSizeParam ? parseInt(pageSizeParam) : null; // null means no pagination
+    const search = c.req.query('search')?.toLowerCase() || '';
+
+    // Get all active customers
+    let customers = await kv.getByPrefix('customer:');
+    customers = customers.filter((cust: any) => cust.active_flag !== false);
+
+    // Apply search filter if provided
+    if (search) {
+      customers = customers.filter((cust: any) => {
+        const searchFields = [
+          cust.customer_code,
+          cust.external_customer_number,
+          cust.parent_name,
+          cust.parent_name_kana,
+          cust.child_name,
+          cust.child_name_kana,
+          cust.phone,
+          cust.postal_code,
+          cust.address_text,
+        ].filter(Boolean).map(field => String(field).toLowerCase());
+        
+        return searchFields.some(field => field.includes(search));
+      });
+    }
+
+    // Sort by created_at desc (newest first)
+    customers.sort((a: any, b: any) => {
+      const dateA = new Date(a.created_at || 0).getTime();
+      const dateB = new Date(b.created_at || 0).getTime();
+      return dateB - dateA;
+    });
+
+    // Get total count before pagination
+    const total = customers.length;
+
+    // Apply pagination if pageSize is specified
+    let resultCustomers = customers;
+    if (pageSize !== null) {
+      const startIndex = (page - 1) * pageSize;
+      const endIndex = startIndex + pageSize;
+      resultCustomers = customers.slice(startIndex, endIndex);
+      
+      return c.json({ 
+        customers: resultCustomers,
+        total,
+        page,
+        pageSize,
+        totalPages: Math.ceil(total / pageSize)
+      });
+    }
+
+    // Return all customers without pagination metadata
+    return c.json({ customers: resultCustomers });
   } catch (error) {
     console.log(`Get customers error: ${error}`);
     return c.json({ error: String(error) }, 500);
@@ -613,6 +685,24 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
 
     const workOrderId = work_order_id || crypto.randomUUID();
 
+    // Check for duplicate work orders for the same reservation and product type (only for new work orders)
+    if (!work_order_id && reservation_id) {
+      const allWorkOrders = await kv.getByPrefix('work_order:');
+      const duplicateExists = allWorkOrders.some((wo: any) => 
+        wo.reservation_id === reservation_id && 
+        wo.product_type === product_type &&
+        wo.work_order_id !== workOrderId
+      );
+      
+      if (duplicateExists) {
+        console.log(`Duplicate work order prevented: reservation_id=${reservation_id}, product_type=${product_type}`);
+        return c.json({ 
+          error: '同じ予約・同じ商品タイプの制作物が既に存在します',
+          duplicate: true 
+        }, 400);
+      }
+    }
+
     const workOrderData = {
       work_order_id: workOrderId,
       reservation_id,
@@ -855,11 +945,22 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     
     // Update login_id if provided
     if (update_login_id) {
+      // Check if login_id is already taken by another user
+      const users = await kv.getByPrefix('user:');
+      const existingUser = users.find((u: any) => u.login_id === update_login_id && u.user_id !== user_id);
+      if (existingUser) {
+        return c.json({ error: 'このログインIDは既に使用されています' }, 400);
+      }
       userData.login_id = update_login_id;
     }
     
     // Update password in Supabase Auth if provided
     if (update_password) {
+      // Validate password length
+      if (update_password.length < 6) {
+        return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
+      }
+      
       const { error: passwordError } = await supabase.auth.admin.updateUserById(
         user_id,
         { password: update_password }
@@ -1097,6 +1198,135 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
     });
   } catch (error) {
     console.log(`Get dashboard data error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ========== Sales Analytics ==========
+
+// Get sales analytics data
+app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const startDate = c.req.query('startDate') || new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
+    const endDate = c.req.query('endDate') || new Date().toISOString().split('T')[0];
+
+    // Get all data
+    const reservations = await kv.getByPrefix('reservation:');
+    const menuItems = await kv.getByPrefix('menu_item:');
+    const locations = await kv.getByPrefix('location:');
+    const users = await kv.getByPrefix('user:');
+
+    // Filter reservations by date range
+    const filteredReservations = reservations.filter((r: any) => {
+      const resDate = r.reservation_date_time.split('T')[0];
+      return resDate >= startDate && resDate <= endDate;
+    });
+
+    // Calculate total revenue and counts
+    let totalRevenue = 0;
+    let confirmedRevenue = 0;
+    let pendingRevenue = 0;
+    let cancelledCount = 0;
+    const dailySalesMap = new Map<string, { revenue: number; count: number }>();
+    const menuSalesMap = new Map<string, { revenue: number; count: number; menuName: string }>();
+    const locationSalesMap = new Map<string, { revenue: number; count: number; locationName: string }>();
+    const staffSalesMap = new Map<string, { revenue: number; count: number; staffName: string }>();
+
+    for (const reservation of filteredReservations) {
+      const menuItem = menuItems.find((m: any) => m.menu_item_id === reservation.menu_item_id);
+      const price = menuItem ? (menuItem.base_price + (reservation.additional_units || 0) * menuItem.additional_unit_price) : 0;
+
+      // Total revenue (all statuses except cancelled)
+      if (reservation.status !== 'cancelled') {
+        totalRevenue += price;
+
+        // Confirmed revenue
+        if (reservation.status === 'confirmed') {
+          confirmedRevenue += price;
+        }
+
+        // Pending revenue
+        if (reservation.status === 'tentative' || reservation.status === 'modified') {
+          pendingRevenue += price;
+        }
+
+        // Daily sales
+        const date = reservation.reservation_date_time.split('T')[0];
+        const dailyData = dailySalesMap.get(date) || { revenue: 0, count: 0 };
+        dailyData.revenue += price;
+        dailyData.count += 1;
+        dailySalesMap.set(date, dailyData);
+
+        // Menu sales
+        const menuId = reservation.menu_item_id || 'unknown';
+        const menuName = menuItem?.name || 'メニュー不明';
+        const menuData = menuSalesMap.get(menuId) || { revenue: 0, count: 0, menuName };
+        menuData.revenue += price;
+        menuData.count += 1;
+        menuSalesMap.set(menuId, menuData);
+
+        // Location sales
+        const locationId = reservation.location_id || 'unknown';
+        const location = locations.find((l: any) => l.location_id === locationId);
+        const locationName = location?.name || '場所不明';
+        const locationData = locationSalesMap.get(locationId) || { revenue: 0, count: 0, locationName };
+        locationData.revenue += price;
+        locationData.count += 1;
+        locationSalesMap.set(locationId, locationData);
+
+        // Staff sales
+        const staffId = reservation.staff_user_id || 'unknown';
+        const staff = users.find((u: any) => u.user_id === staffId);
+        const staffName = staff?.name || 'スタッフ不明';
+        const staffData = staffSalesMap.get(staffId) || { revenue: 0, count: 0, staffName };
+        staffData.revenue += price;
+        staffData.count += 1;
+        staffSalesMap.set(staffId, staffData);
+      } else {
+        cancelledCount += 1;
+      }
+    }
+
+    // Convert maps to arrays
+    const dailySales = Array.from(dailySalesMap.entries())
+      .map(([date, data]) => ({ date, ...data }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const menuSales = Array.from(menuSalesMap.entries())
+      .map(([id, data]) => ({ name: data.menuName, revenue: data.revenue, count: data.count }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const locationSales = Array.from(locationSalesMap.entries())
+      .map(([id, data]) => ({ name: data.locationName, revenue: data.revenue, count: data.count }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const staffSales = Array.from(staffSalesMap.entries())
+      .map(([id, data]) => ({ name: data.staffName, revenue: data.revenue, count: data.count }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // Calculate average order value (confirmed only)
+    const confirmedCount = filteredReservations.filter((r: any) => r.status === 'confirmed').length;
+    const averageOrderValue = confirmedCount > 0 ? confirmedRevenue / confirmedCount : 0;
+
+    return c.json({
+      totalRevenue,
+      totalReservations: filteredReservations.length,
+      averageOrderValue,
+      confirmedRevenue,
+      pendingRevenue,
+      cancelledCount,
+      dailySales,
+      menuSales,
+      locationSales,
+      staffSales,
+    });
+  } catch (error) {
+    console.log(`Get sales analytics error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });

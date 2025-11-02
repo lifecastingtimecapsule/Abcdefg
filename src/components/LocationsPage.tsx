@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { Plus, Edit2, MapPin } from 'lucide-react';
 
 export function LocationsPage() {
@@ -26,6 +27,7 @@ export function LocationsPage() {
       setLocations(result.locations);
     } catch (err: any) {
       console.error('Load locations error:', err);
+      toast.error('ロケーション一覧の読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
@@ -68,9 +70,11 @@ export function LocationsPage() {
       setModalOpen(false);
       setEditingLocation(null);
       await loadLocations();
+      toast.success(editingLocation ? 'ロケーションを更新しました' : '新しいロケーションを追加しました');
     } catch (err: any) {
       console.error('Save location error:', err);
       setError(err.message);
+      toast.error('ロケーションの保存に失敗しました');
     } finally {
       setFormLoading(false);
     }

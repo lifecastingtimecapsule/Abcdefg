@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { Plus, Edit2, Trash2, X } from 'lucide-react';
 
 export function MenuSettingsPage() {
@@ -26,6 +27,7 @@ export function MenuSettingsPage() {
       setMenuItems(data.menu_items || []);
     } catch (err: any) {
       console.error('Load menu items error:', err);
+      toast.error('メニュー一覧の読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
@@ -73,8 +75,10 @@ export function MenuSettingsPage() {
       setModalOpen(false);
       setEditingItem(null);
       await loadMenuItems();
+      toast.success(editingItem ? 'メニューを更新しました' : '新しいメニューを追加しました');
     } catch (err: any) {
-      alert('保存に失敗しました: ' + err.message);
+      console.error('Save menu item error:', err);
+      toast.error('保存に失敗しました');
     }
   };
 
@@ -84,8 +88,10 @@ export function MenuSettingsPage() {
     try {
       await apiRequest(`/menu-items/${menuItemId}`, { method: 'DELETE' });
       await loadMenuItems();
+      toast.success('メニューを削除しました');
     } catch (err: any) {
-      alert('削除に失敗しました: ' + err.message);
+      console.error('Delete menu item error:', err);
+      toast.error('削除に失敗しました');
     }
   };
 

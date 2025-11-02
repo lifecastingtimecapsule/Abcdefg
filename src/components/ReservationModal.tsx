@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { X, Search, User, Phone, Hash, Edit2, ExternalLink, UtensilsCrossed, AlertCircle, Calendar, MapPin } from 'lucide-react';
 
 interface ReservationModalProps {
@@ -309,9 +310,11 @@ export function ReservationModal({
       });
 
       onSave();
+      toast.success(reservation ? '予約情報を更新しました' : '新しい予約を登録しました');
     } catch (err: any) {
       console.error('Save error:', err);
       setError(err.message);
+      toast.error('保存に失敗しました');
     } finally {
       setLoading(false);
     }

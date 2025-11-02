@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { X, Edit2, Calendar, MapPin, Package } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 
@@ -129,9 +130,11 @@ export function CustomerModal({
       });
 
       onSave();
+      toast.success(customer ? '顧客情報を更新しました' : '新しい顧客を登録しました');
     } catch (err: any) {
       console.error('Save error:', err);
       setError(err.message);
+      toast.error('保存に失敗しました');
     } finally {
       setLoading(false);
     }

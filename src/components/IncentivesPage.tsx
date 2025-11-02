@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { DollarSign, Lock, Unlock } from 'lucide-react';
 
 export function IncentivesPage({ userRole, userId }: { userRole: string; userId: string }) {
@@ -31,6 +32,7 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
       }
     } catch (err: any) {
       console.error('Load incentives error:', err);
+      toast.error('インセンティブデータの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
@@ -51,8 +53,10 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
       });
 
       await loadData();
+      toast.success(incentive.locked_flag ? 'ロックを解除しました' : 'ロックしました');
     } catch (err: any) {
-      alert('エラー: ' + err.message);
+      console.error('Lock toggle error:', err);
+      toast.error('操作に失敗しました');
     }
   };
 
@@ -62,7 +66,7 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
 
     const amount = parseInt(input);
     if (isNaN(amount)) {
-      alert('数値を入力してください');
+      toast.error('数値を入力してください');
       return;
     }
 
@@ -78,8 +82,10 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
       });
 
       await loadData();
+      toast.success('手動調整額を更新しました');
     } catch (err: any) {
-      alert('エラー: ' + err.message);
+      console.error('Adjustment error:', err);
+      toast.error('調整額の更新に失敗しました');
     }
   };
 
@@ -139,7 +145,7 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
               <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-200 mt-4">
                 <div className="flex items-center gap-2 mb-4">
                   <DollarSign className="w-6 h-6 text-green-600" />
-                  <h2 className="text-slate-900">確定済</h2>
+                  <h2 className="text-slate-900">確定��</h2>
                 </div>
                 <div className="space-y-2">
                   <div className="text-slate-700">件数: {incentive.count_confirmed}件</div>

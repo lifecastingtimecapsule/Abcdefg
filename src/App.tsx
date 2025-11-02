@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
+import { Toaster } from 'sonner@2.0.3';
 import { LoginPage } from './components/LoginPage';
+import { ReauthModal } from './components/ReauthModal';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { CalendarPage } from './components/CalendarPage';
 import { CustomersPage } from './components/CustomersPage';
 import { WorkOrdersPage } from './components/WorkOrdersPage';
+import { SalesAnalyticsPage } from './components/SalesAnalyticsPage';
 import { IncentivesPage } from './components/IncentivesPage';
-import { StaffManagementPage } from './components/StaffManagementPage';
+import { StaffManagementPage } from './components/StaffManagementPageEnhanced';
 import { LocationsPage } from './components/LocationsPage';
 import { MenuSettingsPage } from './components/MenuSettingsPage';
 import { apiRequest, setUnauthorizedCallback } from './utils/api';
@@ -17,11 +20,12 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState('dashboard');
+  const [showReauthModal, setShowReauthModal] = useState(false);
 
   useEffect(() => {
-    // 401エラー時のコールバックを設定
+    // 401エラー時のコールバックを設定（再認証モーダル表示）
     setUnauthorizedCallback(() => {
-      handleLogout();
+      setShowReauthModal(true);
     });
     
     checkAuth();
@@ -59,6 +63,18 @@ export default function App() {
     setIsAuthenticated(false);
     setCurrentUser(null);
     setCurrentPage('dashboard');
+    setShowReauthModal(false);
+  };
+
+  const handleReauthSuccess = async (token: string) => {
+    setShowReauthModal(false);
+    // トークンを再取得したので、ユーザー情報を再読み込み
+    await checkAuth();
+  };
+
+  const handleReauthCancel = () => {
+    setShowReauthModal(false);
+    handleLogout();
   };
 
   if (loading) {
@@ -85,6 +101,8 @@ export default function App() {
         return <CustomersPage />;
       case 'work-orders':
         return <WorkOrdersPage />;
+      case 'sales-analytics':
+        return currentUser.role === 'admin' ? <SalesAnalyticsPage /> : <Dashboard />;
       case 'incentives':
         return <IncentivesPage userRole={currentUser.role} userId={currentUser.user_id} />;
       case 'staff':
@@ -99,13 +117,29 @@ export default function App() {
   };
 
   return (
-    <Layout
-      currentPage={currentPage}
-      onNavigate={setCurrentPage}
-      onLogout={handleLogout}
-      userRole={currentUser?.role || 'staff'}
-    >
-      {renderPage()}
-    </Layout>
+    <>
+      <Toaster 
+        position="top-center" 
+        richColors 
+        closeButton
+        toastOptions={{
+          duration: 4000,
+        }}
+      />
+      {showReauthModal && (
+        <ReauthModal
+          onSuccess={handleReauthSuccess}
+          onCancel={handleReauthCancel}
+        />
+      )}
+      <Layout
+        currentPage={currentPage}
+        onNavigate={setCurrentPage}
+        onLogout={handleLogout}
+        userRole={currentUser?.role || 'staff'}
+      >
+        {renderPage()}
+      </Layout>
+    </>
   );
 }

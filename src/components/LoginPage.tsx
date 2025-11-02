@@ -43,7 +43,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         throw new Error('アクセストークンが返されませんでした');
       }
     } catch (err: any) {
-      setError(err.message || 'ログインに失敗しました');
+      console.error('Login error:', err);
+      const errorMessage = err.message || 'ログインに失敗しました';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

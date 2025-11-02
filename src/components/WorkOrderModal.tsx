@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { X } from 'lucide-react';
 
 interface WorkOrderModalProps {
@@ -50,9 +51,18 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
       });
 
       onSave();
+      toast.success(workOrder ? '制作物情報を更新しました' : '新しい制作物を登録しました');
     } catch (err: any) {
       console.error('Save error:', err);
-      setError(err.message);
+      const errorMessage = err.message || '保存に失敗しました';
+      setError(errorMessage);
+      
+      // Show specific message for duplicate work orders
+      if (errorMessage.includes('既に存在')) {
+        toast.error('同じ予約・同じ商品タイプの制作物が既に登録されています');
+      } else {
+        toast.error('保存に失敗しました');
+      }
     } finally {
       setLoading(false);
     }

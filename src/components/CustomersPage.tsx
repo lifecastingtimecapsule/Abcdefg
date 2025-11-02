@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { Plus, Edit2, Search, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import { CustomerModal } from './CustomerModal';
 import { Customer, Reservation, MenuItem, Location, User } from '../types';
@@ -12,31 +13,63 @@ export function CustomersPage() {
   const [staffData, setStaffData] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchInput, setSearchInput] = useState(''); // For debounced search
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [expandedCustomers, setExpandedCustomers] = useState<Set<string>>(new Set());
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pageSize] = useState(30);
+
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchTerm(searchInput);
+      setCurrentPage(1); // Reset to first page on search
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [currentPage, searchTerm]);
 
   const loadData = async () => {
     try {
       setLoading(true);
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        pageSize: pageSize.toString(),
+      });
+      
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
       const [custData, resData, menuData, locData, staffDataRes] = await Promise.all([
-        apiRequest('/customers'),
+        apiRequest(`/customers?${params.toString()}`),
         apiRequest('/reservations'),
         apiRequest('/menu-items'),
         apiRequest('/locations'),
-        apiRequest('/staff'),
+        apiRequest('/users').catch(() => ({ users: [] })), // Catch error if not admin
       ]);
+      
       setCustomers(custData.customers);
+      setTotal(custData.total || 0);
+      setTotalPages(custData.totalPages || 1);
       setReservations(resData.reservations || []);
       setMenuItems(menuData.menu_items || []);
       setLocations(locData.locations || []);
-      setStaffData(staffDataRes.staff || []);
+      setStaffData(staffDataRes.users || []);
     } catch (err: any) {
       console.error('Load data error:', err);
+      toast.error('データの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
@@ -98,19 +131,6 @@ export function CustomersPage() {
     return `${customer.child_age_years}歳`;
   };
 
-  const filteredCustomers = customers.filter(c => {
-    const search = searchTerm.toLowerCase();
-    return (
-      c.parent_name?.toLowerCase().includes(search) ||
-      c.parent_name_kana?.toLowerCase().includes(search) ||
-      c.child_name?.toLowerCase().includes(search) ||
-      c.child_name_kana?.toLowerCase().includes(search) ||
-      c.customer_code?.toLowerCase().includes(search) ||
-      c.external_customer_number?.toLowerCase().includes(search) ||
-      c.phone?.includes(search)
-    );
-  });
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -135,26 +155,35 @@ export function CustomersPage() {
         </button>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input
-          type="text"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="顧客名、フリガナ、顧客番号、電話番号で検索..."
-          className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        />
+      {/* Search and Results Info */}
+      <div className="space-y-4">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="顧客名、フリガナ、顧客番号、電話番号で検索..."
+            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+        
+        {/* Results info */}
+        <div className="flex items-center justify-between text-sm text-slate-600">
+          <div>
+            全{total}件中 {Math.min((currentPage - 1) * pageSize + 1, total)}〜{Math.min(currentPage * pageSize, total)}件を表示
+          </div>
+        </div>
       </div>
 
       {/* Customers Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredCustomers.length === 0 ? (
+        {customers.length === 0 ? (
           <div className="col-span-full bg-white rounded-2xl p-8 text-center text-slate-500">
-            顧客が見つかりません
+            {searchTerm ? '検索条件に一致する顧客が見つかりません' : '顧客が登録されていません'}
           </div>
         ) : (
-          filteredCustomers.map((customer) => {
+          customers.map((customer) => {
             const customerReservations = getCustomerReservations(customer.customer_id);
             const isExpanded = expandedCustomers.has(customer.customer_id);
             
@@ -320,6 +349,56 @@ export function CustomersPage() {
           })
         )}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <button
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            disabled={currentPage === 1}
+            className="px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            前へ
+          </button>
+          
+          <div className="flex items-center gap-2">
+            {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+              let pageNum;
+              if (totalPages <= 7) {
+                pageNum = i + 1;
+              } else if (currentPage <= 4) {
+                pageNum = i + 1;
+              } else if (currentPage >= totalPages - 3) {
+                pageNum = totalPages - 6 + i;
+              } else {
+                pageNum = currentPage - 3 + i;
+              }
+              
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => setCurrentPage(pageNum)}
+                  className={`w-10 h-10 rounded-lg transition ${
+                    currentPage === pageNum
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+          </div>
+          
+          <button
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+            disabled={currentPage === totalPages}
+            className="px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            次へ
+          </button>
+        </div>
+      )}
 
       {modalOpen && (
         <CustomerModal

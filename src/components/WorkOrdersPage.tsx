@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { toast } from 'sonner@2.0.3';
 import { Plus, AlertCircle, Clock, GripVertical } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
@@ -171,6 +172,7 @@ export function WorkOrdersPage() {
       setReservations(resData.reservations);
     } catch (err: any) {
       console.error('Load data error:', err);
+      toast.error('データの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
@@ -242,8 +244,13 @@ export function WorkOrdersPage() {
 
           createdCount++;
           console.log(`Work order created for reservation ${reservation.reservation_id}`);
-        } catch (err) {
-          console.error(`Failed to create work order for reservation ${reservation.reservation_id}:`, err);
+        } catch (err: any) {
+          // Skip if duplicate (already exists)
+          if (err.message?.includes('既に存在')) {
+            console.log(`Work order already exists for reservation ${reservation.reservation_id}, skipping...`);
+          } else {
+            console.error(`Failed to create work order for reservation ${reservation.reservation_id}:`, err);
+          }
         }
       }
 
@@ -281,10 +288,10 @@ export function WorkOrdersPage() {
         body: JSON.stringify({ orders }),
       });
 
-      alert('並び順を保存しました');
+      toast.success('並び順を保存しました');
     } catch (err: any) {
       console.error('Save order error:', err);
-      alert('並び順の保存に失敗しました: ' + err.message);
+      toast.error('並び順の保存に失敗しました');
     }
   };
 
