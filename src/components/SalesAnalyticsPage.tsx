@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { TrendingUp, DollarSign, Calendar, Users, Package, MapPin } from 'lucide-react';
+import { TrendingUp, DollarSign, Calendar, Users, Package, MapPin, ChevronLeft, ChevronRight } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface SalesData {
@@ -15,28 +15,58 @@ interface SalesData {
   menuSales: { name: string; revenue: number; count: number }[];
   locationSales: { name: string; revenue: number; count: number }[];
   staffSales: { name: string; revenue: number; count: number }[];
+  monthlySales?: { month: string; revenue: number; count: number }[];
 }
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1'];
+const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+type ViewMode = 'month' | 'year' | 'custom';
 
 export function SalesAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<SalesData | null>(null);
-  const [dateRange, setDateRange] = useState({
-    startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
+  const [viewMode, setViewMode] = useState<ViewMode>('month');
+  
+  const currentDate = new Date();
+  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth() + 1);
+  
+  const [customDateRange, setCustomDateRange] = useState({
+    startDate: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
   });
 
   useEffect(() => {
     loadSalesData();
-  }, [dateRange]);
+  }, [viewMode, selectedYear, selectedMonth, customDateRange]);
+
+  const getDateRange = () => {
+    if (viewMode === 'month') {
+      const startDate = new Date(selectedYear, selectedMonth - 1, 1);
+      const endDate = new Date(selectedYear, selectedMonth, 0);
+      return {
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+      };
+    } else if (viewMode === 'year') {
+      return {
+        startDate: `${selectedYear}-01-01`,
+        endDate: `${selectedYear}-12-31`,
+      };
+    } else {
+      return customDateRange;
+    }
+  };
 
   const loadSalesData = async () => {
     try {
       setLoading(true);
+      const dateRange = getDateRange();
       const params = new URLSearchParams({
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
+        viewMode,
       });
       const data = await apiRequest<SalesData>(`/sales-analytics?${params}`);
       setSalesData(data);
@@ -50,6 +80,137 @@ export function SalesAnalyticsPage() {
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(value);
+  };
+
+  const handlePreviousMonth = () => {
+    if (selectedMonth === 1) {
+      setSelectedMonth(12);
+      setSelectedYear(selectedYear - 1);
+    } else {
+      setSelectedMonth(selectedMonth - 1);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (selectedMonth === 12) {
+      setSelectedMonth(1);
+      setSelectedYear(selectedYear + 1);
+    } else {
+      setSelectedMonth(selectedMonth + 1);
+    }
+  };
+
+  const handlePreviousYear = () => {
+    setSelectedYear(selectedYear - 1);
+  };
+
+  const handleNextYear = () => {
+    setSelectedYear(selectedYear + 1);
+  };
+
+  const renderPeriodSelector = () => {
+    if (viewMode === 'month') {
+      return (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePreviousMonth}
+            className="p-2 hover:bg-slate-100 rounded-lg transition"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+            >
+              {Array.from({ length: 10 }, (_, i) => currentDate.getFullYear() - 5 + i).map((year) => (
+                <option key={year} value={year}>{year}年</option>
+              ))}
+            </select>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+            >
+              {MONTH_NAMES.map((name, index) => (
+                <option key={index + 1} value={index + 1}>{name}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={handleNextMonth}
+            className="p-2 hover:bg-slate-100 rounded-lg transition"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => {
+              setSelectedYear(currentDate.getFullYear());
+              setSelectedMonth(currentDate.getMonth() + 1);
+            }}
+            className="ml-2 px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition"
+          >
+            今月
+          </button>
+        </div>
+      );
+    } else if (viewMode === 'year') {
+      return (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePreviousYear}
+            className="p-2 hover:bg-slate-100 rounded-lg transition"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(Number(e.target.value))}
+            className="px-4 py-2 border border-slate-300 rounded-lg bg-white"
+          >
+            {Array.from({ length: 10 }, (_, i) => currentDate.getFullYear() - 5 + i).map((year) => (
+              <option key={year} value={year}>{year}年</option>
+            ))}
+          </select>
+          <button
+            onClick={handleNextYear}
+            className="p-2 hover:bg-slate-100 rounded-lg transition"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setSelectedYear(currentDate.getFullYear())}
+            className="ml-2 px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition"
+          >
+            今年
+          </button>
+        </div>
+      );
+    } else {
+      return (
+        <div className="flex items-center gap-4">
+          <div>
+            <label className="block text-sm text-slate-700 mb-1">開始日</label>
+            <input
+              type="date"
+              value={customDateRange.startDate}
+              onChange={(e) => setCustomDateRange({ ...customDateRange, startDate: e.target.value })}
+              className="px-3 py-2 border border-slate-300 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-700 mb-1">終了日</label>
+            <input
+              type="date"
+              value={customDateRange.endDate}
+              onChange={(e) => setCustomDateRange({ ...customDateRange, endDate: e.target.value })}
+              className="px-3 py-2 border border-slate-300 rounded-lg"
+            />
+          </div>
+        </div>
+      );
+    }
   };
 
   if (loading) {
@@ -82,39 +243,45 @@ export function SalesAnalyticsPage() {
         </div>
       </div>
 
-      {/* Date Range Filter */}
+      {/* View Mode Tabs */}
       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 mb-6">
-        <div className="flex items-center gap-4">
-          <div>
-            <label className="block text-sm text-slate-700 mb-1">開始日</label>
-            <input
-              type="date"
-              value={dateRange.startDate}
-              onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-              className="px-3 py-2 border border-slate-300 rounded-lg"
-            />
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setViewMode('month')}
+              className={`px-4 py-2 rounded-lg transition ${
+                viewMode === 'month'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              月間
+            </button>
+            <button
+              onClick={() => setViewMode('year')}
+              className={`px-4 py-2 rounded-lg transition ${
+                viewMode === 'year'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              年間
+            </button>
+            <button
+              onClick={() => setViewMode('custom')}
+              className={`px-4 py-2 rounded-lg transition ${
+                viewMode === 'custom'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              カスタム
+            </button>
           </div>
-          <div>
-            <label className="block text-sm text-slate-700 mb-1">終了日</label>
-            <input
-              type="date"
-              value={dateRange.endDate}
-              onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-              className="px-3 py-2 border border-slate-300 rounded-lg"
-            />
+          
+          <div className="flex-1">
+            {renderPeriodSelector()}
           </div>
-          <button
-            onClick={() => {
-              const today = new Date().toISOString().split('T')[0];
-              setDateRange({
-                startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-                endDate: today,
-              });
-            }}
-            className="mt-6 px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition"
-          >
-            今月にリセット
-          </button>
         </div>
       </div>
 
@@ -157,16 +324,22 @@ export function SalesAnalyticsPage() {
         </div>
       </div>
 
-      {/* Daily Sales Trend */}
+      {/* Sales Trend Chart */}
       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
         <h2 className="text-slate-900 mb-4 flex items-center gap-2">
           <TrendingUp className="w-5 h-5 text-blue-600" />
-          日別売上推移
+          {viewMode === 'year' ? '月別売上推移' : '日別売上推移'}
         </h2>
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={salesData.dailySales}>
+          <LineChart data={viewMode === 'year' ? salesData.monthlySales : salesData.dailySales}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="date" stroke="#64748b" />
+            <XAxis 
+              dataKey={viewMode === 'year' ? 'month' : 'date'} 
+              stroke="#64748b"
+              angle={viewMode === 'year' ? 0 : -45}
+              textAnchor={viewMode === 'year' ? 'middle' : 'end'}
+              height={viewMode === 'year' ? 30 : 60}
+            />
             <YAxis stroke="#64748b" />
             <Tooltip
               formatter={(value: number) => formatCurrency(value)}
@@ -189,7 +362,7 @@ export function SalesAnalyticsPage() {
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={salesData.menuSales}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="name" stroke="#64748b" />
+              <XAxis dataKey="name" stroke="#64748b" angle={-45} textAnchor="end" height={100} />
               <YAxis stroke="#64748b" />
               <Tooltip
                 formatter={(value: number) => formatCurrency(value)}
@@ -230,7 +403,7 @@ export function SalesAnalyticsPage() {
       </div>
 
       {/* Staff Sales */}
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
         <h2 className="text-slate-900 mb-4 flex items-center gap-2">
           <Users className="w-5 h-5 text-blue-600" />
           スタッフ別売上
@@ -251,7 +424,7 @@ export function SalesAnalyticsPage() {
       </div>
 
       {/* Summary Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mt-6">
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
         <h2 className="text-slate-900 mb-4">詳細サマリー</h2>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -261,6 +434,7 @@ export function SalesAnalyticsPage() {
                 <th className="text-left py-3 px-4 text-slate-700">項目</th>
                 <th className="text-right py-3 px-4 text-slate-700">売上</th>
                 <th className="text-right py-3 px-4 text-slate-700">件数</th>
+                <th className="text-right py-3 px-4 text-slate-700">平均単価</th>
               </tr>
             </thead>
             <tbody>
@@ -270,6 +444,9 @@ export function SalesAnalyticsPage() {
                   <td className="py-3 px-4 text-slate-900">{item.name}</td>
                   <td className="py-3 px-4 text-right text-slate-900">{formatCurrency(item.revenue)}</td>
                   <td className="py-3 px-4 text-right text-slate-600">{item.count}件</td>
+                  <td className="py-3 px-4 text-right text-slate-600">
+                    {formatCurrency(item.count > 0 ? item.revenue / item.count : 0)}
+                  </td>
                 </tr>
               ))}
               {salesData.locationSales.map((item, index) => (
@@ -278,6 +455,20 @@ export function SalesAnalyticsPage() {
                   <td className="py-3 px-4 text-slate-900">{item.name}</td>
                   <td className="py-3 px-4 text-right text-slate-900">{formatCurrency(item.revenue)}</td>
                   <td className="py-3 px-4 text-right text-slate-600">{item.count}件</td>
+                  <td className="py-3 px-4 text-right text-slate-600">
+                    {formatCurrency(item.count > 0 ? item.revenue / item.count : 0)}
+                  </td>
+                </tr>
+              ))}
+              {salesData.staffSales.map((item, index) => (
+                <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="py-3 px-4 text-slate-600">スタッフ</td>
+                  <td className="py-3 px-4 text-slate-900">{item.name}</td>
+                  <td className="py-3 px-4 text-right text-slate-900">{formatCurrency(item.revenue)}</td>
+                  <td className="py-3 px-4 text-right text-slate-600">{item.count}件</td>
+                  <td className="py-3 px-4 text-right text-slate-600">
+                    {formatCurrency(item.count > 0 ? item.revenue / item.count : 0)}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -593,6 +593,41 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
 
     await kv.set(`reservation:${reservationId}`, reservationData);
 
+    // Auto-create work order if status is confirmed and work_required is set
+    if (status === 'confirmed' && work_required && work_required.trim() !== '') {
+      // Check if work order already exists for this reservation
+      const existingWorkOrders = await kv.getByPrefix('work_order:');
+      const existingWorkOrder = existingWorkOrders.find((wo: any) => wo.reservation_id === reservationId);
+
+      if (!existingWorkOrder) {
+        // Create work order automatically
+        const workOrderId = crypto.randomUUID();
+        
+        // Calculate due date: 14 days from reservation date
+        const reservationDate = new Date(reservation_date_time);
+        const dueDate = new Date(reservationDate);
+        dueDate.setDate(dueDate.getDate() + 14);
+
+        const workOrderData = {
+          work_order_id: workOrderId,
+          reservation_id: reservationId,
+          product_type: work_required,
+          status: '制作中',
+          due_date: dueDate.toISOString().split('T')[0],
+          delivered_date: null,
+          priority_order: null,
+          notes_internal: '予約確定時に自動生成',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          updated_by_user_id: user.id,
+        };
+
+        await kv.set(`work_order:${workOrderId}`, workOrderData);
+
+        console.log(`Auto-created work order ${workOrderId} for reservation ${reservationId}`);
+      }
+    }
+
     // Audit log
     await kv.set(`audit:${crypto.randomUUID()}`, {
       ref_table: 'reservations',
@@ -891,6 +926,241 @@ app.post('/make-server-fe84bde0/incentives/lock', async (c) => {
     return c.json({ success: true, incentive: incentiveData });
   } catch (error) {
     console.log(`Lock incentive error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Get yearly incentives
+app.get('/make-server-fe84bde0/incentives/yearly', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    const year = c.req.query('year') || new Date().getFullYear().toString();
+    const targetUserId = c.req.query('user_id');
+
+    // If staff, can only see their own incentives
+    if (role !== 'admin' && targetUserId && targetUserId !== user.id) {
+      return c.json({ error: 'Access denied' }, 403);
+    }
+
+    // Get all work orders, reservations, and users
+    const workOrders = await kv.getByPrefix('work_order:');
+    const reservations = await kv.getByPrefix('reservation:');
+    const users = await kv.getByPrefix('user:');
+    const adjustments = await kv.getByPrefix('incentive_monthly:');
+
+    const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+    // Initialize monthly data
+    const monthlyDataMap = new Map<string, { totalAmount: number; confirmedCount: number }>();
+    const staffYearlyDataMap = new Map<string, { totalAmount: number; confirmedCount: number; staffName: string }>();
+    
+    for (let i = 0; i < 12; i++) {
+      monthlyDataMap.set(MONTH_NAMES[i], { totalAmount: 0, confirmedCount: 0 });
+    }
+
+    let totalIncentives = 0;
+    let totalConfirmedCount = 0;
+    let totalPendingCount = 0;
+
+    // Process work orders
+    for (const wo of workOrders) {
+      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
+      if (!reservation || !reservation.staff_id_main) continue;
+
+      const staffId = reservation.staff_id_main;
+
+      // Filter by user if specified
+      if (targetUserId && staffId !== targetUserId) continue;
+      if (role !== 'admin' && staffId !== user.id) continue;
+
+      const deliveredDate = wo.delivered_date ? new Date(wo.delivered_date) : null;
+      const woYear = deliveredDate ? deliveredDate.getFullYear().toString() : null;
+      const woMonth = deliveredDate ? deliveredDate.getMonth() : null;
+      const woYearMonth = deliveredDate ? deliveredDate.toISOString().slice(0, 7) : null;
+
+      // Pending count (お渡し待ち)
+      if (wo.status === 'お渡し待ち') {
+        totalPendingCount += 1;
+      }
+
+      // Confirmed count and amount (引渡し済)
+      if (wo.status === '引渡し済' && woYear === year) {
+        const baseAmount = 1000; // ¥1,000 per order
+
+        // Get manual adjustment for this month
+        const adjustment = adjustments.find((a: any) => 
+          a.user_id === staffId && a.year_month === woYearMonth
+        );
+        const manualAdjust = adjustment?.manual_adjust_yen || 0;
+        const monthlyAdjustPerOrder = manualAdjust > 0 ? manualAdjust : 0;
+
+        // Get staff name
+        const staffUser = users.find((u: any) => u.user_id === staffId);
+        const staffName = staffUser?.name || staffId;
+
+        // Update monthly data
+        if (woMonth !== null) {
+          const monthName = MONTH_NAMES[woMonth];
+          const monthData = monthlyDataMap.get(monthName);
+          if (monthData) {
+            monthData.totalAmount += baseAmount;
+            monthData.confirmedCount += 1;
+          }
+        }
+
+        // Update staff yearly data
+        if (!staffYearlyDataMap.has(staffId)) {
+          staffYearlyDataMap.set(staffId, { totalAmount: 0, confirmedCount: 0, staffName });
+        }
+        const staffData = staffYearlyDataMap.get(staffId)!;
+        staffData.totalAmount += baseAmount;
+        staffData.confirmedCount += 1;
+
+        totalIncentives += baseAmount;
+        totalConfirmedCount += 1;
+      }
+    }
+
+    // Add manual adjustments to staff yearly data
+    for (const adjustment of adjustments) {
+      if (!adjustment.year_month.startsWith(year)) continue;
+      
+      const staffId = adjustment.user_id;
+      if (targetUserId && staffId !== targetUserId) continue;
+      if (role !== 'admin' && staffId !== user.id) continue;
+
+      if (staffYearlyDataMap.has(staffId)) {
+        staffYearlyDataMap.get(staffId)!.totalAmount += (adjustment.manual_adjust_yen || 0);
+      }
+      
+      totalIncentives += (adjustment.manual_adjust_yen || 0);
+
+      // Add to monthly data
+      const monthIndex = parseInt(adjustment.year_month.split('-')[1]) - 1;
+      if (monthIndex >= 0 && monthIndex < 12) {
+        const monthName = MONTH_NAMES[monthIndex];
+        const monthData = monthlyDataMap.get(monthName);
+        if (monthData) {
+          monthData.totalAmount += (adjustment.manual_adjust_yen || 0);
+        }
+      }
+    }
+
+    const monthlyData = Array.from(monthlyDataMap.entries()).map(([month, data]) => ({
+      month,
+      totalAmount: data.totalAmount,
+      confirmedCount: data.confirmedCount,
+    }));
+
+    const staffYearlyData = Array.from(staffYearlyDataMap.entries())
+      .map(([id, data]) => ({
+        name: data.staffName,
+        totalAmount: data.totalAmount,
+        confirmedCount: data.confirmedCount,
+      }))
+      .sort((a, b) => b.totalAmount - a.totalAmount);
+
+    const averageIncentive = totalIncentives / 12;
+
+    return c.json({
+      totalIncentives,
+      totalConfirmedCount,
+      totalPendingCount,
+      averageIncentive,
+      monthlyData,
+      staffYearlyData,
+    });
+  } catch (error) {
+    console.log(`Get yearly incentives error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Get incentives for a custom range
+app.get('/make-server-fe84bde0/incentives/range', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    const startMonth = c.req.query('start') || new Date().toISOString().slice(0, 7);
+    const endMonth = c.req.query('end') || new Date().toISOString().slice(0, 7);
+    const targetUserId = c.req.query('user_id');
+
+    // If staff, can only see their own incentives
+    if (role !== 'admin' && targetUserId && targetUserId !== user.id) {
+      return c.json({ error: 'Access denied' }, 403);
+    }
+
+    // Get all work orders and reservations
+    const workOrders = await kv.getByPrefix('work_order:');
+    const reservations = await kv.getByPrefix('reservation:');
+    const adjustments = await kv.getByPrefix('incentive_monthly:');
+
+    // Build incentive data for each staff across the range
+    const incentivesMap = new Map();
+
+    for (const wo of workOrders) {
+      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
+      if (!reservation || !reservation.staff_id_main) continue;
+
+      const staffId = reservation.staff_id_main;
+      const deliveredDate = wo.delivered_date ? new Date(wo.delivered_date) : null;
+      const woYearMonth = deliveredDate ? deliveredDate.toISOString().slice(0, 7) : null;
+
+      if (!incentivesMap.has(staffId)) {
+        incentivesMap.set(staffId, {
+          user_id: staffId,
+          pending: [],
+          confirmed: [],
+        });
+      }
+
+      const staffData = incentivesMap.get(staffId);
+
+      if (wo.status === 'お渡し待ち') {
+        staffData.pending.push(wo);
+      } else if (wo.status === '引渡し済' && woYearMonth && woYearMonth >= startMonth && woYearMonth <= endMonth) {
+        staffData.confirmed.push(wo);
+      }
+    }
+
+    const results = [];
+    for (const [staffId, data] of incentivesMap) {
+      // Skip if not the target user (for staff role)
+      if (role !== 'admin' && staffId !== user.id) continue;
+      if (targetUserId && staffId !== targetUserId) continue;
+
+      // Sum up manual adjustments in range
+      let totalManualAdjust = 0;
+      for (const adj of adjustments) {
+        if (adj.user_id === staffId && adj.year_month >= startMonth && adj.year_month <= endMonth) {
+          totalManualAdjust += (adj.manual_adjust_yen || 0);
+        }
+      }
+
+      results.push({
+        user_id: staffId,
+        count_pending: data.pending.length,
+        amount_pending: data.pending.length * 1000,
+        count_confirmed: data.confirmed.length,
+        amount_confirmed: data.confirmed.length * 1000,
+        manual_adjust_yen: totalManualAdjust,
+        locked_flag: false, // Range view doesn't have lock status
+        locked_at: null,
+      });
+    }
+
+    return c.json({ incentives: results });
+  } catch (error) {
+    console.log(`Get range incentives error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -1214,6 +1484,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
 
     const startDate = c.req.query('startDate') || new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
     const endDate = c.req.query('endDate') || new Date().toISOString().split('T')[0];
+    const viewMode = c.req.query('viewMode') || 'month';
 
     // Get all data
     const reservations = await kv.getByPrefix('reservation:');
@@ -1233,6 +1504,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     let pendingRevenue = 0;
     let cancelledCount = 0;
     const dailySalesMap = new Map<string, { revenue: number; count: number }>();
+    const monthlySalesMap = new Map<string, { revenue: number; count: number }>();
     const menuSalesMap = new Map<string, { revenue: number; count: number; menuName: string }>();
     const locationSalesMap = new Map<string, { revenue: number; count: number; locationName: string }>();
     const staffSalesMap = new Map<string, { revenue: number; count: number; staffName: string }>();
@@ -1262,6 +1534,13 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
         dailyData.count += 1;
         dailySalesMap.set(date, dailyData);
 
+        // Monthly sales (for year view)
+        const month = date.substring(0, 7); // YYYY-MM
+        const monthlyData = monthlySalesMap.get(month) || { revenue: 0, count: 0 };
+        monthlyData.revenue += price;
+        monthlyData.count += 1;
+        monthlySalesMap.set(month, monthlyData);
+
         // Menu sales
         const menuId = reservation.menu_item_id || 'unknown';
         const menuName = menuItem?.name || 'メニュー不明';
@@ -1280,7 +1559,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
         locationSalesMap.set(locationId, locationData);
 
         // Staff sales
-        const staffId = reservation.staff_user_id || 'unknown';
+        const staffId = reservation.staff_id_main || 'unknown';
         const staff = users.find((u: any) => u.user_id === staffId);
         const staffName = staff?.name || 'スタッフ不明';
         const staffData = staffSalesMap.get(staffId) || { revenue: 0, count: 0, staffName };
@@ -1296,6 +1575,26 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     const dailySales = Array.from(dailySalesMap.entries())
       .map(([date, data]) => ({ date, ...data }))
       .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Monthly sales for year view
+    const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+    let monthlySales = [];
+    
+    if (viewMode === 'year') {
+      // Extract year from startDate
+      const year = startDate.substring(0, 4);
+      
+      // Generate all 12 months
+      for (let i = 0; i < 12; i++) {
+        const monthKey = `${year}-${String(i + 1).padStart(2, '0')}`;
+        const monthData = monthlySalesMap.get(monthKey) || { revenue: 0, count: 0 };
+        monthlySales.push({
+          month: MONTH_NAMES[i],
+          revenue: monthData.revenue,
+          count: monthData.count,
+        });
+      }
+    }
 
     const menuSales = Array.from(menuSalesMap.entries())
       .map(([id, data]) => ({ name: data.menuName, revenue: data.revenue, count: data.count }))
@@ -1321,6 +1620,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
       pendingRevenue,
       cancelledCount,
       dailySales,
+      monthlySales: viewMode === 'year' ? monthlySales : undefined,
       menuSales,
       locationSales,
       staffSales,
