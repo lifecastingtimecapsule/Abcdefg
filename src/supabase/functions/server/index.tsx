@@ -1774,11 +1774,12 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     let confirmedRevenue = 0;
     let pendingRevenue = 0;
     let cancelledCount = 0;
+    let rescheduledCount = 0;
     let totalAdditionalUnits = 0;
     let reservationsWithAdditionalUnits = 0;
     const dailySalesMap = new Map<string, { revenue: number; count: number }>();
     const monthlySalesMap = new Map<string, { revenue: number; count: number }>();
-    const ageGroupSalesMap = new Map<string, { revenue: number; count: number; ageGroup: string }>();
+    const ageGroupSalesMap = new Map<string, { revenue: number; count: number; ageGroup: string; additionalCount: number; totalAdditionalUnits: number }>();
     const zeroAgeMonthsMap = new Map<string, { revenue: number; count: number; months: number }>();
 
     for (const reservation of filteredReservations) {
@@ -1821,41 +1822,63 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
 
         // Age group sales
         const customer = customers.find((c: any) => c.customer_id === reservation.customer_id);
-        if (customer && customer.child_age_years !== undefined && customer.child_age_years !== null) {
-          const age = customer.child_age_years;
-          let ageGroup = '';
+        if (customer) {
+          // 月齢が入力されている場合は、歳がnullでも0歳として扱う
+          const hasMonths = customer.child_age_months !== null && customer.child_age_months !== undefined;
+          const age = customer.child_age_years ?? (hasMonths ? 0 : null);
           
-          if (age === 0) {
-            ageGroup = '0歳';
-            // 0歳の場合、月齢別データも記録
-            const months = customer.child_age_months !== undefined && customer.child_age_months !== null ? customer.child_age_months : 0;
-            const monthKey = `${months}ヶ月`;
-            const monthData = zeroAgeMonthsMap.get(monthKey) || { revenue: 0, count: 0, months };
-            monthData.revenue += price;
-            monthData.count += 1;
-            zeroAgeMonthsMap.set(monthKey, monthData);
-          } else if (age === 1) {
-            ageGroup = '1歳';
-          } else if (age === 2) {
-            ageGroup = '2歳';
-          } else if (age === 3) {
-            ageGroup = '3歳';
-          } else if (age === 4) {
-            ageGroup = '4歳';
-          } else if (age >= 5) {
-            ageGroup = '5歳以上';
-          }
-          
-          if (ageGroup) {
-            const ageData = ageGroupSalesMap.get(ageGroup) || { revenue: 0, count: 0, ageGroup };
-            ageData.revenue += price;
-            ageData.count += 1;
-            ageGroupSalesMap.set(ageGroup, ageData);
+          if (age !== null && age !== undefined) {
+            let ageGroup = '';
+            
+            if (age === 0) {
+              ageGroup = '0歳';
+              // 0歳の場合、月齢別データも記録
+              const months = customer.child_age_months !== undefined && customer.child_age_months !== null ? customer.child_age_months : 0;
+              const monthKey = `${months}ヶ月`;
+              const monthData = zeroAgeMonthsMap.get(monthKey) || { revenue: 0, count: 0, months };
+              monthData.revenue += price;
+              monthData.count += 1;
+              zeroAgeMonthsMap.set(monthKey, monthData);
+            } else if (age === 1) {
+              ageGroup = '1歳';
+            } else if (age === 2) {
+              ageGroup = '2歳';
+            } else if (age === 3) {
+              ageGroup = '3歳';
+            } else if (age === 4) {
+              ageGroup = '4歳';
+            } else if (age >= 5) {
+              ageGroup = '5歳以上';
+            }
+            
+            if (ageGroup) {
+              const ageData = ageGroupSalesMap.get(ageGroup) || { 
+                revenue: 0, 
+                count: 0, 
+                ageGroup,
+                additionalCount: 0,
+                totalAdditionalUnits: 0
+              };
+              ageData.revenue += price;
+              ageData.count += 1;
+              
+              // 追加本数の統計
+              if (reservation.additional_units && reservation.additional_units > 0) {
+                ageData.additionalCount += 1;
+                ageData.totalAdditionalUnits += reservation.additional_units;
+              }
+              
+              ageGroupSalesMap.set(ageGroup, ageData);
+            }
           }
         }
       } else {
-        // Count cancelled and rescheduled as cancelled
-        cancelledCount += 1;
+        // Count cancelled and rescheduled separately
+        if (reservation.status === 'cancelled') {
+          cancelledCount += 1;
+        } else if (reservation.status === 'rescheduled') {
+          rescheduledCount += 1;
+        }
       }
     }
 
@@ -1945,6 +1968,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
       confirmedRevenue,
       pendingRevenue,
       cancelledCount,
+      rescheduledCount,
       dailySales,
       monthlySales: viewMode === 'year' ? monthlySales : undefined,
       weekSales: viewMode === 'month' ? weekSales : undefined,
