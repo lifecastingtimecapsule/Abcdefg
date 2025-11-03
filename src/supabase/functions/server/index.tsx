@@ -15,11 +15,9 @@ const supabase = createClient(
 );
 
 // Default admin credentials (固定の初期アカウント情報)
-// ログインID: admin
-// パスワード: Takara007
 const DEFAULT_ADMIN = {
   email: 'admin@amaretto.local',
-  password: 'Takara007', // 実際のパスワード
+  password: 'amaretto2024',
   login_id: 'admin',
   name: '管理者',
 };
@@ -57,185 +55,55 @@ async function getUserRole(userId: string) {
 // ========== Auth Routes ==========
 
 // Login with login_id
-// パスワード認証はSupabase Authのみが管理（KVには一切関与させない）
 app.post('/make-server-fe84bde0/login', async (c) => {
   try {
     const body = await c.req.json();
     const { login_id, password } = body;
 
-    console.log(`[Login] Attempt for login_id: ${login_id}`);
-
-    // Step 1: KVストアでlogin_idからユーザーレコードを検索
+    // Find user by login_id
     const users = await kv.getByPrefix('user:');
-    const kvUser = users.find((u: any) => u.login_id === login_id && u.active_flag !== false);
+    const user = users.find((u: any) => u.login_id === login_id && u.active_flag !== false);
 
-    if (!kvUser) {
-      console.log(`[Login] Failed: User with login_id ${login_id} not found in KV store`);
+    if (!user) {
+      console.log(`Login failed: User with login_id ${login_id} not found`);
       return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
 
-    console.log(`[Login] User found in KV: ${kvUser.email}`);
-
-    // Step 2: Supabase Authでパスワード認証（真実はAuthのみ）
+    // Authenticate with Supabase using email
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: kvUser.email,
+      email: user.email,
       password,
     });
 
-    // Step 3: エラーハンドリング
     if (error) {
-      console.log(`[Login] Supabase Auth error: ${error.message}`);
-
-      // USER_NOT_FOUND: KVにいるのにAuthにいない → 自動移行/作成フロー
-      if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
-        // パスワード違いの可能性が高い
-        console.log(`[Login] Invalid credentials for ${kvUser.email}`);
-        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
-      } else if (error.message.includes('User not found')) {
-        // Authにユーザーが存在しない → 自動作成（移行フロー）
-        console.log(`[Login] User exists in KV but not in Auth, creating Auth user...`);
-        
-        try {
-          const { data: createData, error: createError } = await supabase.auth.admin.createUser({
-            email: kvUser.email,
-            password, // ユーザーが入力したパスワードで作成
-            email_confirm: true,
-            user_metadata: {
-              migrated: true,
-              migrated_at: new Date().toISOString(),
-            }
-          });
-
-          if (createError) {
-            console.error(`[Login] Failed to create Auth user: ${createError.message}`);
-            return c.json({ error: 'ログインに失敗しました。システム管理者にお問い合わせください。' }, 500);
-          }
-
-          console.log(`[Login] Auth user created successfully: ${createData.user.id}`);
-
-          // KVストアのuser_idを更新（自己修復）
-          const updatedKvUser = {
-            ...kvUser,
-            user_id: createData.user.id, // Auth側のIDに更新
-            last_login_at: new Date().toISOString(),
-          };
-          
-          // 古いKVレコードを削除
-          await kv.del(`user:${kvUser.user_id}`);
-          
-          // 新しいuser_idでKVレコードを作成
-          await kv.set(`user:${createData.user.id}`, updatedKvUser);
-
-          // 再度ログイン試行
-          const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
-            email: kvUser.email,
-            password,
-          });
-
-          if (retryError) {
-            console.error(`[Login] Retry login failed: ${retryError.message}`);
-            return c.json({ error: 'ログインに失敗しました。' }, 401);
-          }
-
-          return c.json({
-            success: true,
-            access_token: retryData.session.access_token,
-            user: {
-              user_id: createData.user.id,
-              name: updatedKvUser.name,
-              login_id: updatedKvUser.login_id,
-              role: updatedKvUser.role,
-            },
-          });
-
-        } catch (migrationError) {
-          console.error(`[Login] Migration error: ${migrationError}`);
-          return c.json({ error: 'ログインに失敗しました。' }, 500);
-        }
-      }
-
-      // その他のエラー
-      return c.json({ error: 'ログインに失敗しました。' }, 401);
+      console.log(`Login authentication error: ${error.message}`);
+      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
 
-    console.log(`[Login] Authentication successful for ${kvUser.email}`);
-
-    // Step 4: 自己修復 - KVのuser_idがAuth側と異なる場合は更新
-    let finalUserId = kvUser.user_id;
-    
-    if (kvUser.user_id !== data.user.id) {
-      console.log(`[Login] Self-repair: KV user_id (${kvUser.user_id}) != Auth user_id (${data.user.id}), updating...`);
-      
-      // 古いKVレコードを削除
-      await kv.del(`user:${kvUser.user_id}`);
-      
-      // 新しいuser_idでKVレコードを作成
-      const repairedUser = {
-        ...kvUser,
-        user_id: data.user.id,
+    // Update last login timestamp
+    try {
+      const updatedUser = {
+        ...user,
         last_login_at: new Date().toISOString(),
       };
-      await kv.set(`user:${data.user.id}`, repairedUser);
-      
-      finalUserId = data.user.id;
-      console.log(`[Login] Self-repair completed`);
-    } else {
-      // Update last login timestamp
-      try {
-        const updatedUser = {
-          ...kvUser,
-          last_login_at: new Date().toISOString(),
-        };
-        await kv.set(`user:${kvUser.user_id}`, updatedUser);
-      } catch (updateError) {
-        console.log(`[Login] Failed to update last login time: ${updateError}`);
-        // Don't fail the login if we can't update the timestamp
-      }
+      await kv.set(`user:${user.user_id}`, updatedUser);
+    } catch (updateError) {
+      console.log(`Failed to update last login time: ${updateError}`);
+      // Don't fail the login if we can't update the timestamp
     }
 
     return c.json({
       success: true,
       access_token: data.session.access_token,
       user: {
-        user_id: finalUserId,
-        name: kvUser.name,
-        login_id: kvUser.login_id,
-        role: kvUser.role,
+        user_id: user.user_id,
+        name: user.name,
+        login_id: user.login_id,
+        role: user.role,
       },
     });
   } catch (error) {
-    console.log(`[Login] Processing error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Get current user info
-app.get('/make-server-fe84bde0/me', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    
-    // Get user data from KV store
-    const userData = await kv.get(`user:${user.id}`);
-    
-    if (!userData) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-    
-    return c.json({
-      user: {
-        user_id: userData.user_id,
-        name: userData.name,
-        login_id: userData.login_id,
-        role: userData.role,
-        email: userData.email,
-      },
-    });
-  } catch (error) {
-    console.error('[/me] Error:', error);
+    console.log(`Login processing error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -2117,116 +1985,5 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     return c.json({ error: String(error) }, 500);
   }
 });
-
-// ========== Initialize Default Admin Account ==========
-// パスワードはSupabase Authのみが管理（KVには保存しない）
-// 既存のadminがある場合は、Auth側に存在するかチェックし、存在しない場合のみ作成
-async function ensureDefaultAdmin() {
-  try {
-    console.log('[Init] Checking for default admin account...');
-    
-    // Step 1: KVストアでadminアカウントを検索
-    const users = await kv.getByPrefix('user:');
-    const kvAdmin = users.find((u: any) => u.login_id === DEFAULT_ADMIN.login_id);
-    
-    if (kvAdmin) {
-      console.log('[Init] Admin account found in KV store');
-      console.log(`[Init] Checking if Auth user exists for user_id: ${kvAdmin.user_id}`);
-      
-      // Step 2: Supabase AuthにユーザーIDが存在するかチェック
-      try {
-        const { data: authUser, error: getUserError } = await supabase.auth.admin.getUserById(kvAdmin.user_id);
-        
-        if (getUserError || !authUser.user) {
-          // Auth側にユーザーが存在しない → 再作成が必要
-          console.log('[Init] ⚠️  Admin user not found in Supabase Auth, recreating...');
-          
-          // 古いKVレコードを削除
-          await kv.del(`user:${kvAdmin.user_id}`);
-          
-          // 新しいAuthユーザーを作成
-          const { data: newAuthUser, error: createError } = await supabase.auth.admin.createUser({
-            email: DEFAULT_ADMIN.email,
-            password: DEFAULT_ADMIN.password, // Takara007
-            email_confirm: true,
-          });
-          
-          if (createError) {
-            console.error('[Init] Failed to recreate admin in Supabase Auth:', createError);
-            return;
-          }
-          
-          console.log(`[Init] Admin recreated in Supabase Auth, new user_id: ${newAuthUser.user.id}`);
-          
-          // 新しいuser_idでKVレコードを作成
-          await kv.set(`user:${newAuthUser.user.id}`, {
-            user_id: newAuthUser.user.id,
-            email: DEFAULT_ADMIN.email,
-            login_id: DEFAULT_ADMIN.login_id,
-            name: DEFAULT_ADMIN.name,
-            role: 'admin',
-            active_flag: true,
-            created_at: new Date().toISOString(),
-          });
-          
-          console.log('[Init] ✅ Admin account recreated successfully');
-          console.log('[Init]   Login ID: admin');
-          console.log('[Init]   Password: Takara007');
-          console.log('[Init]   New user_id:', newAuthUser.user.id);
-        } else {
-          // Auth側にユーザーが存在する → OK
-          console.log('[Init] ✅ Admin user exists in both KV and Supabase Auth');
-          console.log('[Init]   Login ID: admin');
-          console.log('[Init]   Email:', authUser.user.email);
-          
-          // パスワードは意図的に更新しない（ログイン時の自己修復に任せる）
-          // ユーザーがパスワードを変更している可能性があるため
-        }
-      } catch (error) {
-        console.error('[Init] Error checking Auth user:', error);
-      }
-      
-      return;
-    }
-    
-    // Step 3: KVにもAuthにも存在しない → 新規作成
-    console.log('[Init] No admin account found, creating new one...');
-    
-    // まずAuthにユーザーを作成
-    const { data: newAuthUser, error: createError } = await supabase.auth.admin.createUser({
-      email: DEFAULT_ADMIN.email,
-      password: DEFAULT_ADMIN.password, // Takara007
-      email_confirm: true,
-    });
-    
-    if (createError) {
-      console.error('[Init] Failed to create admin in Supabase Auth:', createError);
-      return;
-    }
-    
-    console.log(`[Init] Admin created in Supabase Auth, user_id: ${newAuthUser.user.id}`);
-    
-    // KVストアにユーザープロファイルを保存
-    await kv.set(`user:${newAuthUser.user.id}`, {
-      user_id: newAuthUser.user.id,
-      email: DEFAULT_ADMIN.email,
-      login_id: DEFAULT_ADMIN.login_id,
-      name: DEFAULT_ADMIN.name,
-      role: 'admin',
-      active_flag: true,
-      created_at: new Date().toISOString(),
-    });
-    
-    console.log('[Init] ✅ Default admin account created successfully');
-    console.log('[Init]   Login ID: admin');
-    console.log('[Init]   Password: Takara007');
-    console.log('[Init]   User ID:', newAuthUser.user.id);
-  } catch (error) {
-    console.error('[Init] Error ensuring default admin:', error);
-  }
-}
-
-// Initialize default admin on server start
-ensureDefaultAdmin();
 
 Deno.serve(app.fetch);

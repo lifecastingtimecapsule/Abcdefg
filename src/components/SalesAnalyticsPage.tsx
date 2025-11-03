@@ -1,7 +1,7 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useEffect, useState } from 'react';
+import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
 import { TrendingUp, DollarSign, Calendar, Package, ChevronLeft, ChevronRight, Users, XCircle } from 'lucide-react';
-import { useSalesAnalytics } from '../utils/queries';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface SalesData {
@@ -32,10 +32,13 @@ type ViewMode = 'month' | 'year' | 'custom';
 type DataMode = 'period' | 'cumulative';
 
 export function SalesAnalyticsPage() {
-  const currentDate = new Date();
+  const [loading, setLoading] = useState(true);
+  const [salesData, setSalesData] = useState<SalesData | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('month');
   const [dataMode, setDataMode] = useState<DataMode>('period');
   const [showZeroAgeDetail, setShowZeroAgeDetail] = useState(false);
+  
+  const currentDate = new Date();
   const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth() + 1);
   
@@ -44,73 +47,89 @@ export function SalesAnalyticsPage() {
     endDate: new Date().toISOString().split('T')[0],
   });
 
-  // 日付範囲を計算（useMemoでメモ化）
-  const dateRange = useMemo(() => {
-    if (dataMode === 'cumulative') {
-      // 累計データは全期間を取得
-      return {
-        startDate: '2000-01-01',
-        endDate: '2099-12-31',
-        viewMode: 'custom',
-      };
-    }
+  useEffect(() => {
+    loadSalesData();
+  }, [viewMode, selectedYear, selectedMonth, customDateRange, dataMode]);
 
+  const getDateRange = () => {
     if (viewMode === 'month') {
       const startDate = new Date(selectedYear, selectedMonth - 1, 1);
       const endDate = new Date(selectedYear, selectedMonth, 0);
       return {
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
-        viewMode,
       };
     } else if (viewMode === 'year') {
       return {
         startDate: `${selectedYear}-01-01`,
         endDate: `${selectedYear}-12-31`,
-        viewMode,
       };
     } else {
-      return {
-        ...customDateRange,
-        viewMode,
-      };
+      return customDateRange;
     }
-  }, [viewMode, selectedYear, selectedMonth, customDateRange, dataMode]);
+  };
 
-  // React Queryでデータ取得（キャッシュ・リトライ付き）
-  const { data: salesData, isLoading, isError } = useSalesAnalytics(dateRange);
+  const loadSalesData = async () => {
+    try {
+      setLoading(true);
+      
+      if (dataMode === 'cumulative') {
+        // 累計データは全期間を取得
+        const params = new URLSearchParams({
+          startDate: '2000-01-01',
+          endDate: '2099-12-31',
+          viewMode: 'custom',
+        });
+        const data = await apiRequest<SalesData>(`/sales-analytics?${params}`);
+        setSalesData(data);
+      } else {
+        // 期間別データ
+        const dateRange = getDateRange();
+        const params = new URLSearchParams({
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate,
+          viewMode,
+        });
+        const data = await apiRequest<SalesData>(`/sales-analytics?${params}`);
+        setSalesData(data);
+      }
+    } catch (err: any) {
+      console.error('Load sales data error:', err);
+      toast.error('売上データの読み込みに失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // 通貨フォーマット（useCallbackでメモ化）
-  const formatCurrency = useCallback((value: number) => {
+  const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(value);
-  }, []);
+  };
 
-  // イベントハンドラーをuseCallbackでメモ化
-  const handlePreviousMonth = useCallback(() => {
+  const handlePreviousMonth = () => {
     if (selectedMonth === 1) {
       setSelectedMonth(12);
-      setSelectedYear(prev => prev - 1);
+      setSelectedYear(selectedYear - 1);
     } else {
-      setSelectedMonth(prev => prev - 1);
+      setSelectedMonth(selectedMonth - 1);
     }
-  }, [selectedMonth]);
+  };
 
-  const handleNextMonth = useCallback(() => {
+  const handleNextMonth = () => {
     if (selectedMonth === 12) {
       setSelectedMonth(1);
-      setSelectedYear(prev => prev + 1);
+      setSelectedYear(selectedYear + 1);
     } else {
-      setSelectedMonth(prev => prev + 1);
+      setSelectedMonth(selectedMonth + 1);
     }
-  }, [selectedMonth]);
+  };
 
-  const handlePreviousYear = useCallback(() => {
-    setSelectedYear(prev => prev - 1);
-  }, []);
+  const handlePreviousYear = () => {
+    setSelectedYear(selectedYear - 1);
+  };
 
-  const handleNextYear = useCallback(() => {
-    setSelectedYear(prev => prev + 1);
-  }, []);
+  const handleNextYear = () => {
+    setSelectedYear(selectedYear + 1);
+  };
 
   const renderPeriodSelector = () => {
     if (viewMode === 'month') {
@@ -217,32 +236,26 @@ export function SalesAnalyticsPage() {
     }
   };
 
-  // ローディング状態
-  if (isLoading) {
+  if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+      <div className="flex items-center justify-center h-full">
+        <div className="text-slate-500">読み込み中...</div>
       </div>
     );
   }
 
-  // エラー状態
-  if (isError || !salesData) {
+  if (!salesData) {
     return (
-      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl">
-        売上データの読み込みに失敗しました。ページを再読み込みしてください。
+      <div className="flex items-center justify-center h-full">
+        <div className="text-slate-500">データがありません</div>
       </div>
     );
   }
 
-  // キャンセル率の計算（useMemoでメモ化）
-  const { totalCancellationsAndChanges, cancellationRate } = useMemo(() => {
-    const total = salesData.cancelledCount + salesData.rescheduledCount;
-    const rate = salesData.totalReservations > 0 
-      ? ((total / salesData.totalReservations) * 100).toFixed(1)
-      : '0.0';
-    return { totalCancellationsAndChanges: total, cancellationRate: rate };
-  }, [salesData.cancelledCount, salesData.rescheduledCount, salesData.totalReservations]);
+  const totalCancellationsAndChanges = salesData.cancelledCount + salesData.rescheduledCount;
+  const cancellationRate = salesData.totalReservations > 0 
+    ? ((totalCancellationsAndChanges / salesData.totalReservations) * 100).toFixed(1)
+    : '0.0';
 
   return (
     <div className="p-6 max-w-7xl mx-auto">

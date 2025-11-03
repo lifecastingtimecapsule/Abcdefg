@@ -1,19 +1,11 @@
 import { useEffect, useState } from 'react';
-import { apiRequest } from '../utils/api/client';
+import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { Reservation, Customer, Location, User, MenuItem } from '../types';
-import { PermissionGate } from './rbac/PermissionGate';
-import { Permission } from '../utils/rbac/permissions';
 
-interface CalendarPageProps {
-  userRole: string;
-  currentUser?: User | null;
-}
-
-export function CalendarPage({ userRole, currentUser = null }: CalendarPageProps) {
-  
+export function CalendarPage({ userRole }: { userRole: string }) {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -281,19 +273,17 @@ export function CalendarPage({ userRole, currentUser = null }: CalendarPageProps
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-slate-900">カレンダー</h1>
-        <PermissionGate user={currentUser} permission={Permission.CREATE_RESERVATION}>
-          <button
-            onClick={() => {
-              setEditingReservation(null);
-              setReservationMode('edit');
-              setModalOpen(true);
-            }}
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
-          >
-            <Plus className="w-5 h-5" />
-            <span>新規予約</span>
-          </button>
-        </PermissionGate>
+        <button
+          onClick={() => {
+            setEditingReservation(null);
+            setReservationMode('edit');
+            setModalOpen(true);
+          }}
+          className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
+        >
+          <Plus className="w-5 h-5" />
+          <span>新規予約</span>
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">

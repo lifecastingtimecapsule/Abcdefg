@@ -1,7 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed, TrendingUp } from 'lucide-react';
 import { createClient } from '../utils/supabase/client';
-import { NotificationCenter } from './NotificationCenter';
 
 interface LayoutProps {
   children: ReactNode;
@@ -49,15 +48,12 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole }
       {/* Mobile header */}
       <div className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
         <h1 className="text-slate-900">アマレット</h1>
-        <div className="flex items-center gap-2">
-          <NotificationCenter />
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 hover:bg-slate-100 rounded-lg transition"
-          >
-            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
-        </div>
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="p-2 hover:bg-slate-100 rounded-lg transition"
+        >
+          {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+        </button>
       </div>
 
       {/* Mobile menu */}
@@ -111,13 +107,8 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole }
       {/* Desktop sidebar */}
       <aside className="hidden lg:block fixed top-0 left-0 h-full w-64 bg-white border-r border-slate-200 z-30">
         <div className="p-6 border-b border-slate-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-slate-900">アマレット</h1>
-              <p className="text-slate-600 text-sm mt-1">管理システム</p>
-            </div>
-            <NotificationCenter />
-          </div>
+          <h1 className="text-slate-900">アマレット</h1>
+          <p className="text-slate-600 text-sm mt-1">管理システム</p>
         </div>
 
         <nav className="p-4 space-y-4">

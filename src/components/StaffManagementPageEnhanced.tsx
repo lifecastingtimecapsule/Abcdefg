@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form@7.55.0';
-import { apiRequest } from '../utils/api/client';
+import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
 import { Plus, Edit2, UserCheck, UserX, AlertCircle } from 'lucide-react';
 import { User } from '../types';
