@@ -88,6 +88,7 @@
     --color-amber-300: oklch(.879 .169 91.605);
     --color-amber-400: oklch(.828 .189 84.429);
     --color-amber-500: oklch(.769 .188 70.08);
+    --color-amber-600: oklch(.666 .179 58.318);
     --color-amber-700: oklch(.555 .163 48.998);
     --color-amber-900: oklch(.414 .112 45.904);
     --color-yellow-50: oklch(.987 .026 102.212);
@@ -1894,6 +1895,12 @@
   @media (hover: hover) {
     .hover\:border-slate-300:hover {
       border-color: var(--color-slate-300);
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:bg-amber-600:hover {
+      background-color: var(--color-amber-600);
     }
   }
 

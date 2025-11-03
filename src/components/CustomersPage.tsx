@@ -7,7 +7,11 @@ import { WorkOrderModal } from './WorkOrderModal';
 import { ReservationModal } from './ReservationModal';
 import { Customer, Reservation, MenuItem, Location, User, WorkOrder } from '../types';
 
-export function CustomersPage() {
+interface CustomersPageProps {
+  userRole?: string;
+}
+
+export function CustomersPage({ userRole }: CustomersPageProps) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
@@ -154,6 +158,29 @@ export function CustomersPage() {
     return new Date(japanDateStr);
   };
 
+  const handleBatchFixAge = async () => {
+    if (!confirm('既存の顧客データで、月齢が入力されているが年齢が未入力のレコードを一括で補完します。\n\nこの操作により、過去の予約データも年齢別集計に反映されるようになります。\n\n実行しますか？')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const result = await apiRequest('/customers/batch-fix-age', {
+        method: 'POST',
+      });
+      
+      toast.success(result.message || `${result.updated_count}件のデータを補完しました`);
+      
+      // データを再読み込み
+      await loadData();
+    } catch (err: any) {
+      console.error('Batch fix age error:', err);
+      toast.error(err.message || 'データ補完に失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const getAgeDisplay = (customer: any) => {
     // 月齢が入力されている場合は、歳がnullでも0歳として扱う
     const hasMonths = customer.child_age_months !== null && customer.child_age_months !== undefined;
@@ -183,16 +210,28 @@ export function CustomersPage() {
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-slate-900">顧客管理</h1>
-        <button
-          onClick={() => {
-            setEditingCustomer(null);
-            setModalOpen(true);
-          }}
-          className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
-        >
-          <Plus className="w-5 h-5" />
-          <span>新規顧客</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {userRole === 'admin' && (
+            <button
+              onClick={handleBatchFixAge}
+              className="flex items-center gap-2 bg-amber-500 text-white px-4 py-2 rounded-xl hover:bg-amber-600 transition text-sm"
+              title="月齢のみ入力されている顧客データの年齢を0歳に補完"
+            >
+              <AlertCircle className="w-4 h-4" />
+              <span>年齢データ補完</span>
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setEditingCustomer(null);
+              setModalOpen(true);
+            }}
+            className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
+          >
+            <Plus className="w-5 h-5" />
+            <span>新規顧客</span>
+          </button>
+        </div>
       </div>
 
       {/* Search and Results Info */}

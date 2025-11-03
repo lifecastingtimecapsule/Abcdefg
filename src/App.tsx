@@ -102,7 +102,7 @@ export default function App() {
       case 'calendar':
         return <CalendarPage userRole={currentUser.role} />;
       case 'customers':
-        return <CustomersPage />;
+        return <CustomersPage userRole={currentUser.role} />;
       case 'work-orders':
         return <WorkOrdersPage />;
       case 'sales-incentives':

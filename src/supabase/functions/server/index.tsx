@@ -525,6 +525,57 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
   }
 });
 
+// Batch update customer age data (admin only)
+// 既存顧客データで月齢が入力されているが child_age_years が null のレコードを 0 に更新
+app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const customers = await kv.getByPrefix('customer:');
+    let updatedCount = 0;
+    const updatedCustomers = [];
+
+    for (const customer of customers) {
+      // 月齢が入力されていて child_age_years が null または undefined の場合
+      const hasMonths = customer.child_age_months !== null && customer.child_age_months !== undefined;
+      const hasNoYears = customer.child_age_years === null || customer.child_age_years === undefined;
+      
+      if (hasMonths && hasNoYears) {
+        customer.child_age_years = 0;
+        customer.updated_at = new Date().toISOString();
+        await kv.set(`customer:${customer.customer_id}`, customer);
+        updatedCount++;
+        updatedCustomers.push({
+          customer_id: customer.customer_id,
+          customer_code: customer.customer_code,
+          child_name: customer.child_name,
+          child_age_months: customer.child_age_months,
+        });
+
+        console.log(`Fixed customer ${customer.customer_code}: set child_age_years to 0 (has ${customer.child_age_months} months)`);
+      }
+    }
+
+    return c.json({ 
+      success: true, 
+      updated_count: updatedCount,
+      updated_customers: updatedCustomers,
+      message: `${updatedCount}件の顧客データを補完しました（月齢のみ入力されていたレコードに child_age_years = 0 を設定）`
+    });
+  } catch (error) {
+    console.log(`Batch fix customer age error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
 // ========== Reservations ==========
 
 // Get all reservations
