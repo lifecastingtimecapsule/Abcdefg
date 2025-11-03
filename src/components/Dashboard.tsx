@@ -1,22 +1,28 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Calendar, AlertCircle, Clock, Package } from 'lucide-react';
+import { Calendar, AlertCircle, Clock, Package, Users } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrder, Reservation, Customer } from '../types';
 
 interface DashboardData {
-  work_orders: WorkOrder[];
-  upcoming_reservations: Reservation[];
+  top_work_orders: any[];
+  today_reservations: any[];
+  tentative_reservations: any[];
   stats: {
     total_customers: number;
     active_work_orders: number;
     upcoming_reservations: number;
   };
+  overdue_work_orders: number;
 }
 
-export function Dashboard() {
+interface DashboardProps {
+  onNavigate?: (page: string) => void;
+}
+
+export function Dashboard({ onNavigate }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
@@ -150,6 +156,45 @@ export function Dashboard() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <h1 className="text-slate-900">ダッシュボード</h1>
+
+      {/* Stats Overview */}
+      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm text-slate-600">総顧客数</div>
+            <Users className="w-5 h-5 text-blue-500" />
+          </div>
+          <div className="text-3xl text-slate-900">{data?.stats.total_customers || 0}</div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm text-slate-600">制作中</div>
+            <Package className="w-5 h-5 text-yellow-500" />
+          </div>
+          <div className="text-3xl text-slate-900">{data?.stats.active_work_orders || 0}</div>
+        </div>
+
+        <div 
+          onClick={() => onNavigate?.('calendar')}
+          className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 cursor-pointer hover:border-green-300 hover:shadow-md transition"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm text-slate-600">今後の予約</div>
+            <Calendar className="w-5 h-5 text-green-500" />
+          </div>
+          <div className="text-3xl text-slate-900">{data?.stats.upcoming_reservations || 0}</div>
+          <div className="text-xs text-slate-500 mt-2">クリックして予約リストへ</div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm text-slate-600">納期超過</div>
+            <AlertCircle className="w-5 h-5 text-red-500" />
+          </div>
+          <div className="text-3xl text-slate-900">{data?.overdue_work_orders || 0}</div>
+        </div>
+      </section>
 
       {/* Top 5 Priority Work Orders */}
       <section>

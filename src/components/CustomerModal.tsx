@@ -100,9 +100,17 @@ export function CustomerModal({
     if (!customer?.customer_id) return;
     try {
       const result = await apiRequest('/work-orders');
+      
+      // 顧客に紐づく予約IDの一覧を作成
+      const customerReservationIds = reservations
+        .filter(r => r.customer_id === customer.customer_id)
+        .map(r => r.reservation_id);
+      
+      // その予約IDを持つ制作物をフィルタ
       const customerWorkOrders = result.work_orders.filter(
-        (wo: any) => wo.customer_id === customer.customer_id
+        (wo: any) => customerReservationIds.includes(wo.reservation_id)
       );
+      
       setWorkOrders(customerWorkOrders);
     } catch (err: any) {
       console.error('Failed to load work orders:', err);

@@ -7,11 +7,8 @@ import { Dashboard } from './components/Dashboard';
 import { CalendarPage } from './components/CalendarPage';
 import { CustomersPage } from './components/CustomersPage';
 import { WorkOrdersPage } from './components/WorkOrdersPage';
-import { SalesAnalyticsPage } from './components/SalesAnalyticsPage';
-import { IncentivesPage } from './components/IncentivesPage';
-import { StaffManagementPage } from './components/StaffManagementPageEnhanced';
-import { LocationsPage } from './components/LocationsPage';
-import { MenuSettingsPage } from './components/MenuSettingsPage';
+import { SalesIncentivesPage } from './components/SalesIncentivesPage';
+import { OperationsPage } from './components/OperationsPage';
 import { apiRequest, setUnauthorizedCallback } from './utils/api';
 import { User, MeResponse } from './types';
 
@@ -97,29 +94,31 @@ export default function App() {
   }
 
   const renderPage = () => {
-    if (!currentUser) return <Dashboard />;
+    if (!currentUser) return <Dashboard onNavigate={setCurrentPage} />;
     
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard />;
+        return <Dashboard onNavigate={setCurrentPage} />;
       case 'calendar':
         return <CalendarPage userRole={currentUser.role} />;
       case 'customers':
         return <CustomersPage />;
       case 'work-orders':
         return <WorkOrdersPage />;
-      case 'sales-analytics':
-        return currentUser.role === 'admin' ? <SalesAnalyticsPage /> : <Dashboard />;
-      case 'incentives':
-        return <IncentivesPage userRole={currentUser.role} userId={currentUser.user_id} />;
-      case 'staff':
-        return currentUser.role === 'admin' ? <StaffManagementPage /> : <Dashboard />;
-      case 'locations':
-        return currentUser.role === 'admin' ? <LocationsPage /> : <Dashboard />;
-      case 'menu-settings':
-        return currentUser.role === 'admin' ? <MenuSettingsPage /> : <Dashboard />;
+      case 'sales-incentives':
+        return <SalesIncentivesPage 
+          userRole={currentUser.role}
+          userId={currentUser.user_id}
+          onReauthRequest={() => setShowReauthModal(true)} 
+        />;
+      case 'operations':
+        return currentUser.role === 'admin' ? 
+          <OperationsPage 
+            userRole={currentUser.role} 
+            onReauthRequest={() => setShowReauthModal(true)} 
+          /> : <Dashboard onNavigate={setCurrentPage} />;
       default:
-        return <Dashboard />;
+        return <Dashboard onNavigate={setCurrentPage} />;
     }
   };
 

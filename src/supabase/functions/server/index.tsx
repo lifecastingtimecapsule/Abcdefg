@@ -1620,10 +1620,63 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       return { ...r, customer };
     });
 
+    // Calculate statistics
+    const stats = {
+      total_customers: customers.length,
+      active_work_orders: workOrders.filter((wo: any) => wo.status !== '引渡し済').length,
+      upcoming_reservations: reservations.filter((r: any) => {
+        const resDate = new Date(r.reservation_date_time);
+        const now = new Date();
+        return resDate > now && r.status === 'confirmed';
+      }).length,
+    };
+
+    // Get recent week sales data (last 7 days)
+    const weekSalesData = [];
+    const menuItems = await kv.getByPrefix('menu_item:');
+    
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = getJapanDateString(date);
+      
+      const dayReservations = reservations.filter((r: any) => {
+        const resDate = getJapanDateString(new Date(r.reservation_date_time));
+        return resDate === dateStr && r.status !== 'cancelled' && r.status !== 'rescheduled';
+      });
+      
+      let revenue = 0;
+      for (const res of dayReservations) {
+        const menuItem = menuItems.find((m: any) => m.menu_item_id === res.menu_item_id);
+        if (menuItem) {
+          revenue += menuItem.base_price + (res.additional_units || 0) * menuItem.additional_unit_price;
+        }
+      }
+      
+      weekSalesData.push({
+        date: dateStr,
+        revenue,
+        count: dayReservations.length,
+      });
+    }
+
+    // Overdue work orders
+    const overdueWorkOrders = workOrders.filter((wo: any) => {
+      if (wo.status === '引渡し済') return false;
+      const dueDate = new Date(wo.due_date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      dueDate.setHours(0, 0, 0, 0);
+      return dueDate < today;
+    }).length;
+
     return c.json({
       top_work_orders: topWorkOrders,
       today_reservations: todayReservations,
       tentative_reservations: tentativeReservations,
+      stats,
+      week_sales: weekSalesData,
+      overdue_work_orders: overdueWorkOrders,
     });
   } catch (error) {
     console.log(`Get dashboard data error: ${error}`);
@@ -1650,6 +1703,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     const menuItems = await kv.getByPrefix('menu_item:');
     const locations = await kv.getByPrefix('location:');
     const users = await kv.getByPrefix('user:');
+    const customers = await kv.getByPrefix('customer:');
 
     // Filter reservations by date range
     const filteredReservations = reservations.filter((r: any) => {
@@ -1662,18 +1716,18 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     let confirmedRevenue = 0;
     let pendingRevenue = 0;
     let cancelledCount = 0;
+    let totalAdditionalUnits = 0;
+    let reservationsWithAdditionalUnits = 0;
     const dailySalesMap = new Map<string, { revenue: number; count: number }>();
     const monthlySalesMap = new Map<string, { revenue: number; count: number }>();
-    const menuSalesMap = new Map<string, { revenue: number; count: number; menuName: string }>();
-    const locationSalesMap = new Map<string, { revenue: number; count: number; locationName: string }>();
-    const staffSalesMap = new Map<string, { revenue: number; count: number; staffName: string }>();
+    const ageGroupSalesMap = new Map<string, { revenue: number; count: number; ageGroup: string }>();
 
     for (const reservation of filteredReservations) {
       const menuItem = menuItems.find((m: any) => m.menu_item_id === reservation.menu_item_id);
       const price = menuItem ? (menuItem.base_price + (reservation.additional_units || 0) * menuItem.additional_unit_price) : 0;
 
-      // Total revenue (all statuses except cancelled)
-      if (reservation.status !== 'cancelled') {
+      // Total revenue (all statuses except cancelled and rescheduled)
+      if (reservation.status !== 'cancelled' && reservation.status !== 'rescheduled') {
         totalRevenue += price;
 
         // Confirmed revenue
@@ -1684,6 +1738,12 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
         // Pending revenue
         if (reservation.status === 'tentative') {
           pendingRevenue += price;
+        }
+
+        // Additional units statistics
+        if (reservation.additional_units && reservation.additional_units > 0) {
+          totalAdditionalUnits += reservation.additional_units;
+          reservationsWithAdditionalUnits += 1;
         }
 
         // Daily sales
@@ -1700,32 +1760,35 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
         monthlyData.count += 1;
         monthlySalesMap.set(month, monthlyData);
 
-        // Menu sales
-        const menuId = reservation.menu_item_id || 'unknown';
-        const menuName = menuItem?.name || 'メニュー不明';
-        const menuData = menuSalesMap.get(menuId) || { revenue: 0, count: 0, menuName };
-        menuData.revenue += price;
-        menuData.count += 1;
-        menuSalesMap.set(menuId, menuData);
-
-        // Location sales
-        const locationId = reservation.location_id || 'unknown';
-        const location = locations.find((l: any) => l.location_id === locationId);
-        const locationName = location?.name || '場所不明';
-        const locationData = locationSalesMap.get(locationId) || { revenue: 0, count: 0, locationName };
-        locationData.revenue += price;
-        locationData.count += 1;
-        locationSalesMap.set(locationId, locationData);
-
-        // Staff sales
-        const staffId = reservation.staff_id_main || 'unknown';
-        const staff = users.find((u: any) => u.user_id === staffId);
-        const staffName = staff?.name || 'スタッフ不明';
-        const staffData = staffSalesMap.get(staffId) || { revenue: 0, count: 0, staffName };
-        staffData.revenue += price;
-        staffData.count += 1;
-        staffSalesMap.set(staffId, staffData);
+        // Age group sales
+        const customer = customers.find((c: any) => c.id === reservation.customer_id);
+        if (customer && customer.child_age_years !== undefined && customer.child_age_years !== null) {
+          const age = customer.child_age_years;
+          let ageGroup = '';
+          
+          if (age === 0) {
+            ageGroup = '0歳';
+          } else if (age === 1) {
+            ageGroup = '1歳';
+          } else if (age === 2) {
+            ageGroup = '2歳';
+          } else if (age === 3) {
+            ageGroup = '3歳';
+          } else if (age === 4) {
+            ageGroup = '4歳';
+          } else if (age >= 5) {
+            ageGroup = '5歳以上';
+          }
+          
+          if (ageGroup) {
+            const ageData = ageGroupSalesMap.get(ageGroup) || { revenue: 0, count: 0, ageGroup };
+            ageData.revenue += price;
+            ageData.count += 1;
+            ageGroupSalesMap.set(ageGroup, ageData);
+          }
+        }
       } else {
+        // Count cancelled and rescheduled as cancelled
         cancelledCount += 1;
       }
     }
@@ -1755,21 +1818,49 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
       }
     }
 
-    const menuSales = Array.from(menuSalesMap.entries())
-      .map(([id, data]) => ({ name: data.menuName, revenue: data.revenue, count: data.count }))
-      .sort((a, b) => b.revenue - a.revenue);
-
-    const locationSales = Array.from(locationSalesMap.entries())
-      .map(([id, data]) => ({ name: data.locationName, revenue: data.revenue, count: data.count }))
-      .sort((a, b) => b.revenue - a.revenue);
-
-    const staffSales = Array.from(staffSalesMap.entries())
-      .map(([id, data]) => ({ name: data.staffName, revenue: data.revenue, count: data.count }))
-      .sort((a, b) => b.revenue - a.revenue);
-
     // Calculate average order value (confirmed only)
     const confirmedCount = filteredReservations.filter((r: any) => r.status === 'confirmed').length;
     const averageOrderValue = confirmedCount > 0 ? confirmedRevenue / confirmedCount : 0;
+
+    // Calculate week sales (last 7 days) for month view
+    let weekSales = [];
+    if (viewMode === 'month') {
+      const getJapanDateString = (date: Date) => {
+        return new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
+          .toISOString()
+          .slice(0, 10);
+      };
+      
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const dateStr = getJapanDateString(date);
+        
+        const dayReservations = reservations.filter((r: any) => {
+          const resDate = r.reservation_date_time.split('T')[0];
+          return resDate === dateStr && r.status !== 'cancelled' && r.status !== 'rescheduled';
+        });
+        
+        let revenue = 0;
+        for (const res of dayReservations) {
+          const menuItem = menuItems.find((m: any) => m.menu_item_id === res.menu_item_id);
+          if (menuItem) {
+            revenue += menuItem.base_price + (res.additional_units || 0) * menuItem.additional_unit_price;
+          }
+        }
+        
+        weekSales.push({
+          date: dateStr,
+          revenue,
+          count: dayReservations.length,
+        });
+      }
+    }
+
+    // Convert age group map to sorted array
+    const ageOrder = ['0歳', '1歳', '2歳', '3歳', '4歳', '5歳以上'];
+    const ageGroupSales = Array.from(ageGroupSalesMap.values())
+      .sort((a, b) => ageOrder.indexOf(a.ageGroup) - ageOrder.indexOf(b.ageGroup));
 
     return c.json({
       totalRevenue,
@@ -1780,9 +1871,13 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
       cancelledCount,
       dailySales,
       monthlySales: viewMode === 'year' ? monthlySales : undefined,
-      menuSales,
-      locationSales,
-      staffSales,
+      weekSales: viewMode === 'month' ? weekSales : undefined,
+      additionalUnitsStats: {
+        totalUnits: totalAdditionalUnits,
+        reservationsCount: reservationsWithAdditionalUnits,
+        averagePerReservation: reservationsWithAdditionalUnits > 0 ? totalAdditionalUnits / reservationsWithAdditionalUnits : 0,
+      },
+      ageGroupSales,
     });
   } catch (error) {
     console.log(`Get sales analytics error: ${error}`);

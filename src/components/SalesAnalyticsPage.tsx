@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { TrendingUp, DollarSign, Calendar, Users, Package, MapPin, ChevronLeft, ChevronRight } from 'lucide-react';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { TrendingUp, DollarSign, Calendar, Package, ChevronLeft, ChevronRight, Users } from 'lucide-react';
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface SalesData {
   totalRevenue: number;
@@ -12,13 +12,18 @@ interface SalesData {
   pendingRevenue: number;
   cancelledCount: number;
   dailySales: { date: string; revenue: number; count: number }[];
-  menuSales: { name: string; revenue: number; count: number }[];
-  locationSales: { name: string; revenue: number; count: number }[];
-  staffSales: { name: string; revenue: number; count: number }[];
   monthlySales?: { month: string; revenue: number; count: number }[];
+  weekSales?: { date: string; revenue: number; count: number }[];
+  additionalUnitsStats: {
+    totalUnits: number;
+    reservationsCount: number;
+    averagePerReservation: number;
+  };
+  ageGroupSales: { ageGroup: string; revenue: number; count: number }[];
 }
 
-const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1'];
+const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'];
+
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
 type ViewMode = 'month' | 'year' | 'custom';
@@ -285,6 +290,61 @@ export function SalesAnalyticsPage() {
         </div>
       </div>
 
+      {/* Week Sales Chart - Show only in month view */}
+      {viewMode === 'month' && salesData.weekSales && salesData.weekSales.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
+          <h2 className="text-slate-900 mb-4 flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-green-600" />
+            直近7日間の売上推移
+          </h2>
+          <ResponsiveContainer width="100%" height={250}>
+            <LineChart data={salesData.weekSales}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis 
+                dataKey="date" 
+                tickFormatter={(value) => {
+                  const date = new Date(value);
+                  return `${date.getMonth() + 1}/${date.getDate()}`;
+                }}
+                stroke="#64748b"
+              />
+              <YAxis stroke="#64748b" />
+              <Tooltip 
+                formatter={(value: number) => formatCurrency(value)}
+                labelFormatter={(label) => {
+                  const date = new Date(label);
+                  return new Intl.DateTimeFormat('ja-JP').format(date);
+                }}
+                contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="revenue" 
+                name="売上"
+                stroke="#10b981" 
+                strokeWidth={2}
+                dot={{ fill: '#10b981', r: 4 }}
+                activeDot={{ r: 6 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+          <div className="mt-4 grid grid-cols-2 gap-4 pt-4 border-t border-slate-200">
+            <div>
+              <div className="text-sm text-slate-600">週間売上合計</div>
+              <div className="text-xl text-slate-900">
+                {formatCurrency(salesData.weekSales.reduce((sum, day) => sum + day.revenue, 0))}
+              </div>
+            </div>
+            <div>
+              <div className="text-sm text-slate-600">週間予約件数</div>
+              <div className="text-xl text-slate-900">
+                {salesData.weekSales.reduce((sum, day) => sum + day.count, 0)}件
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg p-5 text-white shadow-lg">
@@ -351,128 +411,109 @@ export function SalesAnalyticsPage() {
         </ResponsiveContainer>
       </div>
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Menu Sales */}
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
-          <h2 className="text-slate-900 mb-4 flex items-center gap-2">
-            <Package className="w-5 h-5 text-purple-600" />
-            メニュー別売上
-          </h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={salesData.menuSales}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="name" stroke="#64748b" angle={-45} textAnchor="end" height={100} />
-              <YAxis stroke="#64748b" />
-              <Tooltip
-                formatter={(value: number) => formatCurrency(value)}
-                contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-              />
-              <Legend />
-              <Bar dataKey="revenue" name="売上" fill="#8b5cf6" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Location Sales */}
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
-          <h2 className="text-slate-900 mb-4 flex items-center gap-2">
-            <MapPin className="w-5 h-5 text-pink-600" />
-            場所別売上
-          </h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={salesData.locationSales}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={(entry) => `${entry.name}: ${formatCurrency(entry.revenue)}`}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="revenue"
-              >
-                {salesData.locationSales.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value: number) => formatCurrency(value)} />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Staff Sales */}
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
-        <h2 className="text-slate-900 mb-4 flex items-center gap-2">
-          <Users className="w-5 h-5 text-blue-600" />
-          スタッフ別売上
+      {/* Additional Units Stats */}
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8 mb-6">
+        <h2 className="text-slate-900 mb-6 flex items-center gap-2">
+          <Package className="w-6 h-6 text-green-600" />
+          追加本数の統計
         </h2>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={salesData.staffSales} layout="vertical">
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis type="number" stroke="#64748b" />
-            <YAxis dataKey="name" type="category" stroke="#64748b" width={150} />
-            <Tooltip
-              formatter={(value: number) => formatCurrency(value)}
-              contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-            />
-            <Legend />
-            <Bar dataKey="revenue" name="売上" fill="#3b82f6" />
-          </BarChart>
-        </ResponsiveContainer>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="text-center p-6 bg-gradient-to-br from-green-50 to-green-100 rounded-lg">
+            <div className="text-slate-600 mb-2">合計追加本数</div>
+            <div className="text-5xl text-green-600">{salesData.additionalUnitsStats.totalUnits}</div>
+            <div className="text-sm text-slate-500 mt-1">本</div>
+          </div>
+          <div className="text-center p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg">
+            <div className="text-slate-600 mb-2">追加あり予約</div>
+            <div className="text-3xl text-blue-600">
+              {salesData.totalReservations}件中<br/>
+              {salesData.additionalUnitsStats.reservationsCount}件
+            </div>
+            <div className="text-sm text-slate-500 mt-1">
+              ({salesData.totalReservations > 0 
+                ? ((salesData.additionalUnitsStats.reservationsCount / salesData.totalReservations) * 100).toFixed(1)
+                : '0.0'}%)
+            </div>
+          </div>
+          <div className="text-center p-6 bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg">
+            <div className="text-slate-600 mb-2">平均追加本数</div>
+            <div className="text-5xl text-purple-600">
+              {salesData.additionalUnitsStats.averagePerReservation.toFixed(1)}
+            </div>
+            <div className="text-sm text-slate-500 mt-1">本/件</div>
+          </div>
+          <div className="text-center p-6 bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg">
+            <div className="text-slate-600 mb-2">追加率</div>
+            <div className="text-5xl text-orange-600">
+              {salesData.totalReservations > 0 
+                ? ((salesData.additionalUnitsStats.reservationsCount / salesData.totalReservations) * 100).toFixed(1)
+                : '0.0'}
+            </div>
+            <div className="text-sm text-slate-500 mt-1">%</div>
+          </div>
+        </div>
       </div>
 
-      {/* Summary Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
-        <h2 className="text-slate-900 mb-4">詳細サマリー</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-200">
-                <th className="text-left py-3 px-4 text-slate-700">カテゴリ</th>
-                <th className="text-left py-3 px-4 text-slate-700">項目</th>
-                <th className="text-right py-3 px-4 text-slate-700">売上</th>
-                <th className="text-right py-3 px-4 text-slate-700">件数</th>
-                <th className="text-right py-3 px-4 text-slate-700">平均単価</th>
-              </tr>
-            </thead>
-            <tbody>
-              {salesData.menuSales.map((item, index) => (
-                <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="py-3 px-4 text-slate-600">メニュー</td>
-                  <td className="py-3 px-4 text-slate-900">{item.name}</td>
-                  <td className="py-3 px-4 text-right text-slate-900">{formatCurrency(item.revenue)}</td>
-                  <td className="py-3 px-4 text-right text-slate-600">{item.count}件</td>
-                  <td className="py-3 px-4 text-right text-slate-600">
-                    {formatCurrency(item.count > 0 ? item.revenue / item.count : 0)}
-                  </td>
-                </tr>
-              ))}
-              {salesData.locationSales.map((item, index) => (
-                <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="py-3 px-4 text-slate-600">場所</td>
-                  <td className="py-3 px-4 text-slate-900">{item.name}</td>
-                  <td className="py-3 px-4 text-right text-slate-900">{formatCurrency(item.revenue)}</td>
-                  <td className="py-3 px-4 text-right text-slate-600">{item.count}件</td>
-                  <td className="py-3 px-4 text-right text-slate-600">
-                    {formatCurrency(item.count > 0 ? item.revenue / item.count : 0)}
-                  </td>
-                </tr>
-              ))}
-              {salesData.staffSales.map((item, index) => (
-                <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="py-3 px-4 text-slate-600">スタッフ</td>
-                  <td className="py-3 px-4 text-slate-900">{item.name}</td>
-                  <td className="py-3 px-4 text-right text-slate-900">{formatCurrency(item.revenue)}</td>
-                  <td className="py-3 px-4 text-right text-slate-600">{item.count}件</td>
-                  <td className="py-3 px-4 text-right text-slate-600">
-                    {formatCurrency(item.count > 0 ? item.revenue / item.count : 0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Age Group Analysis */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Age Group Sales Chart */}
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+          <h2 className="text-slate-900 mb-4 flex items-center gap-2">
+            <Users className="w-5 h-5 text-blue-600" />
+            年齢別売上
+          </h2>
+          {salesData.ageGroupSales.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={salesData.ageGroupSales}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="ageGroup" stroke="#64748b" />
+                <YAxis stroke="#64748b" />
+                <Tooltip
+                  formatter={(value: number) => formatCurrency(value)}
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+                />
+                <Legend />
+                <Bar dataKey="revenue" name="売上" fill="#3b82f6" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[300px] text-slate-500">
+              年齢データがありません
+            </div>
+          )}
+        </div>
+
+        {/* Age Group Distribution */}
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+          <h2 className="text-slate-900 mb-4 flex items-center gap-2">
+            <Users className="w-5 h-5 text-purple-600" />
+            年齢別比率
+          </h2>
+          {salesData.ageGroupSales.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={salesData.ageGroupSales}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={(entry) => `${entry.ageGroup}: ${entry.count}件`}
+                  outerRadius={100}
+                  fill="#8884d8"
+                  dataKey="count"
+                >
+                  {salesData.ageGroupSales.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[300px] text-slate-500">
+              年齢データがありません
+            </div>
+          )}
         </div>
       </div>
     </div>
