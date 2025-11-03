@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, Edit2, Search, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
+import { Plus, Edit2, Search, ChevronDown, ChevronUp, Calendar, Package, Clock, AlertCircle } from 'lucide-react';
 import { CustomerModal } from './CustomerModal';
-import { Customer, Reservation, MenuItem, Location, User } from '../types';
+import { WorkOrderModal } from './WorkOrderModal';
+import { ReservationModal } from './ReservationModal';
+import { Customer, Reservation, MenuItem, Location, User, WorkOrder } from '../types';
 
 export function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [staffData, setStaffData] = useState<User[]>([]);
@@ -15,6 +18,10 @@ export function CustomersPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchInput, setSearchInput] = useState(''); // For debounced search
   const [modalOpen, setModalOpen] = useState(false);
+  const [workOrderModalOpen, setWorkOrderModalOpen] = useState(false);
+  const [reservationModalOpen, setReservationModalOpen] = useState(false);
+  const [selectedWorkOrder, setSelectedWorkOrder] = useState<WorkOrder | null>(null);
+  const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [expandedCustomers, setExpandedCustomers] = useState<Set<string>>(new Set());
   
@@ -52,9 +59,10 @@ export function CustomersPage() {
         params.append('search', searchTerm);
       }
 
-      const [custData, resData, menuData, locData, staffDataRes] = await Promise.all([
+      const [custData, resData, woData, menuData, locData, staffDataRes] = await Promise.all([
         apiRequest(`/customers?${params.toString()}`),
         apiRequest('/reservations'),
+        apiRequest('/work-orders'),
         apiRequest('/menu-items'),
         apiRequest('/locations'),
         apiRequest('/users').catch(() => ({ users: [] })), // Catch error if not admin
@@ -64,6 +72,7 @@ export function CustomersPage() {
       setTotal(custData.total || 0);
       setTotalPages(custData.totalPages || 1);
       setReservations(resData.reservations || []);
+      setWorkOrders(woData.work_orders || []);
       setMenuItems(menuData.menu_items || []);
       setLocations(locData.locations || []);
       setStaffData(staffDataRes.users || []);
@@ -97,6 +106,16 @@ export function CustomersPage() {
       .sort((a, b) => new Date(b.reservation_date_time).getTime() - new Date(a.reservation_date_time).getTime());
   };
 
+  const getCustomerWorkOrders = (customerId: string) => {
+    const customerReservationIds = reservations
+      .filter(r => r.customer_id === customerId)
+      .map(r => r.reservation_id);
+    
+    return workOrders
+      .filter(wo => customerReservationIds.includes(wo.reservation_id))
+      .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime());
+  };
+
   const getMenuName = (menuItemId: string) => {
     const menu = menuItems.find(m => m.menu_item_id === menuItemId);
     return menu?.name || '-';
@@ -117,6 +136,22 @@ export function CustomersPage() {
       minute: '2-digit',
       timeZone: 'Asia/Tokyo',
     }).format(date);
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('ja-JP', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      timeZone: 'Asia/Tokyo',
+    }).format(date);
+  };
+
+  const getJapanToday = () => {
+    const now = new Date();
+    const japanDateStr = now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
+    return new Date(japanDateStr);
   };
 
   const getAgeDisplay = (customer: any) => {
@@ -187,163 +222,66 @@ export function CustomersPage() {
             const customerReservations = getCustomerReservations(customer.customer_id);
             const isExpanded = expandedCustomers.has(customer.customer_id);
             
+            const customerWorkOrders = getCustomerWorkOrders(customer.customer_id);
+            
             return (
               <div
                 key={customer.customer_id}
-                className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 hover:shadow-md transition cursor-pointer"
-                onClick={() => {
-                  setEditingCustomer(customer);
-                  setModalOpen(true);
-                }}
+                className="bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition overflow-hidden"
               >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    {customer.external_customer_number && (
-                      <div className="text-sm text-blue-600 mb-1">顧客番号: {customer.external_customer_number}</div>
-                    )}
-                    <h3 className="text-slate-900 mb-1">
-                      {customer.parent_name || '保護者名未設定'}
-                      {customer.parent_name_kana && (
-                        <span className="text-sm text-slate-500 ml-2">({customer.parent_name_kana})</span>
+                <div 
+                  className="p-6 cursor-pointer"
+                  onClick={() => {
+                    setEditingCustomer(customer);
+                    setModalOpen(true);
+                  }}
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex-1">
+                      {customer.external_customer_number && (
+                        <div className="text-sm text-blue-600 mb-1">顧客番号: {customer.external_customer_number}</div>
                       )}
-                    </h3>
-                    <p className="text-slate-600 text-sm mb-1">
-                      お子さま: {customer.child_name || '-'}
-                      {customer.child_name_kana && (
-                        <span className="text-slate-500"> ({customer.child_name_kana})</span>
-                      )}
-                    </p>
-                    {getAgeDisplay(customer) && (
-                      <p className="text-slate-600 text-sm">
-                        年齢: {getAgeDisplay(customer)}
+                      <h3 className="text-slate-900 mb-1">
+                        {customer.parent_name || '保護者名未設定'}
+                        {customer.parent_name_kana && (
+                          <span className="text-sm text-slate-500 ml-2">({customer.parent_name_kana})</span>
+                        )}
+                      </h3>
+                      <p className="text-slate-600 text-sm mb-1">
+                        お子さま: {customer.child_name || '-'}
+                        {customer.child_name_kana && (
+                          <span className="text-slate-500"> ({customer.child_name_kana})</span>
+                        )}
                       </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-2 text-sm text-slate-700">
-                  <div className="flex items-center gap-2">
-                    <span className="text-slate-500">電話:</span>
-                    <span>{customer.phone || '-'}</span>
-                  </div>
-                  {customer.address_text && (
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-500 shrink-0">住所:</span>
-                      <span className="break-words">{customer.address_text}</span>
-                    </div>
-                  )}
-                  {customer.notes_internal && (
-                    <div className="mt-3 pt-3 border-t border-slate-200">
-                      <span className="text-slate-500">メモ: </span>
-                      <span className="text-slate-600">{customer.notes_internal}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Reservation History Section */}
-                {customerReservations.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-slate-200">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleCustomerExpansion(customer.customer_id);
-                      }}
-                      className="flex items-center justify-between w-full text-left hover:bg-slate-50 rounded-lg p-2 -mx-2 transition"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-indigo-600" />
-                        <span className="text-sm text-slate-700">
-                          予約履歴 ({customerReservations.length}件)
-                        </span>
-                      </div>
-                      {isExpanded ? (
-                        <ChevronUp className="w-4 h-4 text-slate-400" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      {getAgeDisplay(customer) && (
+                        <p className="text-slate-600 text-sm">
+                          年齢: {getAgeDisplay(customer)}
+                        </p>
                       )}
-                    </button>
+                    </div>
+                  </div>
 
-                    {isExpanded && (
-                      <div className="mt-3 space-y-3">
-                        {customerReservations.map((reservation) => (
-                          <div
-                            key={reservation.reservation_id}
-                            className="bg-slate-50 rounded-lg p-3 text-sm"
-                          >
-                            <div className="flex items-start justify-between mb-2">
-                              <div className="text-slate-900">
-                                {formatDateTime(reservation.reservation_date_time)}
-                              </div>
-                              <div className="flex gap-1 flex-wrap justify-end">
-                                <span
-                                  className={`inline-block px-2 py-0.5 rounded-full text-xs ${
-                                    reservation.status === 'confirmed'
-                                      ? 'bg-blue-100 text-blue-700'
-                                      : reservation.status === 'tentative'
-                                      ? 'bg-yellow-100 text-yellow-700'
-                                      : reservation.status === 'done'
-                                      ? 'bg-green-100 text-green-700'
-                                      : 'bg-slate-100 text-slate-700'
-                                  }`}
-                                >
-                                  {reservation.status === 'confirmed'
-                                    ? '✓ 確定'
-                                    : reservation.status === 'tentative'
-                                    ? '仮予約'
-                                    : reservation.status === 'done'
-                                    ? '完了'
-                                    : reservation.status === 'canceled'
-                                    ? 'キャンセル'
-                                    : reservation.status}
-                                </span>
-                                {reservation.payment_status === 'paid' && (
-                                  <span className="inline-block px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">
-                                    💰 支払済
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="space-y-1 text-slate-600">
-                              <div className="flex items-start gap-2">
-                                <span className="text-slate-500 shrink-0">メニュー:</span>
-                                <div>
-                                  <span className="text-indigo-700">{getMenuName(reservation.menu_item_id)}</span>
-                                  {reservation.additional_units > 0 && (
-                                    <span className="ml-1 text-indigo-600">
-                                      + 追加{reservation.additional_units}部位
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <span className="text-slate-500">場所:</span>
-                                <span>{getLocationName(reservation.location_id)}</span>
-                              </div>
-
-                              {reservation.work_required && (
-                                <div className="flex items-start gap-2">
-                                  <span className="text-slate-500 shrink-0">制作内容:</span>
-                                  <span>{reservation.work_required}</span>
-                                </div>
-                              )}
-
-                              {reservation.amount_total !== null && reservation.amount_total !== undefined && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-slate-500">金額:</span>
-                                  <span className="text-slate-900">
-                                    ¥{reservation.amount_total.toLocaleString()}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                  <div className="space-y-2 text-sm text-slate-700">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">電話:</span>
+                      <span>{customer.phone || '-'}</span>
+                    </div>
+                    {customer.address_text && (
+                      <div className="flex items-start gap-2">
+                        <span className="text-slate-500 shrink-0">住所:</span>
+                        <span className="break-words">{customer.address_text}</span>
+                      </div>
+                    )}
+                    {customer.notes_internal && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        <span className="text-slate-500">メモ: </span>
+                        <span className="text-slate-600">{customer.notes_internal}</span>
                       </div>
                     )}
                   </div>
-                )}
+                </div>
+
+
               </div>
             );
           })
@@ -412,6 +350,44 @@ export function CustomersPage() {
           onClose={() => {
             setModalOpen(false);
             setEditingCustomer(null);
+          }}
+        />
+      )}
+
+      {workOrderModalOpen && selectedWorkOrder && (
+        <WorkOrderModal
+          workOrder={selectedWorkOrder}
+          reservations={reservations}
+          customers={customers}
+          mode="view"
+          onSave={async () => {
+            setWorkOrderModalOpen(false);
+            setSelectedWorkOrder(null);
+            await loadData();
+          }}
+          onClose={() => {
+            setWorkOrderModalOpen(false);
+            setSelectedWorkOrder(null);
+          }}
+        />
+      )}
+
+      {reservationModalOpen && selectedReservation && (
+        <ReservationModal
+          reservation={selectedReservation}
+          customers={customers}
+          menuItems={menuItems}
+          locations={locations}
+          users={staffData}
+          mode="view"
+          onSave={async () => {
+            setReservationModalOpen(false);
+            setSelectedReservation(null);
+            await loadData();
+          }}
+          onClose={() => {
+            setReservationModalOpen(false);
+            setSelectedReservation(null);
           }}
         />
       )}

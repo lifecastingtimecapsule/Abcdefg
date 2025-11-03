@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { X, Edit2, Calendar, MapPin, Package } from 'lucide-react';
+import { X, Edit2, Calendar, MapPin, Package, Clock, AlertCircle } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
+import { WorkOrderModal } from './WorkOrderModal';
 
 interface CustomerModalProps {
   customer: any | null;
@@ -26,7 +27,7 @@ export function CustomerModal({
   staffData = []
 }: CustomerModalProps) {
   const [currentMode, setCurrentMode] = useState<'view' | 'edit'>(mode);
-  const [activeTab, setActiveTab] = useState<'info' | 'reservations'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'reservations' | 'workOrders'>('info');
   const [formData, setFormData] = useState({
     external_customer_number: '',
     parent_name: '',
@@ -45,7 +46,12 @@ export function CustomerModal({
   const [error, setError] = useState('');
   const [selectedReservation, setSelectedReservation] = useState<any>(null);
   const [reservationModalOpen, setReservationModalOpen] = useState(false);
+  const [reservationModalMode, setReservationModalMode] = useState<'view' | 'edit'>('view');
   const [customers, setCustomers] = useState<any[]>([]);
+  const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [selectedWorkOrder, setSelectedWorkOrder] = useState<any>(null);
+  const [workOrderModalOpen, setWorkOrderModalOpen] = useState(false);
+  const [workOrderModalMode, setWorkOrderModalMode] = useState<'view' | 'edit'>('view');
 
   useEffect(() => {
     setCurrentMode(mode);
@@ -76,7 +82,10 @@ export function CustomerModal({
 
   useEffect(() => {
     loadCustomers();
-  }, []);
+    if (customer) {
+      loadWorkOrders();
+    }
+  }, [customer]);
 
   const loadCustomers = async () => {
     try {
@@ -87,9 +96,17 @@ export function CustomerModal({
     }
   };
 
-  const handleReservationClick = (reservation: any) => {
-    setSelectedReservation(reservation);
-    setReservationModalOpen(true);
+  const loadWorkOrders = async () => {
+    if (!customer?.customer_id) return;
+    try {
+      const result = await apiRequest('/work-orders');
+      const customerWorkOrders = result.work_orders.filter(
+        (wo: any) => wo.customer_id === customer.customer_id
+      );
+      setWorkOrders(customerWorkOrders);
+    } catch (err: any) {
+      console.error('Failed to load work orders:', err);
+    }
   };
 
   const handleReservationModalClose = () => {
@@ -182,9 +199,34 @@ export function CustomerModal({
     }
   };
 
+  const handleReservationClick = (reservation: any, mode: 'view' | 'edit' = 'view') => {
+    setSelectedReservation(reservation);
+    setReservationModalMode(mode);
+    setReservationModalOpen(true);
+  };
+
+  const handleWorkOrderClick = (workOrder: any, mode: 'view' | 'edit' = 'view') => {
+    setSelectedWorkOrder(workOrder);
+    setWorkOrderModalMode(mode);
+    setWorkOrderModalOpen(true);
+  };
+
+  const getJapanToday = () => {
+    const now = new Date();
+    const japanTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+    japanTime.setHours(0, 0, 0, 0);
+    return japanTime;
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8">
+    <div 
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between p-6 border-b border-slate-200">
           <div>
             <h2 className="text-slate-900">{title}</h2>
@@ -223,10 +265,106 @@ export function CustomerModal({
               <Calendar className="w-4 h-4" />
               <span>予約履歴 ({reservations.length})</span>
             </button>
+            <button
+              onClick={() => setActiveTab('workOrders')}
+              className={`flex-1 px-6 py-3 transition flex items-center justify-center gap-2 ${
+                activeTab === 'workOrders'
+                  ? 'border-b-2 border-blue-500 text-blue-600'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              <Package className="w-4 h-4" />
+              <span>作品 ({workOrders.length})</span>
+            </button>
           </div>
         )}
 
-        {activeTab === 'reservations' && customer && isViewMode ? (
+        {activeTab === 'workOrders' && customer && isViewMode ? (
+          <div className="p-6">
+            {workOrders.length === 0 ? (
+              <div className="text-center py-12 text-slate-500">
+                <Package className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+                <p>作品がありません</p>
+              </div>
+            ) : (
+              <div className="space-y-4 max-h-[500px] overflow-y-auto">
+                {workOrders.map((workOrder) => {
+                  const isOverdue = workOrder.status !== '引渡し済' && new Date(workOrder.due_date) < getJapanToday();
+                  return (
+                    <div
+                      key={workOrder.work_order_id}
+                      onClick={() => handleWorkOrderClick(workOrder, 'view')}
+                      className={`rounded-xl p-4 border cursor-pointer hover:border-blue-300 transition ${
+                        isOverdue ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <div className="text-slate-900 mb-1 flex items-center gap-2">
+                            {workOrder.product_type}
+                            {isOverdue && <AlertCircle className="w-4 h-4 text-red-500" />}
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${
+                              workOrder.status === '制作中' ? 'bg-yellow-100 text-yellow-700' :
+                              workOrder.status === 'お渡し待ち' ? 'bg-green-100 text-green-700' :
+                              'bg-blue-100 text-blue-700'
+                            }`}>
+                              {workOrder.status}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleWorkOrderClick(workOrder, 'edit');
+                          }}
+                          className="ml-2 p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition shrink-0"
+                          title="作品を編集"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 text-sm text-slate-600">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-slate-400" />
+                          <span className={isOverdue ? 'text-red-600' : ''}>
+                            納期: {formatDate(workOrder.due_date)}
+                          </span>
+                        </div>
+
+                        {workOrder.assigned_to && (
+                          <div className="flex items-start gap-2">
+                            <span className="text-slate-500 shrink-0">担当:</span>
+                            <span>{staffData.find((s: any) => s.user_id === workOrder.assigned_to)?.name || '未割当'}</span>
+                          </div>
+                        )}
+
+                        {workOrder.notes && (
+                          <div className="flex items-start gap-2 pt-2 border-t border-slate-200">
+                            <span className="text-slate-500 shrink-0">メモ:</span>
+                            <span className="text-slate-700">{workOrder.notes}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 px-4 py-3 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition text-center"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        ) : activeTab === 'reservations' && customer && isViewMode ? (
           <div className="p-6">
             {reservations.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
@@ -238,7 +376,7 @@ export function CustomerModal({
                 {reservations.map((reservation) => (
                   <div
                     key={reservation.reservation_id}
-                    onClick={() => handleReservationClick(reservation)}
+                    onClick={() => handleReservationClick(reservation, 'view')}
                     className="bg-slate-50 rounded-xl p-4 border border-slate-200 cursor-pointer hover:bg-slate-100 hover:border-blue-300 transition"
                   >
                     <div className="flex items-start justify-between mb-3">
@@ -265,6 +403,16 @@ export function CustomerModal({
                           )}
                         </div>
                       </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleReservationClick(reservation, 'edit');
+                        }}
+                        className="ml-2 p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition shrink-0"
+                        title="予約を編集"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
                     </div>
 
                     <div className="space-y-2 text-sm text-slate-600">
@@ -321,7 +469,7 @@ export function CustomerModal({
             {/* 顧客番号 */}
             <div>
               <label className="block text-slate-700 mb-2">
-                表示用顧客番号
+                顧客番号
                 {!isViewMode && <span className="text-slate-500 text-sm ml-2">（任意）</span>}
               </label>
               <input
@@ -445,14 +593,31 @@ export function CustomerModal({
 
             <div>
               <label className="block text-slate-700 mb-2">LINE URL</label>
-              <input
-                type="url"
-                value={formData.line_url}
-                onChange={(e) => setFormData({ ...formData, line_url: e.target.value })}
-                placeholder="例: https://line.me/ti/p/..."
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={isViewMode}
-              />
+              {isViewMode && formData.line_url ? (
+                <a
+                  href={formData.line_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 w-full px-4 py-2 bg-green-50 border border-green-300 rounded-xl text-green-700 hover:bg-green-100 hover:border-green-400 transition-colors"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314" />
+                  </svg>
+                  <span className="truncate">{formData.line_url}</span>
+                  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+              ) : (
+                <input
+                  type="url"
+                  value={formData.line_url}
+                  onChange={(e) => setFormData({ ...formData, line_url: e.target.value })}
+                  placeholder="例: https://line.me/ti/p/..."
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                  disabled={isViewMode}
+                />
+              )}
             </div>
           </div>
 
@@ -548,15 +713,46 @@ export function CustomerModal({
       </div>
 
       {/* Reservation Modal */}
-      {reservationModalOpen && (
+      {reservationModalOpen && selectedReservation && (
         <ReservationModal
           reservation={selectedReservation}
           customers={customers}
           menuItems={menuItems}
           locations={locations}
           users={staffData}
-          onSave={handleReservationModalSave}
-          onClose={handleReservationModalClose}
+          mode={reservationModalMode}
+          hideCustomerInfo={true}
+          onSave={async () => {
+            setReservationModalOpen(false);
+            setSelectedReservation(null);
+            await loadCustomers();
+            onSave();
+          }}
+          onClose={() => {
+            setReservationModalOpen(false);
+            setSelectedReservation(null);
+          }}
+        />
+      )}
+
+      {/* Work Order Modal */}
+      {workOrderModalOpen && selectedWorkOrder && (
+        <WorkOrderModal
+          workOrder={selectedWorkOrder}
+          customers={customers}
+          reservations={reservations}
+          users={staffData}
+          mode={workOrderModalMode}
+          onSave={async () => {
+            setWorkOrderModalOpen(false);
+            setSelectedWorkOrder(null);
+            await loadWorkOrders();
+            onSave();
+          }}
+          onClose={() => {
+            setWorkOrderModalOpen(false);
+            setSelectedWorkOrder(null);
+          }}
         />
       )}
     </div>

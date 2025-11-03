@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { X, Search, User, Phone, Hash, Edit2, ExternalLink, UtensilsCrossed, AlertCircle, Calendar, MapPin } from 'lucide-react';
+import { X, Search, User, Phone, Hash, Edit2, ExternalLink, AlertCircle, Calendar, MapPin } from 'lucide-react';
 
 interface ReservationModalProps {
   reservation: any | null;
@@ -12,6 +12,7 @@ interface ReservationModalProps {
   onSave: () => void;
   onClose: () => void;
   mode?: 'view' | 'edit';
+  hideCustomerInfo?: boolean;
 }
 
 export function ReservationModal({ 
@@ -22,7 +23,8 @@ export function ReservationModal({
   menuItems: propMenuItems,
   onSave, 
   onClose,
-  mode = 'edit' 
+  mode = 'edit',
+  hideCustomerInfo = false
 }: ReservationModalProps) {
   const [currentMode, setCurrentMode] = useState<'view' | 'edit'>(mode);
 
@@ -50,7 +52,7 @@ export function ReservationModal({
     location_id: '',
     customer_id: '',
     staff_id_main: '',
-    status: 'tentative',
+    status: 'confirmed',
     payment_status: 'unpaid',
     work_required: '',
     notes_staff: '',
@@ -77,10 +79,17 @@ export function ReservationModal({
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [showSaveModeDialog, setShowSaveModeDialog] = useState(false);
   const [initialCustomerData, setInitialCustomerData] = useState<any>(null);
+  const [workOrders, setWorkOrders] = useState<any[]>([]);
 
   useEffect(() => {
     setCurrentMode(mode);
   }, [mode]);
+
+  useEffect(() => {
+    if (reservation) {
+      loadWorkOrders();
+    }
+  }, [reservation]);
 
   useEffect(() => {
     loadMenuItems();
@@ -138,6 +147,18 @@ export function ReservationModal({
       }
     } catch (err) {
       console.error('Failed to load menu items:', err);
+    }
+  };
+
+  const loadWorkOrders = async () => {
+    try {
+      const data = await apiRequest('/work-orders');
+      const relatedWorkOrders = data.work_orders.filter(
+        (wo: any) => wo.reservation_id === reservation?.reservation_id
+      );
+      setWorkOrders(relatedWorkOrders);
+    } catch (err) {
+      console.error('Failed to load work orders:', err);
     }
   };
 
@@ -323,13 +344,7 @@ export function ReservationModal({
   const isViewMode = currentMode === 'view';
   const title = isViewMode ? '予約詳細' : (reservation ? '予約編集' : '新規予約');
 
-  // Helper functions for view mode
-  const getCustomerName = () => {
-    return formData.child_name && formData.parent_name
-      ? `${formData.child_name}（${formData.parent_name}）`
-      : formData.child_name || formData.parent_name || '未設定';
-  };
-
+  // Helper functions for display
   const getLocationName = () => {
     const location = locations.find(l => l.location_id === formData.location_id);
     return location ? location.location_name : '未設定';
@@ -362,9 +377,9 @@ export function ReservationModal({
   const getStatusDisplay = (status: string) => {
     switch (status) {
       case 'confirmed': return { text: '✓ 確定', class: 'bg-blue-100 text-blue-700' };
-      case 'tentative': return { text: '仮予約', class: 'bg-yellow-100 text-yellow-700' };
-      case 'done': return { text: '完了', class: 'bg-green-100 text-green-700' };
-      case 'canceled': return { text: 'キャンセル', class: 'bg-slate-100 text-slate-700' };
+      case 'tentative': return { text: '⏳ スタンバイ', class: 'bg-amber-100 text-amber-700' };
+      case 'cancelled': return { text: '✕ キャンセル', class: 'bg-red-100 text-red-700' };
+      case 'rescheduled': return { text: '🔄 予約変更', class: 'bg-purple-100 text-purple-700' };
       default: return { text: status, class: 'bg-slate-100 text-slate-700' };
     }
   };
@@ -378,8 +393,14 @@ export function ReservationModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+    <div 
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between p-5 border-b border-slate-200 flex-shrink-0">
           <div>
             <h2 className="text-slate-900">{title}</h2>
@@ -405,290 +426,139 @@ export function ReservationModal({
           </div>
         </div>
 
-        {isViewMode ? (
-          // View Mode
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {/* Customer Information */}
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-100">
-              <div className="flex items-center gap-2 mb-4">
-                <User className="w-5 h-5 text-blue-600" />
-                <h3 className="text-slate-900">顧客情報</h3>
-              </div>
-              <div className="space-y-3 text-sm">
-                <div className="flex items-start">
-                  <span className="text-slate-600 w-32 shrink-0">お子さま名:</span>
-                  <span className="text-slate-900">{formData.child_name || '未設定'}</span>
+        {/* Unified Form for Both View and Edit Modes */}
+        <form onSubmit={handleSubmit} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} className="flex-1 overflow-y-auto">
+          <div className="p-5 space-y-5">
+            {/* Customer Search - Only for New Reservations in Edit Mode */}
+            {!reservation && !isViewMode && (
+              <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <Search className="w-4 h-4 text-slate-600" />
+                  <h3 className="text-sm text-slate-900">既存顧客を検索</h3>
                 </div>
-                <div className="flex items-start">
-                  <span className="text-slate-600 w-32 shrink-0">保護者名:</span>
-                  <span className="text-slate-900">{formData.parent_name || '未設定'}</span>
-                </div>
-                {formData.child_age_years && (
-                  <div className="flex items-start">
-                    <span className="text-slate-600 w-32 shrink-0">年齢:</span>
-                    <span className="text-slate-900">
-                      {formData.child_age_years}歳
-                      {formData.child_age_months && ` ${formData.child_age_months}ヶ月`}
-                    </span>
-                  </div>
-                )}
-                {formData.phone && (
-                  <div className="flex items-start">
-                    <span className="text-slate-600 w-32 shrink-0">電話番号:</span>
-                    <span className="text-slate-900">{formData.phone}</span>
-                  </div>
-                )}
-                {formData.line_url && (
-                  <div className="flex items-start">
-                    <span className="text-slate-600 w-32 shrink-0">LINE:</span>
-                    <a
-                      href={formData.line_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition text-xs"
+                
+                <div className="space-y-2.5">
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSearchType('phone')}
+                      disabled={isViewMode}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition text-sm ${
+                        searchType === 'phone'
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>開く</span>
-                    </a>
+                      <Phone className="w-3.5 h-3.5" />
+                      <span>電話番号</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSearchType('code')}
+                      disabled={isViewMode}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition text-sm ${
+                        searchType === 'code'
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <Hash className="w-3.5 h-3.5" />
+                      <span>顧客番号</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSearchType('name')}
+                      disabled={isViewMode}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition text-sm ${
+                        searchType === 'name'
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      <span>名前</span>
+                    </button>
                   </div>
-                )}
-                {formData.notes_internal && (
-                  <div className="flex items-start pt-3 border-t border-blue-200">
-                    <span className="text-slate-600 w-32 shrink-0">内部メモ:</span>
-                    <span className="text-slate-900">{formData.notes_internal}</span>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSearch())}
+                      placeholder={
+                        searchType === 'phone' ? '090-1234-5678' :
+                        searchType === 'code' ? 'C00001' :
+                        '山田 花子'
+                      }
+                      disabled={isViewMode}
+                      className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSearch}
+                      disabled={isViewMode}
+                      className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition shadow-sm text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      検索
+                    </button>
                   </div>
-                )}
-              </div>
-            </div>
 
-            {/* Reservation Details */}
-            <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-5 border border-purple-100">
-              <div className="flex items-center gap-2 mb-4">
-                <Calendar className="w-5 h-5 text-purple-600" />
-                <h3 className="text-slate-900">予約詳細</h3>
-              </div>
-              <div className="space-y-3 text-sm">
-                <div className="flex items-start">
-                  <span className="text-slate-600 w-32 shrink-0">予約日時:</span>
-                  <div>
-                    <div className="text-slate-900">
-                      {formatDate(formData.reservation_date)} {formatTime(formData.reservation_time)}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      所要時間: {formData.duration_minutes}分
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-start">
-                  <span className="text-slate-600 w-32 shrink-0">拠点:</span>
-                  <span className="text-slate-900">{getLocationName()}</span>
-                </div>
-                <div className="flex items-start">
-                  <span className="text-slate-600 w-32 shrink-0">担当スタッフ:</span>
-                  <span className="text-slate-900">{getStaffName()}</span>
-                </div>
-                <div className="flex items-start">
-                  <span className="text-slate-600 w-32 shrink-0">ステータス:</span>
-                  <div className="flex gap-2 flex-wrap">
-                    <span className={`inline-block px-3 py-1 rounded-full text-xs ${getStatusDisplay(formData.status).class}`}>
-                      {getStatusDisplay(formData.status).text}
-                    </span>
-                    <span className={`inline-block px-3 py-1 rounded-full text-xs ${getPaymentStatusDisplay(formData.payment_status).class}`}>
-                      {getPaymentStatusDisplay(formData.payment_status).text}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Menu Information */}
-            {formData.menu_item_id && (
-              <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5 border border-green-100">
-                <div className="flex items-center gap-2 mb-4">
-                  <UtensilsCrossed className="w-5 h-5 text-green-600" />
-                  <h3 className="text-slate-900">メニュー</h3>
-                </div>
-                <div className="space-y-3 text-sm">
-                  <div className="flex items-start">
-                    <span className="text-slate-600 w-32 shrink-0">メニュー:</span>
-                    <div className="flex-1">
-                      <div className="text-slate-900">{getMenuName()}</div>
-                      {parseInt(formData.additional_units) > 0 && (
-                        <div className="text-xs text-green-700 mt-1">
-                          + 追加{formData.additional_units}部位
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {(() => {
-                    const selectedMenu = menuItems.find(m => m.menu_item_id === formData.menu_item_id);
-                    if (!selectedMenu) return null;
-                    const additionalUnits = parseInt(formData.additional_units) || 0;
-                    const totalPrice = selectedMenu.base_price + (selectedMenu.additional_unit_price * additionalUnits);
-                    return (
-                      <div className="flex items-start pt-3 border-t border-green-200">
-                        <span className="text-slate-600 w-32 shrink-0">料金:</span>
-                        <div>
-                          <div className="text-slate-900">¥{totalPrice.toLocaleString()}</div>
-                          <div className="text-xs text-slate-500 mt-1">
-                            基本料金: ¥{selectedMenu.base_price.toLocaleString()}
-                            {additionalUnits > 0 && ` + 追加料金: ¥${(selectedMenu.additional_unit_price * additionalUnits).toLocaleString()}`}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-
-            {/* Notes */}
-            {formData.notes_staff && (
-              <div className="bg-slate-50 rounded-xl p-5 border border-slate-200">
-                <h3 className="text-slate-900 mb-3">スタッフメモ</h3>
-                <p className="text-sm text-slate-700 whitespace-pre-wrap">{formData.notes_staff}</p>
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 px-4 py-3 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition text-center"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        ) : (
-          // Edit Mode
-          <form onSubmit={handleSubmit} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} className="flex-1 overflow-y-auto">
-            <div className="p-5 space-y-5">
-              {/* Customer Search - Only for New Reservations */}
-              {!reservation && (
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-100">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Search className="w-4 h-4 text-blue-600" />
-                    <h3 className="text-sm text-blue-900">既存顧客を検索</h3>
-                  </div>
-                  
-                  <div className="space-y-2.5">
-                    <div className="flex gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setSearchType('phone')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition text-sm ${
-                          searchType === 'phone'
-                            ? 'bg-blue-600 text-white shadow-sm'
-                            : 'bg-white text-slate-700 hover:bg-blue-50'
-                        }`}
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                        <span>電話番号</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSearchType('code')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition text-sm ${
-                          searchType === 'code'
-                            ? 'bg-blue-600 text-white shadow-sm'
-                            : 'bg-white text-slate-700 hover:bg-blue-50'
-                        }`}
-                      >
-                        <Hash className="w-3.5 h-3.5" />
-                        <span>顧客番号</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSearchType('name')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition text-sm ${
-                          searchType === 'name'
-                            ? 'bg-blue-600 text-white shadow-sm'
-                            : 'bg-white text-slate-700 hover:bg-blue-50'
-                        }`}
-                      >
-                        <User className="w-3.5 h-3.5" />
-                        <span>名前</span>
-                      </button>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSearch())}
-                        placeholder={
-                          searchType === 'phone' ? '090-1234-5678' :
-                          searchType === 'code' ? 'C00001' :
-                          '山田 花子'
-                        }
-                        className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSearch}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm text-sm"
-                      >
-                        検索
-                      </button>
-                    </div>
-
-                    {searchResults.length > 0 && (
-                      <div className="bg-white rounded-lg p-2.5 space-y-1.5 border border-slate-200 shadow-sm">
-                        <p className="text-xs text-slate-600 px-2">
-                          {searchResults.length}件の顧客が見つかりました
-                        </p>
-                        <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                          {searchResults.map(customer => (
-                            <button
-                              key={customer.customer_id}
-                              type="button"
-                              onClick={() => handleSelectCustomer(customer)}
-                              className="w-full text-left p-2.5 bg-slate-50 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition border border-transparent"
-                            >
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <div className="text-sm text-slate-900">
-                                    {customer.child_name && <span className="mr-2">{customer.child_name}</span>}
-                                    {customer.parent_name && <span className="text-slate-600">({customer.parent_name})</span>}
-                                  </div>
-                                  <div className="text-xs text-slate-500 mt-0.5">
-                                    {customer.external_customer_number && <span>顧客番号: {customer.external_customer_number} • </span>}
-                                    {customer.phone}
-                                  </div>
+                  {searchResults.length > 0 && !isViewMode && (
+                    <div className="bg-white rounded-lg p-2.5 space-y-1.5 border border-slate-200 shadow-sm">
+                      <p className="text-xs text-slate-600 px-2">
+                        {searchResults.length}件の顧客が見つかりました
+                      </p>
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                        {searchResults.map(customer => (
+                          <button
+                            key={customer.customer_id}
+                            type="button"
+                            onClick={() => handleSelectCustomer(customer)}
+                            className="w-full text-left p-2.5 bg-slate-50 rounded-lg hover:bg-slate-100 hover:border-slate-300 transition border border-slate-200"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm text-slate-900">
+                                  {customer.child_name && <span className="mr-2">{customer.child_name}</span>}
+                                  {customer.parent_name && <span className="text-slate-600">({customer.parent_name})</span>}
                                 </div>
-                                <div className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
-                                  選択
+                                <div className="text-xs text-slate-500 mt-0.5">
+                                  {customer.external_customer_number && <span>顧客番号: {customer.external_customer_number} • </span>}
+                                  {customer.phone}
                                 </div>
                               </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {formData.customer_id && (
-                    <div className="mt-2.5 p-2.5 bg-green-50 border border-green-200 rounded-lg">
-                      <div className="flex items-center gap-2 text-green-800">
-                        <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-                        <span className="text-xs">既存顧客が選択されています</span>
+                              <div className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
+                                選択
+                              </div>
+                            </div>
+                          </button>
+                        ))}
                       </div>
                     </div>
                   )}
+                </div>
+
+                {formData.customer_id && !isViewMode && (
+                  <div className="mt-2.5 p-2.5 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-green-800">
+                      <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
+                      <span className="text-xs">既存顧客が選択されています</span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-              {/* Customer Information Form - Show for Both New and Edit */}
+            {/* Customer Information Form - Hide if hideCustomerInfo is true */}
+            {!hideCustomerInfo && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <div className="w-1 h-5 bg-blue-600 rounded-full"></div>
-                    <h3 className="text-sm text-slate-900">顧客情報{reservation && ' (編集可能)'}</h3>
+                    <div className="w-1 h-5 bg-slate-300 rounded-full"></div>
+                    <h3 className="text-sm text-slate-900">顧客情報{reservation && !isViewMode && ' (編集可能)'}</h3>
                   </div>
-                  {reservation && isCustomerDataModified() && (
+                  {reservation && isCustomerDataModified() && !isViewMode && (
                     <div className="flex items-center gap-1.5 px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs">
                       <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse"></span>
                       <span>変更あり</span>
@@ -696,7 +566,7 @@ export function ReservationModal({
                   )}
                 </div>
 
-                {reservation && formData.customer_id && (
+                {reservation && formData.customer_id && !isViewMode && (
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                     <p className="text-xs text-amber-900 leading-relaxed">
                       💡 <strong>ヒント：</strong>顧客情報を変更して保存する際、既存顧客を更新するか、新規顧客として登録するかを選択できます。
@@ -704,485 +574,457 @@ export function ReservationModal({
                   </div>
                 )}
 
-                  {/* 保護者情報 */}
-                  <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
-                    <p className="text-xs text-slate-600">保護者情報</p>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">
-                          保護者名 <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.parent_name}
-                          onChange={(e) => setFormData({ ...formData, parent_name: e.target.value })}
-                          placeholder="山田 花子"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">
-                          保護者名フリガナ
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.parent_name_kana}
-                          onChange={(e) => setFormData({ ...formData, parent_name_kana: e.target.value })}
-                          placeholder="ヤマダ ハナコ"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* お子さま情報 */}
-                  <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
-                    <p className="text-xs text-slate-600">お子さま情報</p>
-                  
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">
-                          お子さま名 <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.child_name}
-                          onChange={(e) => setFormData({ ...formData, child_name: e.target.value })}
-                          placeholder="太郎"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">
-                          お子さま名フリガナ
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.child_name_kana}
-                          onChange={(e) => setFormData({ ...formData, child_name_kana: e.target.value })}
-                          placeholder="タロウ"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">年齢（歳）</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="20"
-                          value={formData.child_age_years}
-                          onChange={(e) => setFormData({ ...formData, child_age_years: e.target.value })}
-                          placeholder="0"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">0歳の場合（ヶ月）</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="11"
-                          value={formData.child_age_months}
-                          onChange={(e) => setFormData({ ...formData, child_age_months: e.target.value })}
-                          placeholder="0"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-                    </div>
-                </div>
-
-                  {/* 連絡先情報 */}
-                  <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
-                    <p className="text-xs text-slate-600">連絡先</p>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">
-                          電話番号
-                        </label>
-                        <input
-                          type="tel"
-                          value={formData.phone}
-                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                          placeholder="090-1234-5678"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-slate-700 mb-1.5">LINE URL</label>
-                        <div className="flex gap-2">
-                          <input
-                            type="url"
-                            value={formData.line_url}
-                            onChange={(e) => setFormData({ ...formData, line_url: e.target.value })}
-                            placeholder="https://line.me/ti/p/..."
-                            className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                          />
-                          {formData.line_url && (
-                            <a
-                              href={formData.line_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center justify-center px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition"
-                              title="LINEを開く"
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="md:col-span-1">
-                        <label className="block text-xs text-slate-700 mb-1.5">郵便番号</label>
-                        <input
-                          type="text"
-                          value={formData.postal_code}
-                          onChange={(e) => setFormData({ ...formData, postal_code: e.target.value })}
-                          placeholder="123-4567"
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <label className="block text-xs text-slate-700 mb-1.5">住所</label>
-                        <input
-                          type="text"
-                          value={formData.address_text}
-                          onChange={(e) => setFormData({ ...formData, address_text: e.target.value })}
-                          placeholder="東京都渋谷区..."
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 内部メモ */}
+              {/* 保護者情報 */}
+              <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
+                <p className="text-xs text-slate-600">保護者情報</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">内部メモ</label>
-                    <textarea
-                      value={formData.notes_internal || ''}
-                      onChange={(e) => setFormData({ ...formData, notes_internal: e.target.value })}
-                      rows={2}
-                      placeholder="SNS掲載NG、など"
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
+                    <label className="block text-xs text-slate-700 mb-1.5">
+                      保護者名 {!isViewMode && <span className="text-red-500">*</span>}
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.parent_name}
+                      onChange={(e) => setFormData({ ...formData, parent_name: e.target.value })}
+                      placeholder={isViewMode ? '' : '山田 花子'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      required={!isViewMode}
                     />
                   </div>
 
-                {/* Customer Info Display for Edit Mode */}
-                {reservation && formData.customer_id && (() => {
-                  const customer = customers.find(c => c.customer_id === formData.customer_id);
-                  return (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      {customer?.external_customer_number && (
-                        <div className="flex items-center gap-2 text-sm text-blue-900">
-                          <User className="w-4 h-4" />
-                          <span>顧客番号: {customer.external_customer_number}</span>
-                        </div>
-                      )}
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">
+                      保護者名フリガナ
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.parent_name_kana}
+                      onChange={(e) => setFormData({ ...formData, parent_name_kana: e.target.value })}
+                      placeholder={isViewMode ? '' : 'ヤマダ ハナコ'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* お子さま情報 */}
+              <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
+                <p className="text-xs text-slate-600">お子さま情報</p>
+              
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">
+                      お子さま名 {!isViewMode && <span className="text-red-500">*</span>}
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.child_name}
+                      onChange={(e) => setFormData({ ...formData, child_name: e.target.value })}
+                      placeholder={isViewMode ? '' : '太郎'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      required={!isViewMode}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">
+                      お子さま名フリガナ
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.child_name_kana}
+                      onChange={(e) => setFormData({ ...formData, child_name_kana: e.target.value })}
+                      placeholder={isViewMode ? '' : 'タロウ'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">年齢（歳）</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="20"
+                      value={formData.child_age_years}
+                      onChange={(e) => setFormData({ ...formData, child_age_years: e.target.value })}
+                      placeholder={isViewMode ? '' : '0'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">0歳の場合（ヶ月）</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="11"
+                      value={formData.child_age_months}
+                      onChange={(e) => setFormData({ ...formData, child_age_months: e.target.value })}
+                      placeholder={isViewMode ? '' : '0'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 連絡先情報 */}
+              <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
+                <p className="text-xs text-slate-600">連絡先</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">
+                      電話番号
+                    </label>
+                    <input
+                      type="tel"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      placeholder={isViewMode ? '' : '090-1234-5678'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">LINE URL</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={formData.line_url}
+                        onChange={(e) => setFormData({ ...formData, line_url: e.target.value })}
+                        placeholder={isViewMode ? '' : 'https://line.me/ti/p/...'}
+                        disabled={isViewMode}
+                        className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      />
                       {formData.line_url && (
                         <a
                           href={formData.line_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition text-xs"
+                          className="flex items-center justify-center px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition"
+                          title="LINEを開く"
                         >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                          <span>LINE</span>
+                          <ExternalLink className="w-4 h-4" />
                         </a>
                       )}
                     </div>
                   </div>
-                  );
-                })()}
-              </div>
-
-              {/* Reservation Details */}
-              <div className="space-y-4 pt-4 border-t border-slate-200">
-                <div className="flex items-center gap-2">
-                  <div className="w-1 h-5 bg-indigo-600 rounded-full"></div>
-                  <h3 className="text-sm text-slate-900">予約詳細</h3>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
+                  <div className="md:col-span-1">
+                    <label className="block text-xs text-slate-700 mb-1.5">郵便番号</label>
+                    <input
+                      type="text"
+                      value={formData.postal_code}
+                      onChange={(e) => setFormData({ ...formData, postal_code: e.target.value })}
+                      placeholder={isViewMode ? '' : '123-4567'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-slate-700 mb-1.5">住所</label>
+                    <input
+                      type="text"
+                      value={formData.address_text}
+                      onChange={(e) => setFormData({ ...formData, address_text: e.target.value })}
+                      placeholder={isViewMode ? '' : '東京都渋谷区...'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-700 mb-1.5">内部メモ</label>
+                  <textarea
+                    value={formData.notes_internal}
+                    onChange={(e) => setFormData({ ...formData, notes_internal: e.target.value })}
+                    rows={2}
+                    placeholder={isViewMode ? '' : 'SNS掲載NG、要介助など'}
+                    disabled={isViewMode}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  />
+                </div>
+              </div>
+              </div>
+            )}
+
+            {/* Reservation Details */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-5 bg-slate-300 rounded-full"></div>
+                <h3 className="text-sm text-slate-900">予約詳細</h3>
+              </div>
+
+              <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="md:col-span-2">
                     <label className="block text-xs text-slate-700 mb-1.5">
-                      予約日
+                      予約日 {!isViewMode && <span className="text-red-500">*</span>}
                     </label>
                     <input
                       type="date"
                       value={formData.reservation_date}
                       onChange={(e) => setFormData({ ...formData, reservation_date: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      required={!isViewMode}
                     />
+                    {formData.reservation_date && (
+                      <p className="text-xs text-slate-600 mt-1">
+                        {formatDate(formData.reservation_date)}
+                      </p>
+                    )}
                   </div>
 
                   <div>
                     <label className="block text-xs text-slate-700 mb-1.5">
-                      予約時間
+                      時刻 {!isViewMode && <span className="text-red-500">*</span>}
                     </label>
-                    <select
+                    <input
+                      type="time"
                       value={formData.reservation_time}
                       onChange={(e) => setFormData({ ...formData, reservation_time: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    >
-                      <option value="09:00">9:00</option>
-                      <option value="09:30">9:30</option>
-                      <option value="10:00">10:00</option>
-                      <option value="10:30">10:30</option>
-                      <option value="11:00">11:00</option>
-                      <option value="11:30">11:30</option>
-                      <option value="12:00">12:00</option>
-                      <option value="12:30">12:30</option>
-                      <option value="13:00">13:00</option>
-                      <option value="13:30">13:30</option>
-                      <option value="14:00">14:00</option>
-                      <option value="14:30">14:30</option>
-                      <option value="15:00">15:00</option>
-                      <option value="15:30">15:30</option>
-                      <option value="16:00">16:00</option>
-                      <option value="16:30">16:30</option>
-                      <option value="17:00">17:00</option>
-                      <option value="custom">その他の時間...</option>
-                    </select>
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      required={!isViewMode}
+                    />
                   </div>
+                </div>
 
-                  {formData.reservation_time === 'custom' && (
-                    <div>
-                      <label className="block text-xs text-slate-700 mb-1.5">
-                        カスタム時間
-                      </label>
-                      <input
-                        type="time"
-                        onChange={(e) => setFormData({ ...formData, reservation_time: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                      />
-                    </div>
-                  )}
-
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-slate-700 mb-1.5">
-                      所要時間（分）
+                      所要時間 {!isViewMode && <span className="text-red-500">*</span>}
                     </label>
                     <select
                       value={formData.duration_minutes}
                       onChange={(e) => setFormData({ ...formData, duration_minutes: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      required={!isViewMode}
                     >
                       <option value="15">15分</option>
-                      <option value="30">30分（標準）</option>
+                      <option value="30">30分</option>
                       <option value="45">45分</option>
                       <option value="60">60分</option>
                       <option value="90">90分</option>
                       <option value="120">120分</option>
-                      <option value="custom">その他...</option>
                     </select>
                   </div>
 
-                  {formData.duration_minutes === 'custom' && (
-                    <div>
-                      <label className="block text-xs text-slate-700 mb-1.5">
-                        カスタム時間（分）
-                      </label>
-                      <input
-                        type="number"
-                        min="5"
-                        max="480"
-                        step="5"
-                        onChange={(e) => setFormData({ ...formData, duration_minutes: e.target.value })}
-                        placeholder="分数を入力"
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
+                  <div className="md:col-span-2">
                     <label className="block text-xs text-slate-700 mb-1.5">
-                      拠点
+                      拠点 {!isViewMode && <span className="text-red-500">*</span>}
                     </label>
                     <select
                       value={formData.location_id}
                       onChange={(e) => setFormData({ ...formData, location_id: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      required={!isViewMode}
                     >
                       <option value="">選択してください</option>
-                      {locations.map(location => (
-                        <option key={location.location_id} value={location.location_id}>
-                          {location.location_name}
+                      {locations.map(loc => (
+                        <option key={loc.location_id} value={loc.location_id}>
+                          {loc.location_name}
                         </option>
                       ))}
                     </select>
                   </div>
+                </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-700 mb-1.5">担当スタッフ</label>
                     <select
                       value={formData.staff_id_main}
                       onChange={(e) => setFormData({ ...formData, staff_id_main: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
                     >
                       <option value="">未設定</option>
-                      {users?.map(user => (
-                        <option key={user.user_id} value={user.user_id}>
-                          {user.name}
+                      {users.map(u => (
+                        <option key={u.user_id} value={u.user_id}>
+                          {u.name}
                         </option>
                       ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">予約ステータス</label>
+                    <label className="block text-xs text-slate-700 mb-1.5">
+                      ステータス {!isViewMode && <span className="text-red-500">*</span>}
+                    </label>
                     <select
                       value={formData.status}
                       onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      required={!isViewMode}
                     >
-                      <option value="tentative">仮予約</option>
-                      <option value="confirmed">確定</option>
-                      <option value="done">完了</option>
-                      <option value="canceled">キャンセル</option>
+                      <option value="confirmed">✓ 確定</option>
+                      <option value="tentative">⏳ スタンバイ</option>
+                      <option value="cancelled">✕ キャンセル</option>
+                      <option value="rescheduled">🔄 予約変更</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-700 mb-1.5">支払いステータス</label>
+                  <select
+                    value={formData.payment_status}
+                    onChange={(e) => setFormData({ ...formData, payment_status: e.target.value })}
+                    disabled={isViewMode}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="unpaid">未払い</option>
+                    <option value="paid">💰 支払済</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Menu Information */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-5 bg-slate-300 rounded-full"></div>
+                <h3 className="text-sm text-slate-900">メニュー</h3>
+              </div>
+
+              <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-slate-700 mb-1.5">メニュー</label>
+                    <select
+                      value={formData.menu_item_id}
+                      onChange={(e) => {
+                        const selectedMenu = menuItems.find(m => m.menu_item_id === e.target.value);
+                        if (selectedMenu) {
+                          setFormData(prev => ({ 
+                            ...prev, 
+                            menu_item_id: e.target.value,
+                            work_required: selectedMenu.name 
+                          }));
+                        } else {
+                          setFormData({ ...formData, menu_item_id: e.target.value });
+                        }
+                      }}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    >
+                      <option value="">選択してください</option>
+                      {menuItems.map(item => (
+                        <option key={item.menu_item_id} value={item.menu_item_id}>
+                          {item.name} - ¥{item.base_price.toLocaleString()}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">支払いステータス</label>
-                    <select
-                      value={formData.payment_status}
-                      onChange={(e) => setFormData({ ...formData, payment_status: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    >
-                    <option value="unpaid">未払い</option>
-                    <option value="paid">支払い済み</option>
-                  </select>
+                    <label className="block text-xs text-slate-700 mb-1.5">追加本数</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="10"
+                      value={formData.additional_units}
+                      onChange={(e) => setFormData({ ...formData, additional_units: e.target.value })}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
                 </div>
 
-                </div>
-
-                {/* Menu Selection */}
-                <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-100">
-                  <div className="flex items-center gap-2 mb-3">
-                    <UtensilsCrossed className="w-4 h-4 text-purple-600" />
-                    <h3 className="text-sm text-purple-900">メニュー選択</h3>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="md:col-span-2">
-                      <label className="block text-xs text-slate-700 mb-1.5">メニュー</label>
-                      <select
-                        value={formData.menu_item_id}
-                        onChange={(e) => {
-                          setFormData({ ...formData, menu_item_id: e.target.value });
-                          // Update work_required with menu name
-                          const selectedMenu = menuItems.find(m => m.menu_item_id === e.target.value);
-                          if (selectedMenu) {
-                            setFormData(prev => ({ 
-                              ...prev, 
-                              menu_item_id: e.target.value,
-                              work_required: selectedMenu.name 
-                            }));
-                          }
-                        }}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
-                      >
-                        <option value="">選択してください</option>
-                        {menuItems.map(item => (
-                          <option key={item.menu_item_id} value={item.menu_item_id}>
-                            {item.name} - ¥{item.base_price.toLocaleString()}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs text-slate-700 mb-1.5">追加本数</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="10"
-                        value={formData.additional_units}
-                        onChange={(e) => setFormData({ ...formData, additional_units: e.target.value })}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Price Display */}
-                  {formData.menu_item_id && (() => {
-                    const selectedMenu = menuItems.find(m => m.menu_item_id === formData.menu_item_id);
-                    if (!selectedMenu) return null;
-                    
-                    const additionalUnits = parseInt(formData.additional_units) || 0;
-                    const totalPrice = selectedMenu.base_price + (selectedMenu.additional_unit_price * additionalUnits);
-                    
-                    return (
-                      <div className="mt-3 p-3 bg-white/70 rounded-lg border border-purple-200">
-                        <div className="flex items-center justify-between text-sm">
-                          <div>
-                            <p className="text-slate-600">基本料金</p>
-                            <p className="text-purple-900">¥{selectedMenu.base_price.toLocaleString()}</p>
-                          </div>
-                          {additionalUnits > 0 && (
-                            <div>
-                              <p className="text-slate-600">追加料金</p>
-                              <p className="text-purple-900">¥{(selectedMenu.additional_unit_price * additionalUnits).toLocaleString()}</p>
-                            </div>
-                          )}
-                          <div className="text-right">
-                            <p className="text-slate-600">合計金額</p>
-                            <p className="text-purple-900">¥{totalPrice.toLocaleString()}</p>
-                          </div>
+                {/* Price Display */}
+                {formData.menu_item_id && (() => {
+                  const selectedMenu = menuItems.find(m => m.menu_item_id === formData.menu_item_id);
+                  if (!selectedMenu) return null;
+                  
+                  const additionalUnits = parseInt(formData.additional_units) || 0;
+                  const totalPrice = selectedMenu.base_price + (selectedMenu.additional_unit_price * additionalUnits);
+                  
+                  return (
+                    <div className="mt-3 p-3 bg-white rounded-lg border border-slate-200">
+                      <div className="flex items-center justify-between text-sm">
+                        <div>
+                          <p className="text-slate-600">基本料金</p>
+                          <p className="text-slate-900">¥{selectedMenu.base_price.toLocaleString()}</p>
                         </div>
-                        {selectedMenu.description && (
-                          <p className="text-xs text-slate-600 mt-2 border-t border-purple-100 pt-2">
-                            {selectedMenu.description}
-                          </p>
+                        {additionalUnits > 0 && (
+                          <div>
+                            <p className="text-slate-600">追加料金</p>
+                            <p className="text-slate-900">¥{(selectedMenu.additional_unit_price * additionalUnits).toLocaleString()}</p>
+                          </div>
                         )}
+                        <div className="text-right">
+                          <p className="text-slate-600">合計金額</p>
+                          <p className="text-slate-900">¥{totalPrice.toLocaleString()}</p>
+                        </div>
                       </div>
-                    );
-                  })()}
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-700 mb-1.5">スタッフメモ</label>
-                  <textarea
-                    value={formData.notes_staff}
-                    onChange={(e) => setFormData({ ...formData, notes_staff: e.target.value })}
-                    rows={2}
-                    placeholder="特記事項があればこちらに記入"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
-                  />
-                </div>
+                      {selectedMenu.description && (
+                        <p className="text-xs text-slate-600 mt-2 border-t border-slate-200 pt-2">
+                          {selectedMenu.description}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
-
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2.5 rounded-lg text-sm">
-                  {error}
-                </div>
-              )}
             </div>
 
-            <div className="flex gap-3 p-5 border-t border-slate-200 flex-shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 px-5 py-2.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition text-sm"
-              >
-                キャンセル
-              </button>
+            {/* Staff Notes */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-5 bg-slate-300 rounded-full"></div>
+                <h3 className="text-sm text-slate-900">スタッフメモ</h3>
+              </div>
+
+              <div>
+                <textarea
+                  value={formData.notes_staff}
+                  onChange={(e) => setFormData({ ...formData, notes_staff: e.target.value })}
+                  rows={2}
+                  placeholder={isViewMode ? '' : '特記事項があればこちらに記入'}
+                  disabled={isViewMode}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                />
+              </div>
+            </div>
+
+
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2.5 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3 p-5 border-t border-slate-200 flex-shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-5 py-2.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition text-sm"
+            >
+              {isViewMode ? '閉じる' : 'キャンセル'}
+            </button>
+            {!isViewMode && (
               <button
                 type="submit"
                 disabled={loading}
@@ -1190,9 +1032,9 @@ export function ReservationModal({
               >
                 {loading ? '保存中...' : '保存'}
               </button>
-            </div>
-          </form>
-        )}
+            )}
+          </div>
+        </form>
       </div>
 
       {/* Save Mode Dialog */}

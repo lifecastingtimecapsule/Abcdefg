@@ -14,11 +14,12 @@ interface WorkOrderRowProps {
   index: number;
   moveCard: (dragIndex: number, hoverIndex: number) => void;
   onEdit: (workOrder: WorkOrder) => void;
+  onView: (workOrder: WorkOrder) => void;
   customers: Customer[];
   reservations: Reservation[];
 }
 
-function WorkOrderRow({ workOrder, index, moveCard, onEdit, customers, reservations }: WorkOrderRowProps) {
+function WorkOrderRow({ workOrder, index, moveCard, onEdit, onView, customers, reservations }: WorkOrderRowProps) {
   const [{ isDragging }, drag, preview] = useDrag({
     type: ItemType,
     item: { index },
@@ -60,11 +61,16 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, customers, reservati
   return (
     <tr
       ref={(node) => preview(drop(node))}
-      className={`border-b border-slate-100 hover:bg-slate-50 transition ${
+      onClick={() => onView(workOrder)}
+      className={`border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
         isDragging ? 'opacity-50' : ''
       } ${isOverdue ? 'bg-red-50' : ''}`}
     >
-      <td ref={drag} className="px-4 py-3 cursor-move">
+      <td 
+        ref={drag} 
+        className="px-4 py-3 cursor-move"
+        onClick={(e) => e.stopPropagation()}
+      >
         <GripVertical className="w-5 h-5 text-slate-400" />
       </td>
       <td className="px-4 py-3">
@@ -95,7 +101,7 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, customers, reservati
       <td className="px-4 py-3 text-slate-600 text-sm max-w-xs truncate">
         {workOrder.notes_internal || '-'}
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
         <button
           onClick={() => onEdit(workOrder)}
           className="px-3 py-1 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition text-sm"
@@ -115,6 +121,7 @@ export function WorkOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
+  const [modalMode, setModalMode] = useState<'view' | 'edit'>('edit');
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   useEffect(() => {
@@ -265,7 +272,20 @@ export function WorkOrdersPage() {
   const handleSave = async () => {
     setModalOpen(false);
     setEditingWorkOrder(null);
+    setModalMode('edit');
     await loadData();
+  };
+
+  const handleView = (workOrder: WorkOrder) => {
+    setEditingWorkOrder(workOrder);
+    setModalMode('view');
+    setModalOpen(true);
+  };
+
+  const handleEdit = (workOrder: WorkOrder) => {
+    setEditingWorkOrder(workOrder);
+    setModalMode('edit');
+    setModalOpen(true);
   };
 
   const moveCard = (dragIndex: number, hoverIndex: number) => {
@@ -295,6 +315,24 @@ export function WorkOrdersPage() {
     }
   };
 
+  const handleBatchCreateWorkOrders = async () => {
+    if (!window.confirm('確定済みの予約で制作物がない場合、自動的に制作物を生成します。実行しますか？')) {
+      return;
+    }
+
+    try {
+      const result = await apiRequest('/reservations/batch-create-work-orders', {
+        method: 'POST',
+      });
+
+      toast.success(result.message || `${result.created_count}件の制作物を生成しました`);
+      await loadData();
+    } catch (err: any) {
+      console.error('Batch create work orders error:', err);
+      toast.error('一括生成に失敗しました');
+    }
+  };
+
   const filteredWorkOrders = workOrders.filter(wo => {
     if (filterStatus === 'all') return true;
     return wo.status === filterStatus;
@@ -312,7 +350,7 @@ export function WorkOrdersPage() {
     <DndProvider backend={HTML5Backend}>
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <h1 className="text-slate-900">納期管理</h1>
+          <h1 className="text-slate-900">作品管理</h1>
           <div className="flex items-center gap-3">
             <button
               onClick={savePriorityOrder}
@@ -323,12 +361,20 @@ export function WorkOrdersPage() {
             <button
               onClick={() => {
                 setEditingWorkOrder(null);
+                setModalMode('edit');
                 setModalOpen(true);
               }}
               className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
             >
               <Plus className="w-5 h-5" />
               <span>制作物追加</span>
+            </button>
+            <button
+              onClick={handleBatchCreateWorkOrders}
+              className="flex items-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-xl hover:from-green-600 hover:to-emerald-700 transition"
+            >
+              <AlertCircle className="w-5 h-5" />
+              <span>確定済予約を一括生成</span>
             </button>
           </div>
         </div>
@@ -406,10 +452,8 @@ export function WorkOrdersPage() {
                       workOrder={workOrder}
                       index={index}
                       moveCard={moveCard}
-                      onEdit={(wo) => {
-                        setEditingWorkOrder(wo);
-                        setModalOpen(true);
-                      }}
+                      onEdit={handleEdit}
+                      onView={handleView}
                       customers={customers}
                       reservations={reservations}
                     />
@@ -431,10 +475,12 @@ export function WorkOrdersPage() {
             workOrder={editingWorkOrder}
             reservations={reservations}
             customers={customers}
+            mode={modalMode}
             onSave={handleSave}
             onClose={() => {
               setModalOpen(false);
               setEditingWorkOrder(null);
+              setModalMode('edit');
             }}
           />
         )}

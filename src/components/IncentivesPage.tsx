@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { DollarSign, Lock, Unlock, ChevronLeft, ChevronRight, TrendingUp, Users } from 'lucide-react';
+import { DollarSign, Lock, Unlock, ChevronLeft, ChevronRight, TrendingUp, Users, AlertCircle } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 type ViewMode = 'month' | 'year' | 'custom';
@@ -463,8 +463,10 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
           <h3 className="text-blue-900 mb-2">インセンティブ計算ルール</h3>
           <ul className="text-blue-800 text-sm space-y-1 list-disc list-inside">
-            <li>基本: 1案件 = ¥1,000</li>
-            <li>年間データは確定済み（引渡し完了）のみ集計</li>
+            <li>基本: 1予約 = ¥1,000</li>
+            <li>年間データは確定状態の予約のみ集計</li>
+            <li>付与月: 予約日の月でカウント</li>
+            <li>キャンセル・予約変更の予約はインセンティブ対象外</li>
             <li>手動調整額も含めた合計額を表示</li>
           </ul>
         </div>
@@ -666,12 +668,57 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
         <h3 className="text-blue-900 mb-2">インセンティブ計算ルール</h3>
         <ul className="text-blue-800 text-sm space-y-1 list-disc list-inside">
-          <li>基本: 1案件 = ¥1,000</li>
-          <li>付与予定: お渡し待ちの作品（まだ支払い確定前）</li>
-          <li>確定済: 引渡し済みの作品（支払い対象）</li>
+          <li>基本: 1予約 = ¥1,000</li>
+          <li>付与予定: スタンバイ状態の予約（まだ支払い確定前）</li>
+          <li>確定済: 確定状態の予約（支払い対象）</li>
+          <li>付与月: 予約日の月でカウント</li>
+          <li>キャンセル・予約変更の予約はインセンティブ対象外</li>
           <li>管理者は手動調整・月締めロックが可能</li>
         </ul>
       </div>
+
+      {(incentives.length === 0 || incentives.every(i => i.count_confirmed === 0 && i.count_pending === 0)) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-6">
+          <h3 className="text-amber-900 mb-3 flex items-center gap-2">
+            <AlertCircle className="w-5 h-5" />
+            インセンティブが表示されない場合
+          </h3>
+          <div className="text-amber-800 text-sm space-y-3">
+            <p><strong>予約がインセンティブ対象なのに0の場合、以下を確認してください：</strong></p>
+            <ol className="list-decimal list-inside space-y-2 ml-2">
+              <li>
+                <strong>予約が「確定」状態になっているか</strong>
+                <div className="ml-6 text-xs mt-1 text-amber-700">
+                  → カレンダーで予約を編集し、ステータスを「確定」に変更
+                </div>
+              </li>
+              <li>
+                <strong>制作物が必要な予約か（work_required）</strong>
+                <div className="ml-6 text-xs mt-1 text-amber-700">
+                  → 制作物が不要な予約はインセンティブ対象外です
+                </div>
+              </li>
+              <li>
+                <strong>予約日の月が対象月と一致しているか</strong>
+                <div className="ml-6 text-xs mt-1 text-amber-700">
+                  → 例：10月のインセンティブには10月の予約分のみカウント
+                </div>
+              </li>
+              <li>
+                <strong>キャンセル・予約変更になっていないか</strong>
+                <div className="ml-6 text-xs mt-1 text-amber-700">
+                  → キャンセル・予約変更の予約はインセンティブ対象外です
+                </div>
+              </li>
+            </ol>
+            <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
+              <p className="text-green-900">
+                <strong>💡 重要：</strong>予約を「確定」にした時点でインセンティブが付与されます。制作物の状態や引き渡しは関係ありません。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

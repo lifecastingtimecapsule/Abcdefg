@@ -26,29 +26,24 @@ const DEFAULT_ADMIN = {
 async function getAuthUser(request: Request) {
   const authHeader = request.headers.get('Authorization');
   if (!authHeader) {
-    console.log('[Auth] No Authorization header found');
     return null;
   }
   
-  console.log('[Auth] Authorization header present');
   const accessToken = authHeader.split(' ')[1];
   if (!accessToken) {
-    console.log('[Auth] No access token in Authorization header');
     return null;
   }
   
-  console.log('[Auth] Access token extracted, length:', accessToken.length);
   const { data: { user }, error } = await supabase.auth.getUser(accessToken);
   if (error) {
-    console.log(`[Auth] Supabase auth error: ${error.message}`);
+    // Token expired or invalid - this is normal behavior
+    console.log(`[Auth] Token validation failed: ${error.message}`);
     return null;
   }
   if (!user) {
-    console.log('[Auth] No user found for token');
     return null;
   }
   
-  console.log('[Auth] User authenticated successfully:', user.id);
   return user;
 }
 
@@ -172,24 +167,20 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
 // Get current user
 app.get('/make-server-fe84bde0/me', async (c) => {
   try {
-    console.log('[/me] Request received');
     const user = await getAuthUser(c.req.raw);
     if (!user) {
-      console.log('[/me] Authentication failed');
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    console.log('[/me] User authenticated, fetching user data for:', user.id);
     const userData = await kv.get(`user:${user.id}`);
     if (!userData) {
-      console.log('[/me] User data not found in KV store for:', user.id);
+      console.error(`[/me] User data not found in KV store for: ${user.id}`);
       return c.json({ error: 'User not found' }, 404);
     }
 
-    console.log('[/me] User data found, returning:', userData.user_id);
     return c.json({ user: userData });
   } catch (error) {
-    console.log(`[/me] Error: ${error}`);
+    console.error(`[/me] Error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -680,6 +671,75 @@ app.delete('/make-server-fe84bde0/reservations/:id', async (c) => {
   }
 });
 
+// Batch create work orders for existing confirmed reservations (admin only)
+app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const reservations = await kv.getByPrefix('reservation:');
+    const workOrders = await kv.getByPrefix('work_order:');
+    
+    let createdCount = 0;
+    const createdWorkOrders = [];
+
+    for (const reservation of reservations) {
+      // Check if reservation is confirmed and has work_required
+      if (reservation.status === 'confirmed' && reservation.work_required && reservation.work_required.trim() !== '') {
+        // Check if work order already exists
+        const existingWorkOrder = workOrders.find((wo: any) => wo.reservation_id === reservation.reservation_id);
+        
+        if (!existingWorkOrder) {
+          // Create work order
+          const workOrderId = crypto.randomUUID();
+          
+          // Calculate due date: 14 days from reservation date
+          const reservationDate = new Date(reservation.reservation_date_time);
+          const dueDate = new Date(reservationDate);
+          dueDate.setDate(dueDate.getDate() + 14);
+
+          const workOrderData = {
+            work_order_id: workOrderId,
+            reservation_id: reservation.reservation_id,
+            product_type: reservation.work_required,
+            status: '制作中',
+            due_date: dueDate.toISOString().split('T')[0],
+            delivered_date: null,
+            priority_order: null,
+            notes_internal: '一括生成（既存予約の確定済み分）',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            updated_by_user_id: user.id,
+          };
+
+          await kv.set(`work_order:${workOrderId}`, workOrderData);
+          createdCount++;
+          createdWorkOrders.push(workOrderData);
+
+          console.log(`Batch created work order ${workOrderId} for reservation ${reservation.reservation_id}`);
+        }
+      }
+    }
+
+    return c.json({ 
+      success: true, 
+      created_count: createdCount,
+      work_orders: createdWorkOrders,
+      message: `${createdCount}件の制作物を生成しました`
+    });
+  } catch (error) {
+    console.log(`Batch create work orders error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
 // ========== Work Orders ==========
 
 // Get all work orders
@@ -801,6 +861,91 @@ app.post('/make-server-fe84bde0/work-orders/reorder', async (c) => {
 
 // ========== Incentives ==========
 
+// Debug API: Check reservation and work order status
+app.get('/make-server-fe84bde0/incentives/debug', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const targetDate = c.req.query('date'); // Format: 2024-10-29
+    const targetStaffId = c.req.query('staff_id');
+
+    const reservations = await kv.getByPrefix('reservation:');
+    const workOrders = await kv.getByPrefix('work_order:');
+    const users = await kv.getByPrefix('user:');
+
+    // Filter reservations by date and staff
+    const filteredReservations = reservations.filter((r: any) => {
+      const resDate = r.reservation_date_time?.split('T')[0];
+      const matchDate = !targetDate || resDate === targetDate;
+      const matchStaff = !targetStaffId || r.staff_id_main === targetStaffId;
+      return matchDate && matchStaff;
+    });
+
+    const debugInfo = filteredReservations.map((res: any) => {
+      const staff = users.find((u: any) => u.user_id === res.staff_id_main);
+      const relatedWorkOrders = workOrders.filter((wo: any) => wo.reservation_id === res.reservation_id);
+
+      const incentiveEligible = res.status === 'confirmed' && res.work_required && res.status !== 'cancelled';
+
+      return {
+        reservation_id: res.reservation_id,
+        reservation_date: res.reservation_date_time?.split('T')[0],
+        reservation_year_month: res.reservation_date_time?.slice(0, 7),
+        staff_name: staff?.name || '不明',
+        staff_id: res.staff_id_main,
+        status: res.status,
+        work_required: res.work_required,
+        incentive_eligible: incentiveEligible,
+        incentive_reason: incentiveEligible 
+          ? 'Confirmed reservation with work required' 
+          : res.status === 'cancelled' 
+          ? 'Cancelled reservation - no incentive' 
+          : res.status === 'rescheduled'
+          ? 'Rescheduled reservation - no incentive'
+          : res.status === 'tentative' 
+          ? 'Tentative reservation - pending confirmation'
+          : !res.work_required
+          ? 'No work required - no incentive'
+          : 'Unknown reason',
+        work_orders_count: relatedWorkOrders.length,
+        work_orders: relatedWorkOrders.map((wo: any) => ({
+          work_order_id: wo.work_order_id,
+          product_type: wo.product_type,
+          status: wo.status,
+          delivered_date: wo.delivered_date,
+        })),
+      };
+    });
+
+    return c.json({
+      date: targetDate,
+      staff_id: targetStaffId,
+      reservations_found: debugInfo.length,
+      details: debugInfo,
+      summary: {
+        total_reservations: debugInfo.length,
+        confirmed_with_work: debugInfo.filter((d: any) => d.status === 'confirmed' && d.work_required).length,
+        tentative_with_work: debugInfo.filter((d: any) => d.status === 'tentative' && d.work_required).length,
+        cancelled: debugInfo.filter((d: any) => d.status === 'cancelled').length,
+        incentive_eligible: debugInfo.filter((d: any) => d.incentive_eligible).length,
+        reservations_with_work_orders: debugInfo.filter((d: any) => d.work_orders_count > 0).length,
+        reservations_without_work_orders: debugInfo.filter((d: any) => d.work_orders_count === 0).length,
+      }
+    });
+  } catch (error) {
+    console.log(`Debug incentives error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
 // Calculate incentives
 app.get('/make-server-fe84bde0/incentives', async (c) => {
   try {
@@ -818,35 +963,42 @@ app.get('/make-server-fe84bde0/incentives', async (c) => {
       return c.json({ error: 'Access denied' }, 403);
     }
 
-    // Get all work orders and reservations
-    const workOrders = await kv.getByPrefix('work_order:');
+    // Get all reservations
     const reservations = await kv.getByPrefix('reservation:');
 
-    // Build incentive data for each staff
+    // Build incentive data for each staff based on confirmed reservations
     const incentivesMap = new Map();
 
-    for (const wo of workOrders) {
-      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-      if (!reservation || !reservation.staff_id_main) continue;
+    for (const reservation of reservations) {
+      if (!reservation.staff_id_main) continue;
+
+      // Skip cancelled and rescheduled reservations - no incentive for these
+      if (reservation.status === 'cancelled' || reservation.status === 'rescheduled') continue;
+
+      // Skip reservations without work required
+      if (!reservation.work_required) continue;
 
       const staffId = reservation.staff_id_main;
-      const deliveredDate = wo.delivered_date ? new Date(wo.delivered_date) : null;
-      const woYearMonth = deliveredDate ? deliveredDate.toISOString().slice(0, 7) : null;
+      const reservationDate = reservation.reservation_date_time ? new Date(reservation.reservation_date_time) : null;
+      const reservationYearMonth = reservationDate ? reservationDate.toISOString().slice(0, 7) : null;
 
       if (!incentivesMap.has(staffId)) {
         incentivesMap.set(staffId, {
           user_id: staffId,
-          pending: [],
+          tentative: [],
           confirmed: [],
         });
       }
 
       const staffData = incentivesMap.get(staffId);
 
-      if (wo.status === 'お渡し待ち') {
-        staffData.pending.push(wo);
-      } else if (wo.status === '引渡し済' && woYearMonth === yearMonth) {
-        staffData.confirmed.push(wo);
+      // Tentative reservations show as "pending" incentive
+      if (reservation.status === 'tentative' && reservationYearMonth === yearMonth) {
+        staffData.tentative.push(reservation);
+      } 
+      // Confirmed reservations count as earned incentive for the reservation month
+      else if (reservation.status === 'confirmed' && reservationYearMonth === yearMonth) {
+        staffData.confirmed.push(reservation);
       }
     }
 
@@ -864,8 +1016,8 @@ app.get('/make-server-fe84bde0/incentives', async (c) => {
       results.push({
         user_id: staffId,
         year_month: yearMonth,
-        count_pending: data.pending.length,
-        amount_pending: data.pending.length * 1000,
+        count_pending: data.tentative.length,
+        amount_pending: data.tentative.length * 1000,
         count_confirmed: data.confirmed.length,
         amount_confirmed: data.confirmed.length * 1000,
         manual_adjust_yen: adjustment?.manual_adjust_yen || 0,
@@ -947,8 +1099,7 @@ app.get('/make-server-fe84bde0/incentives/yearly', async (c) => {
       return c.json({ error: 'Access denied' }, 403);
     }
 
-    // Get all work orders, reservations, and users
-    const workOrders = await kv.getByPrefix('work_order:');
+    // Get all reservations and users
     const reservations = await kv.getByPrefix('reservation:');
     const users = await kv.getByPrefix('user:');
     const adjustments = await kv.getByPrefix('incentive_monthly:');
@@ -967,10 +1118,15 @@ app.get('/make-server-fe84bde0/incentives/yearly', async (c) => {
     let totalConfirmedCount = 0;
     let totalPendingCount = 0;
 
-    // Process work orders
-    for (const wo of workOrders) {
-      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-      if (!reservation || !reservation.staff_id_main) continue;
+    // Process reservations
+    for (const reservation of reservations) {
+      if (!reservation.staff_id_main) continue;
+
+      // Skip cancelled and rescheduled reservations - no incentive for these
+      if (reservation.status === 'cancelled' || reservation.status === 'rescheduled') continue;
+
+      // Skip reservations without work required
+      if (!reservation.work_required) continue;
 
       const staffId = reservation.staff_id_main;
 
@@ -978,34 +1134,33 @@ app.get('/make-server-fe84bde0/incentives/yearly', async (c) => {
       if (targetUserId && staffId !== targetUserId) continue;
       if (role !== 'admin' && staffId !== user.id) continue;
 
-      const deliveredDate = wo.delivered_date ? new Date(wo.delivered_date) : null;
-      const woYear = deliveredDate ? deliveredDate.getFullYear().toString() : null;
-      const woMonth = deliveredDate ? deliveredDate.getMonth() : null;
-      const woYearMonth = deliveredDate ? deliveredDate.toISOString().slice(0, 7) : null;
+      const reservationDate = reservation.reservation_date_time ? new Date(reservation.reservation_date_time) : null;
+      const resYear = reservationDate ? reservationDate.getFullYear().toString() : null;
+      const resMonth = reservationDate ? reservationDate.getMonth() : null;
+      const resYearMonth = reservationDate ? reservationDate.toISOString().slice(0, 7) : null;
 
-      // Pending count (お渡し待ち)
-      if (wo.status === 'お渡し待ち') {
+      // Pending count (tentative)
+      if (reservation.status === 'tentative') {
         totalPendingCount += 1;
       }
 
-      // Confirmed count and amount (引渡し済)
-      if (wo.status === '引渡し済' && woYear === year) {
-        const baseAmount = 1000; // ¥1,000 per order
+      // Confirmed count and amount
+      if (reservation.status === 'confirmed' && resYear === year) {
+        const baseAmount = 1000; // ¥1,000 per reservation
 
         // Get manual adjustment for this month
         const adjustment = adjustments.find((a: any) => 
-          a.user_id === staffId && a.year_month === woYearMonth
+          a.user_id === staffId && a.year_month === resYearMonth
         );
         const manualAdjust = adjustment?.manual_adjust_yen || 0;
-        const monthlyAdjustPerOrder = manualAdjust > 0 ? manualAdjust : 0;
 
         // Get staff name
         const staffUser = users.find((u: any) => u.user_id === staffId);
         const staffName = staffUser?.name || staffId;
 
         // Update monthly data
-        if (woMonth !== null) {
-          const monthName = MONTH_NAMES[woMonth];
+        if (resMonth !== null) {
+          const monthName = MONTH_NAMES[resMonth];
           const monthData = monthlyDataMap.get(monthName);
           if (monthData) {
             monthData.totalAmount += baseAmount;
@@ -1099,36 +1254,40 @@ app.get('/make-server-fe84bde0/incentives/range', async (c) => {
       return c.json({ error: 'Access denied' }, 403);
     }
 
-    // Get all work orders and reservations
-    const workOrders = await kv.getByPrefix('work_order:');
+    // Get all reservations
     const reservations = await kv.getByPrefix('reservation:');
     const adjustments = await kv.getByPrefix('incentive_monthly:');
 
     // Build incentive data for each staff across the range
     const incentivesMap = new Map();
 
-    for (const wo of workOrders) {
-      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-      if (!reservation || !reservation.staff_id_main) continue;
+    for (const reservation of reservations) {
+      if (!reservation.staff_id_main) continue;
+
+      // Skip cancelled and rescheduled reservations - no incentive for these
+      if (reservation.status === 'cancelled' || reservation.status === 'rescheduled') continue;
+
+      // Skip reservations without work required
+      if (!reservation.work_required) continue;
 
       const staffId = reservation.staff_id_main;
-      const deliveredDate = wo.delivered_date ? new Date(wo.delivered_date) : null;
-      const woYearMonth = deliveredDate ? deliveredDate.toISOString().slice(0, 7) : null;
+      const reservationDate = reservation.reservation_date_time ? new Date(reservation.reservation_date_time) : null;
+      const resYearMonth = reservationDate ? reservationDate.toISOString().slice(0, 7) : null;
 
       if (!incentivesMap.has(staffId)) {
         incentivesMap.set(staffId, {
           user_id: staffId,
-          pending: [],
+          tentative: [],
           confirmed: [],
         });
       }
 
       const staffData = incentivesMap.get(staffId);
 
-      if (wo.status === 'お渡し待ち') {
-        staffData.pending.push(wo);
-      } else if (wo.status === '引渡し済' && woYearMonth && woYearMonth >= startMonth && woYearMonth <= endMonth) {
-        staffData.confirmed.push(wo);
+      if (reservation.status === 'tentative' && resYearMonth && resYearMonth >= startMonth && resYearMonth <= endMonth) {
+        staffData.tentative.push(reservation);
+      } else if (reservation.status === 'confirmed' && resYearMonth && resYearMonth >= startMonth && resYearMonth <= endMonth) {
+        staffData.confirmed.push(reservation);
       }
     }
 
@@ -1148,8 +1307,8 @@ app.get('/make-server-fe84bde0/incentives/range', async (c) => {
 
       results.push({
         user_id: staffId,
-        count_pending: data.pending.length,
-        amount_pending: data.pending.length * 1000,
+        count_pending: data.tentative.length,
+        amount_pending: data.tentative.length * 1000,
         count_confirmed: data.confirmed.length,
         amount_confirmed: data.confirmed.length * 1000,
         manual_adjust_yen: totalManualAdjust,
@@ -1453,9 +1612,9 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       return { ...r, customer };
     });
 
-    // Tentative reservations (including modified status)
+    // Tentative and rescheduled reservations
     const tentativeReservations = reservations.filter((r: any) => 
-      r.status === 'tentative' || r.status === 'modified'
+      r.status === 'tentative' || r.status === 'rescheduled'
     ).map((r: any) => {
       const customer = customers.find((c: any) => c.customer_id === r.customer_id);
       return { ...r, customer };
@@ -1523,7 +1682,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
         }
 
         // Pending revenue
-        if (reservation.status === 'tentative' || reservation.status === 'modified') {
+        if (reservation.status === 'tentative') {
           pendingRevenue += price;
         }
 

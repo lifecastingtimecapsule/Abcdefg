@@ -14,9 +14,8 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
   const token = localStorage.getItem('access_token');
   
   if (!token) {
-    const error = new Error('Unauthorized - Please login again');
-    console.error('API Request Error:', error);
-    throw error;
+    console.warn('[API] No access token found');
+    throw new Error('UNAUTHORIZED');
   }
   
   const url = `${BASE_URL}${endpoint}`;
@@ -36,7 +35,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       
       // 401エラー時は適切なエラーハンドリング
       if (response.status === 401) {
-        console.error('Authentication failed: Token expired or invalid');
+        console.warn('[Auth] Session expired - triggering re-authentication');
         localStorage.removeItem('access_token');
         
         // コールバックが設定されていれば実行（再ログインモーダル表示など）
@@ -47,6 +46,9 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
           toast.error('セッションが切れました。再度ログインしてください。');
           window.location.reload();
         }
+        
+        // 401エラーは例外をスローせず、再認証フローに委ねる
+        throw new Error('UNAUTHORIZED');
       } else if (response.status >= 500) {
         // サーバーエラー
         console.error(`Server error (${response.status}):`, error);

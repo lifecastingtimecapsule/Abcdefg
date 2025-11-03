@@ -45,10 +45,17 @@ export default function App() {
       const userData = await apiRequest<MeResponse>('/me');
       setCurrentUser(userData.user);
       setIsAuthenticated(true);
-    } catch (err) {
-      localStorage.removeItem('access_token');
-      setIsAuthenticated(false);
-      setCurrentUser(null);
+    } catch (err: any) {
+      // UNAUTHORIZEDエラーの場合は、再認証モーダルが既に表示されているので何もしない
+      if (err?.message === 'UNAUTHORIZED') {
+        // 再認証モーダルが表示される
+        console.log('[Auth] Re-authentication required');
+      } else {
+        // その他のエラーの場合はログアウト
+        localStorage.removeItem('access_token');
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+      }
     } finally {
       setLoading(false);
     }

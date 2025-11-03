@@ -3,6 +3,7 @@ import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
 import { Calendar, AlertCircle, Clock, Package } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
+import { ReservationModal } from './ReservationModal';
 import { WorkOrder, Reservation, Customer } from '../types';
 
 interface DashboardData {
@@ -23,6 +24,11 @@ export function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [menuItems, setMenuItems] = useState<any[]>([]);
+  const [selectedReservation, setSelectedReservation] = useState<any | null>(null);
+  const [reservationModalOpen, setReservationModalOpen] = useState(false);
 
   useEffect(() => {
     loadDashboard();
@@ -45,12 +51,18 @@ export function Dashboard() {
 
   const loadAdditionalData = async () => {
     try {
-      const [resData, custData] = await Promise.all([
+      const [resData, custData, locData, usersData, menuData] = await Promise.all([
         apiRequest<{ reservations: Reservation[] }>('/reservations'),
         apiRequest<{ customers: Customer[] }>('/customers'),
+        apiRequest<{ locations: any[] }>('/locations'),
+        apiRequest<{ users: any[] }>('/users'),
+        apiRequest<{ menu_items: any[] }>('/menu-items'),
       ]);
       setReservations(resData.reservations);
       setCustomers(custData.customers);
+      setLocations(locData.locations);
+      setUsers(usersData.users);
+      setMenuItems(menuData.menu_items);
     } catch (err: any) {
       console.error('Load additional data error:', err);
       // エラーは静かに処理（ダッシュボードの主要データではない）
@@ -71,6 +83,23 @@ export function Dashboard() {
     setModalOpen(false);
     setSelectedWorkOrder(null);
     await loadDashboard();
+  };
+
+  const handleReservationClick = (reservation: any) => {
+    setSelectedReservation(reservation);
+    setReservationModalOpen(true);
+  };
+
+  const handleReservationModalClose = () => {
+    setReservationModalOpen(false);
+    setSelectedReservation(null);
+  };
+
+  const handleReservationModalSave = async () => {
+    setReservationModalOpen(false);
+    setSelectedReservation(null);
+    await loadDashboard();
+    await loadAdditionalData();
   };
 
   if (loading) {
@@ -259,16 +288,15 @@ export function Dashboard() {
                       <td className="px-4 py-3">
                         <span className={`inline-block px-3 py-1 rounded-full text-xs ${
                           reservation.status === 'confirmed' ? 'bg-blue-100 text-blue-700' :
-                          reservation.status === 'tentative' ? 'bg-yellow-100 text-yellow-700' :
-                          reservation.status === 'modified' ? 'bg-orange-100 text-orange-700' :
-                          reservation.status === 'done' ? 'bg-green-100 text-green-700' :
+                          reservation.status === 'tentative' ? 'bg-amber-100 text-amber-700' :
+                          reservation.status === 'rescheduled' ? 'bg-purple-100 text-purple-700' :
+                          reservation.status === 'cancelled' ? 'bg-red-100 text-red-700' :
                           'bg-slate-100 text-slate-700'
                         }`}>
-                          {reservation.status === 'confirmed' ? '確定' :
-                           reservation.status === 'tentative' ? '仮予約' :
-                           reservation.status === 'modified' ? '予約変更' :
-                           reservation.status === 'done' ? '完了' :
-                           reservation.status === 'canceled' ? 'キャンセル' : reservation.status}
+                          {reservation.status === 'confirmed' ? '✓ 確定' :
+                           reservation.status === 'tentative' ? '⏳ スタンバイ' :
+                           reservation.status === 'rescheduled' ? '🔄 予約変更' :
+                           reservation.status === 'cancelled' ? '✕ キャンセル' : reservation.status}
                         </span>
                       </td>
                     </tr>
@@ -284,12 +312,12 @@ export function Dashboard() {
       <section>
         <div className="flex items-center gap-2 mb-4">
           <AlertCircle className="w-6 h-6 text-yellow-500" />
-          <h2 className="text-slate-900">未処理の仮予約</h2>
+          <h2 className="text-slate-900">仮予約・予約変更</h2>
         </div>
 
         {data.tentative_reservations.length === 0 ? (
           <div className="bg-white rounded-2xl p-8 text-center text-slate-500">
-            仮予約はありません
+            仮予約・予約変更はありません
           </div>
         ) : (
           <div className="bg-white rounded-2xl overflow-hidden shadow-sm">
@@ -298,6 +326,7 @@ export function Dashboard() {
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3 text-left text-slate-700">予約日時</th>
+                    <th className="px-4 py-3 text-left text-slate-700">ステータス</th>
                     <th className="px-4 py-3 text-left text-slate-700">顧客</th>
                     <th className="px-4 py-3 text-left text-slate-700">内容</th>
                     <th className="px-4 py-3 text-left text-slate-700">メモ</th>
@@ -305,9 +334,24 @@ export function Dashboard() {
                 </thead>
                 <tbody>
                   {data.tentative_reservations.map((reservation: any) => (
-                    <tr key={reservation.reservation_id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <tr 
+                      key={reservation.reservation_id} 
+                      className="border-b border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
+                      onClick={() => handleReservationClick(reservation)}
+                    >
                       <td className="px-4 py-3 text-slate-900">
                         {formatDate(reservation.reservation_date_time)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${
+                          reservation.status === 'tentative'
+                            ? 'bg-amber-100 text-amber-700'
+                            : reservation.status === 'rescheduled'
+                            ? 'bg-purple-100 text-purple-700'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}>
+                          {reservation.status === 'tentative' ? '⏳ スタンバイ' : reservation.status === 'rescheduled' ? '🔄 予約変更' : reservation.status}
+                        </span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="text-slate-900">{reservation.customer?.child_name || '-'}</div>
@@ -334,6 +378,19 @@ export function Dashboard() {
           customers={customers}
           onSave={handleModalSave}
           onClose={handleModalClose}
+        />
+      )}
+
+      {/* Reservation Modal */}
+      {reservationModalOpen && (
+        <ReservationModal
+          reservation={selectedReservation}
+          customers={customers}
+          locations={locations}
+          users={users}
+          menuItems={menuItems}
+          onSave={handleReservationModalSave}
+          onClose={handleReservationModalClose}
         />
       )}
     </div>

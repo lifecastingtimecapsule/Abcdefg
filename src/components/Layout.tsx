@@ -17,7 +17,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole }
     { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard, roles: ['admin', 'staff'] },
     { id: 'calendar', label: 'カレンダー', icon: Calendar, roles: ['admin', 'staff'] },
     { id: 'customers', label: '顧客管理', icon: Users, roles: ['admin', 'staff'] },
-    { id: 'work-orders', label: '納期管理', icon: Package, roles: ['admin', 'staff'] },
+    { id: 'work-orders', label: '作品', icon: Package, roles: ['admin', 'staff'] },
     { id: 'sales-analytics', label: '売上分析', icon: TrendingUp, roles: ['admin'] },
     { id: 'incentives', label: 'インセンティブ', icon: DollarSign, roles: ['admin', 'staff'] },
     { id: 'staff', label: 'スタッフ管理', icon: UserCog, roles: ['admin'] },

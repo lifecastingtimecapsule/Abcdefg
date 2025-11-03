@@ -408,20 +408,22 @@ export function CalendarPage({ userRole }: { userRole: string }) {
                               reservation.status === 'confirmed'
                                 ? 'bg-blue-100 text-blue-700 font-medium'
                                 : reservation.status === 'tentative'
-                                ? 'bg-yellow-100 text-yellow-700'
-                                : reservation.status === 'done'
-                                ? 'bg-green-100 text-green-700'
+                                ? 'bg-amber-100 text-amber-700'
+                                : reservation.status === 'cancelled'
+                                ? 'bg-red-100 text-red-700'
+                                : reservation.status === 'rescheduled'
+                                ? 'bg-purple-100 text-purple-700'
                                 : 'bg-slate-100 text-slate-700'
                             }`}
                           >
                             {reservation.status === 'confirmed'
                               ? '✓ 確定'
                               : reservation.status === 'tentative'
-                              ? '仮予約'
-                              : reservation.status === 'done'
-                              ? '完了'
-                              : reservation.status === 'canceled'
-                              ? 'キャンセル'
+                              ? '⏳ スタンバイ'
+                              : reservation.status === 'cancelled'
+                              ? '✕ キャンセル'
+                              : reservation.status === 'rescheduled'
+                              ? '🔄 予約変更'
                               : reservation.status}
                           </span>
                           {reservation.payment_status === 'paid' && (
