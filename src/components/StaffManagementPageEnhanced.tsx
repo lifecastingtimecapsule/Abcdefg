@@ -56,8 +56,11 @@ export function StaffManagementPage() {
       const result = await apiRequest<{ users: User[] }>('/users');
       setUsers(result.users);
     } catch (err: any) {
-      console.error('Load users error:', err);
-      toast.error('スタッフ一覧の読み込みに失敗しました');
+      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
+      if (err?.message !== 'UNAUTHORIZED') {
+        console.error('Load users error:', err);
+        toast.error('スタッフ一覧の読み込みに失敗しました');
+      }
     } finally {
       setLoading(false);
     }

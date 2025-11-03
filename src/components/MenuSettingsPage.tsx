@@ -26,8 +26,11 @@ export function MenuSettingsPage() {
       const data = await apiRequest('/menu-items');
       setMenuItems(data.menu_items || []);
     } catch (err: any) {
-      console.error('Load menu items error:', err);
-      toast.error('メニュー一覧の読み込みに失敗しました');
+      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
+      if (err?.message !== 'UNAUTHORIZED') {
+        console.error('Load menu items error:', err);
+        toast.error('メニュー一覧の読み込みに失敗しました');
+      }
     } finally {
       setLoading(false);
     }

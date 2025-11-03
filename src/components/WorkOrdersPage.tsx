@@ -178,8 +178,11 @@ export function WorkOrdersPage() {
       setCustomers(custData.customers);
       setReservations(resData.reservations);
     } catch (err: any) {
-      console.error('Load data error:', err);
-      toast.error('データの読み込みに失敗しました');
+      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
+      if (err?.message !== 'UNAUTHORIZED') {
+        console.error('Load data error:', err);
+        toast.error('データの読み込みに失敗しました');
+      }
     } finally {
       setLoading(false);
     }

@@ -75,8 +75,11 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
         }
       }
     } catch (err: any) {
-      console.error('Load incentives error:', err);
-      toast.error('インセンティブデータの読み込みに失敗しました');
+      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
+      if (err?.message !== 'UNAUTHORIZED') {
+        console.error('Load incentives error:', err);
+        toast.error('インセンティブデータの読み込みに失敗しました');
+      }
     } finally {
       setLoading(false);
     }

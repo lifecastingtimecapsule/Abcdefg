@@ -1721,6 +1721,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     const dailySalesMap = new Map<string, { revenue: number; count: number }>();
     const monthlySalesMap = new Map<string, { revenue: number; count: number }>();
     const ageGroupSalesMap = new Map<string, { revenue: number; count: number; ageGroup: string }>();
+    const zeroAgeMonthsMap = new Map<string, { revenue: number; count: number; months: number }>();
 
     for (const reservation of filteredReservations) {
       const menuItem = menuItems.find((m: any) => m.menu_item_id === reservation.menu_item_id);
@@ -1761,13 +1762,20 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
         monthlySalesMap.set(month, monthlyData);
 
         // Age group sales
-        const customer = customers.find((c: any) => c.id === reservation.customer_id);
+        const customer = customers.find((c: any) => c.customer_id === reservation.customer_id);
         if (customer && customer.child_age_years !== undefined && customer.child_age_years !== null) {
           const age = customer.child_age_years;
           let ageGroup = '';
           
           if (age === 0) {
             ageGroup = '0歳';
+            // 0歳の場合、月齢別データも記録
+            const months = customer.child_age_months !== undefined && customer.child_age_months !== null ? customer.child_age_months : 0;
+            const monthKey = `${months}ヶ月`;
+            const monthData = zeroAgeMonthsMap.get(monthKey) || { revenue: 0, count: 0, months };
+            monthData.revenue += price;
+            monthData.count += 1;
+            zeroAgeMonthsMap.set(monthKey, monthData);
           } else if (age === 1) {
             ageGroup = '1歳';
           } else if (age === 2) {
@@ -1862,6 +1870,16 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     const ageGroupSales = Array.from(ageGroupSalesMap.values())
       .sort((a, b) => ageOrder.indexOf(a.ageGroup) - ageOrder.indexOf(b.ageGroup));
 
+    // Convert 0歳 months map to sorted array
+    const zeroAgeMonthsData = Array.from(zeroAgeMonthsMap.values())
+      .sort((a, b) => a.months - b.months)
+      .map(data => ({
+        months: data.months,
+        label: `${data.months}ヶ月`,
+        revenue: data.revenue,
+        count: data.count,
+      }));
+
     return c.json({
       totalRevenue,
       totalReservations: filteredReservations.length,
@@ -1878,6 +1896,7 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
         averagePerReservation: reservationsWithAdditionalUnits > 0 ? totalAdditionalUnits / reservationsWithAdditionalUnits : 0,
       },
       ageGroupSales,
+      zeroAgeMonthsData,
     });
   } catch (error) {
     console.log(`Get sales analytics error: ${error}`);

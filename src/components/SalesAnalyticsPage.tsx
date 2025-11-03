@@ -20,6 +20,7 @@ interface SalesData {
     averagePerReservation: number;
   };
   ageGroupSales: { ageGroup: string; revenue: number; count: number }[];
+  zeroAgeMonthsData: { months: number; label: string; revenue: number; count: number }[];
 }
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'];
@@ -32,6 +33,7 @@ export function SalesAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<SalesData | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('month');
+  const [showZeroAgeDetail, setShowZeroAgeDetail] = useState(false);
   
   const currentDate = new Date();
   const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
@@ -76,8 +78,11 @@ export function SalesAnalyticsPage() {
       const data = await apiRequest<SalesData>(`/sales-analytics?${params}`);
       setSalesData(data);
     } catch (err: any) {
-      console.error('Load sales data error:', err);
-      toast.error('売上データの読み込みに失敗しました');
+      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
+      if (err?.message !== 'UNAUTHORIZED') {
+        console.error('Load sales data error:', err);
+        toast.error('売上データの読み込みに失敗しました');
+      }
     } finally {
       setLoading(false);
     }
@@ -290,70 +295,16 @@ export function SalesAnalyticsPage() {
         </div>
       </div>
 
-      {/* Week Sales Chart - Show only in month view */}
-      {viewMode === 'month' && salesData.weekSales && salesData.weekSales.length > 0 && (
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
-          <h2 className="text-slate-900 mb-4 flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-green-600" />
-            直近7日間の売上推移
-          </h2>
-          <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={salesData.weekSales}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis 
-                dataKey="date" 
-                tickFormatter={(value) => {
-                  const date = new Date(value);
-                  return `${date.getMonth() + 1}/${date.getDate()}`;
-                }}
-                stroke="#64748b"
-              />
-              <YAxis stroke="#64748b" />
-              <Tooltip 
-                formatter={(value: number) => formatCurrency(value)}
-                labelFormatter={(label) => {
-                  const date = new Date(label);
-                  return new Intl.DateTimeFormat('ja-JP').format(date);
-                }}
-                contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-              />
-              <Line 
-                type="monotone" 
-                dataKey="revenue" 
-                name="売上"
-                stroke="#10b981" 
-                strokeWidth={2}
-                dot={{ fill: '#10b981', r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-          <div className="mt-4 grid grid-cols-2 gap-4 pt-4 border-t border-slate-200">
-            <div>
-              <div className="text-sm text-slate-600">週間売上合計</div>
-              <div className="text-xl text-slate-900">
-                {formatCurrency(salesData.weekSales.reduce((sum, day) => sum + day.revenue, 0))}
-              </div>
-            </div>
-            <div>
-              <div className="text-sm text-slate-600">週間予約件数</div>
-              <div className="text-xl text-slate-900">
-                {salesData.weekSales.reduce((sum, day) => sum + day.count, 0)}件
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg p-5 text-white shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-blue-100">総売上（確定）</span>
             <DollarSign className="w-5 h-5 text-blue-100" />
           </div>
           <div className="text-2xl">{formatCurrency(salesData.confirmedRevenue)}</div>
-          <div className="text-sm text-blue-100 mt-1">予定含む: {formatCurrency(salesData.totalRevenue)}</div>
         </div>
 
         <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg p-5 text-white shadow-lg">
@@ -374,42 +325,11 @@ export function SalesAnalyticsPage() {
           <div className="text-sm text-pink-100 mt-1">確定予約ベース</div>
         </div>
 
-        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-5 text-white shadow-lg">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-orange-100">保留中売上</span>
-            <Package className="w-5 h-5 text-orange-100" />
-          </div>
-          <div className="text-2xl">{formatCurrency(salesData.pendingRevenue)}</div>
-          <div className="text-sm text-orange-100 mt-1">未確定の予約分</div>
-        </div>
+
       </div>
 
       {/* Sales Trend Chart */}
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
-        <h2 className="text-slate-900 mb-4 flex items-center gap-2">
-          <TrendingUp className="w-5 h-5 text-blue-600" />
-          {viewMode === 'year' ? '月別売上推移' : '日別売上推移'}
-        </h2>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={viewMode === 'year' ? salesData.monthlySales : salesData.dailySales}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis 
-              dataKey={viewMode === 'year' ? 'month' : 'date'} 
-              stroke="#64748b"
-              angle={viewMode === 'year' ? 0 : -45}
-              textAnchor={viewMode === 'year' ? 'middle' : 'end'}
-              height={viewMode === 'year' ? 30 : 60}
-            />
-            <YAxis stroke="#64748b" />
-            <Tooltip
-              formatter={(value: number) => formatCurrency(value)}
-              contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-            />
-            <Legend />
-            <Line type="monotone" dataKey="revenue" name="売上" stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6' }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+
 
       {/* Additional Units Stats */}
       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8 mb-6">
@@ -417,39 +337,27 @@ export function SalesAnalyticsPage() {
           <Package className="w-6 h-6 text-green-600" />
           追加本数の統計
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="text-center p-6 bg-gradient-to-br from-green-50 to-green-100 rounded-lg">
-            <div className="text-slate-600 mb-2">合計追加本数</div>
-            <div className="text-5xl text-green-600">{salesData.additionalUnitsStats.totalUnits}</div>
-            <div className="text-sm text-slate-500 mt-1">本</div>
-          </div>
-          <div className="text-center p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg">
-            <div className="text-slate-600 mb-2">追加あり予約</div>
-            <div className="text-3xl text-blue-600">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="text-center p-8 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg">
+            <div className="text-slate-600 mb-3">予約件数 / 追加あり</div>
+            <div className="text-4xl text-blue-600">
               {salesData.totalReservations}件中<br/>
-              {salesData.additionalUnitsStats.reservationsCount}件
+              <span className="text-5xl">{salesData.additionalUnitsStats.reservationsCount}件</span>
             </div>
-            <div className="text-sm text-slate-500 mt-1">
-              ({salesData.totalReservations > 0 
+            <div className="text-lg text-slate-500 mt-3">
+              追加あり: {salesData.totalReservations > 0 
                 ? ((salesData.additionalUnitsStats.reservationsCount / salesData.totalReservations) * 100).toFixed(1)
-                : '0.0'}%)
+                : '0.0'}%
             </div>
           </div>
-          <div className="text-center p-6 bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg">
-            <div className="text-slate-600 mb-2">平均追加本数</div>
-            <div className="text-5xl text-purple-600">
-              {salesData.additionalUnitsStats.averagePerReservation.toFixed(1)}
-            </div>
-            <div className="text-sm text-slate-500 mt-1">本/件</div>
-          </div>
-          <div className="text-center p-6 bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg">
-            <div className="text-slate-600 mb-2">追加率</div>
-            <div className="text-5xl text-orange-600">
+          <div className="text-center p-8 bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg">
+            <div className="text-slate-600 mb-3">追加率</div>
+            <div className="text-7xl text-orange-600">
               {salesData.totalReservations > 0 
                 ? ((salesData.additionalUnitsStats.reservationsCount / salesData.totalReservations) * 100).toFixed(1)
                 : '0.0'}
             </div>
-            <div className="text-sm text-slate-500 mt-1">%</div>
+            <div className="text-lg text-slate-500 mt-3">%</div>
           </div>
         </div>
       </div>
@@ -473,12 +381,32 @@ export function SalesAnalyticsPage() {
                   contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
                 />
                 <Legend />
-                <Bar dataKey="revenue" name="売上" fill="#3b82f6" />
+                <Bar 
+                  dataKey="revenue" 
+                  name="売上" 
+                  fill="#3b82f6"
+                  onClick={(data) => {
+                    if (data.ageGroup === '0歳') {
+                      setShowZeroAgeDetail(true);
+                    }
+                  }}
+                  style={{ cursor: 'pointer' }}
+                />
               </BarChart>
             </ResponsiveContainer>
           ) : (
             <div className="flex items-center justify-center h-[300px] text-slate-500">
               年齢データがありません
+            </div>
+          )}
+          {salesData.ageGroupSales.some(g => g.ageGroup === '0歳') && (
+            <div className="mt-4 text-center">
+              <button
+                onClick={() => setShowZeroAgeDetail(true)}
+                className="text-sm text-blue-600 hover:text-blue-700 hover:underline"
+              >
+                💡 0歳の月齢別詳細を見る
+              </button>
             </div>
           )}
         </div>
@@ -501,6 +429,12 @@ export function SalesAnalyticsPage() {
                   outerRadius={100}
                   fill="#8884d8"
                   dataKey="count"
+                  onClick={(data) => {
+                    if (data.ageGroup === '0歳') {
+                      setShowZeroAgeDetail(true);
+                    }
+                  }}
+                  style={{ cursor: 'pointer' }}
                 >
                   {salesData.ageGroupSales.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -514,8 +448,135 @@ export function SalesAnalyticsPage() {
               年齢データがありません
             </div>
           )}
+          {salesData.ageGroupSales.some(g => g.ageGroup === '0歳') && (
+            <div className="mt-4 text-center">
+              <button
+                onClick={() => setShowZeroAgeDetail(true)}
+                className="text-sm text-purple-600 hover:text-purple-700 hover:underline"
+              >
+                💡 0歳の月齢別詳細を見る
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* 0歳月齢別詳細モーダル */}
+      {showZeroAgeDetail && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowZeroAgeDetail(false)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-slate-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-slate-900 flex items-center gap-2">
+                  <Users className="w-6 h-6 text-blue-600" />
+                  0歳の月齢別詳細
+                </h2>
+                <button
+                  onClick={() => setShowZeroAgeDetail(false)}
+                  className="text-slate-400 hover:text-slate-600 transition"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              {salesData.zeroAgeMonthsData && salesData.zeroAgeMonthsData.length > 0 ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* 月齢別売上グラフ */}
+                  <div>
+                    <h3 className="text-slate-800 mb-4">月齢別売上</h3>
+                    <ResponsiveContainer width="100%" height={350}>
+                      <BarChart data={salesData.zeroAgeMonthsData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="label" stroke="#64748b" angle={-45} textAnchor="end" height={80} />
+                        <YAxis stroke="#64748b" />
+                        <Tooltip
+                          formatter={(value: number) => formatCurrency(value)}
+                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+                        />
+                        <Legend />
+                        <Bar dataKey="revenue" name="売上" fill="#3b82f6" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* 月齢別件数グラフ */}
+                  <div>
+                    <h3 className="text-slate-800 mb-4">月齢別予約件数</h3>
+                    <ResponsiveContainer width="100%" height={350}>
+                      <BarChart data={salesData.zeroAgeMonthsData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="label" stroke="#64748b" angle={-45} textAnchor="end" height={80} />
+                        <YAxis stroke="#64748b" />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+                        />
+                        <Legend />
+                        <Bar dataKey="count" name="予約件数" fill="#10b981" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-[300px] text-slate-500">
+                  0歳の月齢データがありません
+                </div>
+              )}
+
+              {/* 統計テーブル */}
+              {salesData.zeroAgeMonthsData && salesData.zeroAgeMonthsData.length > 0 && (
+                <div className="mt-6">
+                  <h3 className="text-slate-800 mb-3">詳細データ</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-slate-700">月齢</th>
+                          <th className="px-4 py-2 text-right text-slate-700">売上</th>
+                          <th className="px-4 py-2 text-right text-slate-700">件数</th>
+                          <th className="px-4 py-2 text-right text-slate-700">平均単価</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {salesData.zeroAgeMonthsData.map((data, index) => (
+                          <tr key={index} className="hover:bg-slate-50">
+                            <td className="px-4 py-2 text-slate-900">{data.label}</td>
+                            <td className="px-4 py-2 text-right text-slate-900">{formatCurrency(data.revenue)}</td>
+                            <td className="px-4 py-2 text-right text-slate-900">{data.count}件</td>
+                            <td className="px-4 py-2 text-right text-slate-900">
+                              {formatCurrency(data.count > 0 ? data.revenue / data.count : 0)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-blue-50">
+                        <tr>
+                          <td className="px-4 py-2 text-slate-900">合計</td>
+                          <td className="px-4 py-2 text-right text-slate-900">
+                            {formatCurrency(salesData.zeroAgeMonthsData.reduce((sum, d) => sum + d.revenue, 0))}
+                          </td>
+                          <td className="px-4 py-2 text-right text-slate-900">
+                            {salesData.zeroAgeMonthsData.reduce((sum, d) => sum + d.count, 0)}件
+                          </td>
+                          <td className="px-4 py-2 text-right text-slate-900">
+                            {(() => {
+                              const totalRevenue = salesData.zeroAgeMonthsData.reduce((sum, d) => sum + d.revenue, 0);
+                              const totalCount = salesData.zeroAgeMonthsData.reduce((sum, d) => sum + d.count, 0);
+                              return formatCurrency(totalCount > 0 ? totalRevenue / totalCount : 0);
+                            })()}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
