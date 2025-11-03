@@ -15,9 +15,11 @@ const supabase = createClient(
 );
 
 // Default admin credentials (固定の初期アカウント情報)
+// ログインID: admin
+// パスワード: Takara007
 const DEFAULT_ADMIN = {
   email: 'admin@amaretto.local',
-  password: 'amaretto2024',
+  password: 'Takara007', // 実際のパスワード
   login_id: 'admin',
   name: '管理者',
 };
@@ -104,6 +106,37 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     });
   } catch (error) {
     console.log(`Login processing error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Get current user info
+app.get('/make-server-fe84bde0/me', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    
+    // Get user data from KV store
+    const userData = await kv.get(`user:${user.id}`);
+    
+    if (!userData) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+    
+    return c.json({
+      user: {
+        user_id: userData.user_id,
+        name: userData.name,
+        login_id: userData.login_id,
+        role: userData.role,
+        email: userData.email,
+      },
+    });
+  } catch (error) {
+    console.error('[/me] Error:', error);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -1985,5 +2018,57 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     return c.json({ error: String(error) }, 500);
   }
 });
+
+// ========== Initialize Default Admin Account ==========
+async function ensureDefaultAdmin() {
+  try {
+    console.log('[Init] Checking for default admin account...');
+    
+    // Check if admin already exists
+    const users = await kv.getByPrefix('user:');
+    const adminExists = users.some((u: any) => u.login_id === DEFAULT_ADMIN.login_id);
+    
+    if (adminExists) {
+      console.log('[Init] Default admin account already exists');
+      return;
+    }
+    
+    console.log('[Init] Creating default admin account...');
+    
+    // Create admin user in Supabase Auth with correct password
+    const { data, error } = await supabase.auth.admin.createUser({
+      email: DEFAULT_ADMIN.email,
+      password: 'Takara007', // 正しいパスワードを使用
+      email_confirm: true,
+    });
+    
+    if (error) {
+      console.error('[Init] Failed to create admin in Supabase Auth:', error);
+      return;
+    }
+    
+    console.log('[Init] Admin created in Supabase Auth, user_id:', data.user.id);
+    
+    // Store user profile in KV store
+    await kv.set(`user:${data.user.id}`, {
+      user_id: data.user.id,
+      email: DEFAULT_ADMIN.email,
+      login_id: DEFAULT_ADMIN.login_id,
+      name: DEFAULT_ADMIN.name,
+      role: 'admin',
+      active_flag: true,
+      created_at: new Date().toISOString(),
+    });
+    
+    console.log('[Init] ✅ Default admin account created successfully');
+    console.log('[Init]   Login ID: admin');
+    console.log('[Init]   Password: Takara007');
+  } catch (error) {
+    console.error('[Init] Error ensuring default admin:', error);
+  }
+}
+
+// Initialize default admin on server start
+ensureDefaultAdmin();
 
 Deno.serve(app.fetch);

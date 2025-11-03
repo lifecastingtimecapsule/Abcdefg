@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiRequest } from '../utils/api';
+import { apiRequest } from '../utils/api/client';
 import { toast } from 'sonner@2.0.3';
 import { Plus, Edit2, MapPin } from 'lucide-react';
 

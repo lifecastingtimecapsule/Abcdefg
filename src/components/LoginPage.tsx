@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { createClient } from '../utils/supabase/client';
+import { post } from '../utils/api/client';
+import { API_ENDPOINTS } from '../utils/api/endpoints';
 import { LogIn } from 'lucide-react';
 
 interface LoginPageProps {
@@ -18,23 +19,11 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(true);
 
     try {
-      const response = await fetch(`https://${(await import('../utils/supabase/info')).projectId}.supabase.co/functions/v1/make-server-fe84bde0/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${(await import('../utils/supabase/info')).publicAnonKey}`,
-        },
-        body: JSON.stringify({
-          login_id: loginId,
-          password,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'ログインに失敗しました');
-      }
+      const data = await post<{ access_token: string }>(
+        API_ENDPOINTS.auth.login,
+        { login_id: loginId, password },
+        { skipAuth: true }
+      );
       
       if (data.access_token) {
         localStorage.setItem('access_token', data.access_token);
@@ -44,7 +33,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       }
     } catch (err: any) {
       console.error('Login error:', err);
-      const errorMessage = err.message || 'ログインに失敗しました';
+      // UNAUTHORIZEDエラーの場合は、より詳細なメッセージを表示
+      let errorMessage = 'ログインに失敗しました';
+      if (err.message === 'UNAUTHORIZED') {
+        errorMessage = 'ログインIDまたはパスワード���正しくありません';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -104,9 +99,18 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           </form>
         </div>
 
-        <p className="text-center text-slate-600 mt-6 text-sm">
-          社内用システム - 関係者以外の利用は禁止されています
-        </p>
+        <div className="mt-6 space-y-2">
+          <p className="text-center text-slate-600 text-sm">
+            社内用���ステム - 関係者以外の利用は禁止されています
+          </p>
+          <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-xl text-sm">
+            <p className="mb-1">
+              <strong>デフォルトアカウント:</strong>
+            </p>
+            <p>ログインID: <code className="bg-blue-100 px-2 py-1 rounded">admin</code></p>
+            <p>パスワード: <code className="bg-blue-100 px-2 py-1 rounded">Takara007</code></p>
+          </div>
+        </div>
       </div>
     </div>
   );

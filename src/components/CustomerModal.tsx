@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { apiRequest } from '../utils/api';
+import { apiRequest } from '../utils/api/client';
 import { toast } from 'sonner@2.0.3';
 import { X, Edit2, Calendar, MapPin, Package, Clock, AlertCircle } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';

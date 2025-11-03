@@ -1,26 +1,27 @@
-import { useEffect, useState } from 'react';
-import { apiRequest } from '../utils/api';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { toast } from 'sonner@2.0.3';
 import { Plus, Edit2, Search, ChevronDown, ChevronUp, Calendar, Package, Clock, AlertCircle } from 'lucide-react';
 import { CustomerModal } from './CustomerModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { ReservationModal } from './ReservationModal';
 import { Customer, Reservation, MenuItem, Location, User, WorkOrder } from '../types';
+import { useCustomers, useReservations, useWorkOrders, useMenuItems, useLocations, useUsers } from '../utils/queries';
+import { invalidateQueries } from '../utils/queryClient';
+import { apiRequest } from '../utils/api/client';
+import { API_ENDPOINTS, withQuery } from '../utils/api/endpoints';
+import { PermissionGate } from './rbac/PermissionGate';
+import { Permission } from '../utils/rbac/permissions';
 
 interface CustomersPageProps {
   userRole?: string;
+  currentUser?: User | null;
 }
 
-export function CustomersPage({ userRole }: CustomersPageProps) {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [staffData, setStaffData] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
+export function CustomersPage({ userRole, currentUser = null }: CustomersPageProps) {
+  
+  // UI状態管理
   const [searchInput, setSearchInput] = useState(''); // For debounced search
+  const [searchTerm, setSearchTerm] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [workOrderModalOpen, setWorkOrderModalOpen] = useState(false);
   const [reservationModalOpen, setReservationModalOpen] = useState(false);
@@ -35,6 +36,17 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
   const [total, setTotal] = useState(0);
   const [pageSize] = useState(30);
 
+  // カスタマーデータ（ページネーション付き）
+  const [paginatedCustomers, setPaginatedCustomers] = useState<Customer[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(true);
+
+  // React Queryでデータ取得（キャッシュ・リトライ付き）
+  const reservationsQuery = useReservations();
+  const workOrdersQuery = useWorkOrders();
+  const menuItemsQuery = useMenuItems();
+  const locationsQuery = useLocations();
+  const usersQuery = useUsers();
+
   // Debounce search term
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -45,72 +57,68 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  // ページネーション付きカスタマーデータの取得
   useEffect(() => {
-    loadData();
-  }, [currentPage, searchTerm]);
+    const loadPaginatedCustomers = async () => {
+      try {
+        setCustomersLoading(true);
+        
+        // Build query parameters
+        const params: Record<string, string> = {
+          page: currentPage.toString(),
+          pageSize: pageSize.toString(),
+        };
+        
+        if (searchTerm) {
+          params.search = searchTerm;
+        }
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      
-      // Build query parameters
-      const params = new URLSearchParams({
-        page: currentPage.toString(),
-        pageSize: pageSize.toString(),
-      });
-      
-      if (searchTerm) {
-        params.append('search', searchTerm);
+        const custData = await apiRequest(withQuery(API_ENDPOINTS.customers.list, params));
+        
+        setPaginatedCustomers(custData.customers);
+        setTotal(custData.total || 0);
+        setTotalPages(custData.totalPages || 1);
+      } catch (err: any) {
+        console.error('Load customers error:', err);
+        toast.error('顧客データの読み込みに失敗しました');
+      } finally {
+        setCustomersLoading(false);
       }
+    };
 
-      const [custData, resData, woData, menuData, locData, staffDataRes] = await Promise.all([
-        apiRequest(`/customers?${params.toString()}`),
-        apiRequest('/reservations'),
-        apiRequest('/work-orders'),
-        apiRequest('/menu-items'),
-        apiRequest('/locations'),
-        apiRequest('/users').catch(() => ({ users: [] })), // Catch error if not admin
-      ]);
-      
-      setCustomers(custData.customers);
-      setTotal(custData.total || 0);
-      setTotalPages(custData.totalPages || 1);
-      setReservations(resData.reservations || []);
-      setWorkOrders(woData.work_orders || []);
-      setMenuItems(menuData.menu_items || []);
-      setLocations(locData.locations || []);
-      setStaffData(staffDataRes.users || []);
-    } catch (err: any) {
-      console.error('Load data error:', err);
-      toast.error('データの読み込みに失敗しました');
-    } finally {
-      setLoading(false);
-    }
-  };
+    loadPaginatedCustomers();
+  }, [currentPage, searchTerm, pageSize]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(() => {
     setModalOpen(false);
     setEditingCustomer(null);
-    await loadData();
-  };
+    // データを再取得
+    invalidateQueries.customers();
+  }, []);
 
-  const toggleCustomerExpansion = (customerId: string) => {
-    const newExpanded = new Set(expandedCustomers);
-    if (newExpanded.has(customerId)) {
-      newExpanded.delete(customerId);
-    } else {
-      newExpanded.add(customerId);
-    }
-    setExpandedCustomers(newExpanded);
-  };
+  const toggleCustomerExpansion = useCallback((customerId: string) => {
+    setExpandedCustomers(prev => {
+      const newExpanded = new Set(prev);
+      if (newExpanded.has(customerId)) {
+        newExpanded.delete(customerId);
+      } else {
+        newExpanded.add(customerId);
+      }
+      return newExpanded;
+    });
+  }, []);
 
-  const getCustomerReservations = (customerId: string) => {
+  const getCustomerReservations = useCallback((customerId: string) => {
+    const reservations = reservationsQuery.data || [];
     return reservations
       .filter(r => r.customer_id === customerId)
       .sort((a, b) => new Date(b.reservation_date_time).getTime() - new Date(a.reservation_date_time).getTime());
-  };
+  }, [reservationsQuery.data]);
 
-  const getCustomerWorkOrders = (customerId: string) => {
+  const getCustomerWorkOrders = useCallback((customerId: string) => {
+    const reservations = reservationsQuery.data || [];
+    const workOrders = workOrdersQuery.data || [];
+    
     const customerReservationIds = reservations
       .filter(r => r.customer_id === customerId)
       .map(r => r.reservation_id);
@@ -118,45 +126,48 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
     return workOrders
       .filter(wo => customerReservationIds.includes(wo.reservation_id))
       .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime());
-  };
+  }, [reservationsQuery.data, workOrdersQuery.data]);
 
-  const getMenuName = (menuItemId: string) => {
+  const getMenuName = useCallback((menuItemId: string) => {
+    const menuItems = menuItemsQuery.data || [];
     const menu = menuItems.find(m => m.menu_item_id === menuItemId);
     return menu?.name || '-';
-  };
+  }, [menuItemsQuery.data]);
 
-  const getLocationName = (locationId: string) => {
+  const getLocationName = useCallback((locationId: string) => {
+    const locations = locationsQuery.data || [];
     const location = locations.find(l => l.location_id === locationId);
     return location?.location_name || '-';
-  };
+  }, [locationsQuery.data]);
 
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Tokyo',
-    }).format(date);
-  };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('ja-JP', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      timeZone: 'Asia/Tokyo',
-    }).format(date);
-  };
-
-  const getJapanToday = () => {
-    const now = new Date();
-    const japanDateStr = now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
-    return new Date(japanDateStr);
-  };
+  // 日付フォーマット関数をuseMemoでメモ化
+  const dateUtils = useMemo(() => ({
+    formatDateTime: (dateString: string) => {
+      const date = new Date(dateString);
+      return new Intl.DateTimeFormat('ja-JP', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Asia/Tokyo',
+      }).format(date);
+    },
+    formatDate: (dateString: string) => {
+      const date = new Date(dateString);
+      return new Intl.DateTimeFormat('ja-JP', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'Asia/Tokyo',
+      }).format(date);
+    },
+    getJapanToday: () => {
+      const now = new Date();
+      const japanDateStr = now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
+      return new Date(japanDateStr);
+    },
+  }), []);
 
   const handleBatchFixAge = async () => {
     if (!confirm('既存の顧客データで、月齢が入力されているが年齢が未入力のレコードを一括で補完します。\n\nこの操作により、過去の予約データも年齢別集計に反映されるようになります。\n\n実行しますか？')) {
@@ -198,7 +209,11 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
     return `${years}歳`;
   };
 
-  if (loading) {
+  // ローディ��グ状態（いずれかのクエリがローディング中）
+  const isLoading = customersLoading || reservationsQuery.isLoading || workOrdersQuery.isLoading || 
+                    menuItemsQuery.isLoading || locationsQuery.isLoading || usersQuery.isLoading;
+
+  if (isLoading && !paginatedCustomers.length) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
@@ -211,7 +226,7 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-slate-900">顧客管理</h1>
         <div className="flex items-center gap-3">
-          {userRole === 'admin' && (
+          <PermissionGate user={currentUser} permission={Permission.EDIT_SYSTEM_SETTINGS}>
             <button
               onClick={handleBatchFixAge}
               className="flex items-center gap-2 bg-amber-500 text-white px-4 py-2 rounded-xl hover:bg-amber-600 transition text-sm"
@@ -220,17 +235,19 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
               <AlertCircle className="w-4 h-4" />
               <span>年齢データ補完</span>
             </button>
-          )}
-          <button
-            onClick={() => {
-              setEditingCustomer(null);
-              setModalOpen(true);
-            }}
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
-          >
-            <Plus className="w-5 h-5" />
-            <span>新規顧客</span>
-          </button>
+          </PermissionGate>
+          <PermissionGate user={currentUser} permission={Permission.CREATE_CUSTOMER}>
+            <button
+              onClick={() => {
+                setEditingCustomer(null);
+                setModalOpen(true);
+              }}
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
+            >
+              <Plus className="w-5 h-5" />
+              <span>新規顧客</span>
+            </button>
+          </PermissionGate>
         </div>
       </div>
 
@@ -257,12 +274,12 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
 
       {/* Customers Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {customers.length === 0 ? (
+        {paginatedCustomers.length === 0 ? (
           <div className="col-span-full bg-white rounded-2xl p-8 text-center text-slate-500">
             {searchTerm ? '検索条件に一致する顧客が見つかりません' : '顧客が登録されていません'}
           </div>
         ) : (
-          customers.map((customer) => {
+          paginatedCustomers.map((customer) => {
             const customerReservations = getCustomerReservations(customer.customer_id);
             const isExpanded = expandedCustomers.has(customer.customer_id);
             

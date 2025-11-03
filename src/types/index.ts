@@ -19,10 +19,15 @@ export interface MeResponse {
 
 // 顧客関連
 export interface Customer {
-  id: string;
-  external_customer_number: string;
+  customer_id: string;
+  id?: string; // 後方互換性のため
+  customer_number: string;
+  external_customer_number?: string; // 後方互換性のため
   parent_name: string;
   child_name: string;
+  child_name_kana?: string;
+  child_age_years?: number | null;
+  child_age_months?: number | null;
   phone: string;
   email?: string;
   address?: string;
@@ -37,7 +42,10 @@ export interface Reservation {
   customer_id: string;
   reservation_date: string;
   reservation_time: string;
+  reservation_date_time: string;
   location_id: string;
+  menu_item_id: string;
+  additional_units: number;
   status: 'confirmed' | 'cancelled' | 'completed';
   notes?: string;
   created_at: string;
@@ -66,7 +74,8 @@ export interface WorkOrder {
 // ロケーション関連
 export interface Location {
   location_id: string;
-  name: string;
+  location_name: string;
+  name?: string; // 後方互換性のため
   address?: string;
   created_at: string;
   updated_at: string;
@@ -89,7 +98,8 @@ export interface Incentive {
 
 // メニュー設定関連
 export interface MenuItem {
-  menu_id: string;
+  menu_item_id: string;
+  menu_id?: string; // 後方互換性のため
   name: string;
   price: number;
   category?: string;

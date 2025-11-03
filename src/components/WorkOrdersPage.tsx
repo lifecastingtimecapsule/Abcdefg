@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
-import { apiRequest } from '../utils/api';
+import { apiRequest } from '../utils/api/client';
 import { toast } from 'sonner@2.0.3';
 import { Plus, AlertCircle, Clock, GripVertical } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-import { WorkOrder, Customer, Reservation } from '../types';
+import { WorkOrder, Customer, Reservation, User } from '../types';
+import { PermissionGate } from './rbac/PermissionGate';
+import { Permission } from '../utils/rbac/permissions';
+import { getOverdueWorkOrders, getUpcomingDueWorkOrders } from '../utils/workflow/reservationWorkflow';
+import { createOverdueAlert, createUpcomingDueAlert, saveAlert } from '../utils/notifications/alerts';
 
 const ItemType = 'WORK_ORDER';
 
@@ -113,7 +117,12 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, onView, customers, r
   );
 }
 
-export function WorkOrdersPage() {
+interface WorkOrdersPageProps {
+  currentUser?: User | null;
+}
+
+export function WorkOrdersPage({ currentUser = null }: WorkOrdersPageProps = {}) {
+  
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -127,6 +136,25 @@ export function WorkOrdersPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // 期限アラートチェック
+  useEffect(() => {
+    if (workOrders.length === 0) return;
+
+    // 期限切れをチェック
+    const overdueWorkOrders = getOverdueWorkOrders(workOrders);
+    overdueWorkOrders.forEach(wo => {
+      const alert = createOverdueAlert(wo);
+      saveAlert(alert);
+    });
+
+    // 期限接近（7日以内）をチェック
+    const upcomingWorkOrders = getUpcomingDueWorkOrders(workOrders, 7);
+    upcomingWorkOrders.forEach(wo => {
+      const alert = createUpcomingDueAlert(wo);
+      saveAlert(alert);
+    });
+  }, [workOrders]);
 
   const loadData = async () => {
     try {
@@ -352,30 +380,36 @@ export function WorkOrdersPage() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <h1 className="text-slate-900">作品管理</h1>
           <div className="flex items-center gap-3">
-            <button
-              onClick={savePriorityOrder}
-              className="px-4 py-2 bg-green-500 text-white rounded-xl hover:bg-green-600 transition"
-            >
-              並び順を保存
-            </button>
-            <button
-              onClick={() => {
-                setEditingWorkOrder(null);
-                setModalMode('edit');
-                setModalOpen(true);
-              }}
-              className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
-            >
-              <Plus className="w-5 h-5" />
-              <span>制作物追加</span>
-            </button>
-            <button
-              onClick={handleBatchCreateWorkOrders}
-              className="flex items-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-xl hover:from-green-600 hover:to-emerald-700 transition"
-            >
-              <AlertCircle className="w-5 h-5" />
-              <span>確定済予約を一括生成</span>
-            </button>
+            <PermissionGate user={currentUser} permission={Permission.EDIT_WORK_ORDER}>
+              <button
+                onClick={savePriorityOrder}
+                className="px-4 py-2 bg-green-500 text-white rounded-xl hover:bg-green-600 transition"
+              >
+                並び順を保存
+              </button>
+            </PermissionGate>
+            <PermissionGate user={currentUser} permission={Permission.CREATE_WORK_ORDER}>
+              <button
+                onClick={() => {
+                  setEditingWorkOrder(null);
+                  setModalMode('edit');
+                  setModalOpen(true);
+                }}
+                className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
+              >
+                <Plus className="w-5 h-5" />
+                <span>制作物追加</span>
+              </button>
+            </PermissionGate>
+            <PermissionGate user={currentUser} permission={Permission.CREATE_WORK_ORDER}>
+              <button
+                onClick={handleBatchCreateWorkOrders}
+                className="flex items-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-xl hover:from-green-600 hover:to-emerald-700 transition"
+              >
+                <AlertCircle className="w-5 h-5" />
+                <span>確定済予約を一括生成</span>
+              </button>
+            </PermissionGate>
           </div>
         </div>
 

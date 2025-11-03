@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiRequest } from '../utils/api';
+import { apiRequest } from '../utils/api/client';
 import { toast } from 'sonner@2.0.3';
 import { DollarSign, Lock, Unlock, ChevronLeft, ChevronRight, TrendingUp, Users, AlertCircle } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
