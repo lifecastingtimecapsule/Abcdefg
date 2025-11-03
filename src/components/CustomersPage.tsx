@@ -77,11 +77,8 @@ export function CustomersPage() {
       setLocations(locData.locations || []);
       setStaffData(staffDataRes.users || []);
     } catch (err: any) {
-      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
-      if (err?.message !== 'UNAUTHORIZED') {
-        console.error('Load data error:', err);
-        toast.error('データの読み込みに失敗しました');
-      }
+      console.error('Load data error:', err);
+      toast.error('データの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
@@ -158,15 +155,20 @@ export function CustomersPage() {
   };
 
   const getAgeDisplay = (customer: any) => {
-    if (customer.child_age_years === null || customer.child_age_years === undefined) {
+    // 月齢が入力されている場合は、歳がnullでも0歳として扱う
+    const hasMonths = customer.child_age_months !== null && customer.child_age_months !== undefined;
+    const years = customer.child_age_years ?? (hasMonths ? 0 : null);
+    
+    if (years === null || years === undefined) {
       return '';
     }
     
-    if (customer.child_age_years === 0 && customer.child_age_months !== null && customer.child_age_months !== undefined) {
+    // 0歳の場合は月齢だけ表示
+    if (years === 0 && hasMonths) {
       return `${customer.child_age_months}ヶ月`;
     }
     
-    return `${customer.child_age_years}歳`;
+    return `${years}歳`;
   };
 
   if (loading) {

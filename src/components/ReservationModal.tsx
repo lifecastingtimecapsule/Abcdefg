@@ -251,6 +251,10 @@ export function ReservationModal({
 
       // Create new customer if needed (for new reservations without existing customer_id)
       if (!customerId) {
+        // 月齢が入力されていて歳が空の場合は0をセット
+        const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
+                        (formData.child_age_months ? 0 : null);
+        
         const customerData = await apiRequest('/customers', {
           method: 'POST',
           body: JSON.stringify({
@@ -258,7 +262,7 @@ export function ReservationModal({
             parent_name_kana: formData.parent_name_kana,
             child_name: formData.child_name,
             child_name_kana: formData.child_name_kana,
-            child_age_years: formData.child_age_years ? parseInt(formData.child_age_years) : null,
+            child_age_years: ageYears,
             child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
             phone: formData.phone,
             line_url: formData.line_url,
@@ -270,6 +274,10 @@ export function ReservationModal({
         customerId = customerData.customer.customer_id;
       } else if (mode === 'create_new') {
         // Create a new customer (別の顧客として新規作成)
+        // 月齢が入力されていて歳が空の場合は0をセット
+        const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
+                        (formData.child_age_months ? 0 : null);
+        
         const customerData = await apiRequest('/customers', {
           method: 'POST',
           body: JSON.stringify({
@@ -277,7 +285,7 @@ export function ReservationModal({
             parent_name_kana: formData.parent_name_kana,
             child_name: formData.child_name,
             child_name_kana: formData.child_name_kana,
-            child_age_years: formData.child_age_years ? parseInt(formData.child_age_years) : null,
+            child_age_years: ageYears,
             child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
             phone: formData.phone,
             line_url: formData.line_url,
@@ -289,6 +297,10 @@ export function ReservationModal({
         customerId = customerData.customer.customer_id;
       } else if (mode === 'update') {
         // Update existing customer information (既存顧客を上書き)
+        // 月齢が入力されていて歳が空の場合は0をセット
+        const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
+                        (formData.child_age_months ? 0 : null);
+        
         await apiRequest('/customers', {
           method: 'POST',
           body: JSON.stringify({
@@ -297,7 +309,7 @@ export function ReservationModal({
             parent_name_kana: formData.parent_name_kana,
             child_name: formData.child_name,
             child_name_kana: formData.child_name_kana,
-            child_age_years: formData.child_age_years ? parseInt(formData.child_age_years) : null,
+            child_age_years: ageYears,
             child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
             phone: formData.phone,
             line_url: formData.line_url,
@@ -331,7 +343,7 @@ export function ReservationModal({
       });
 
       onSave();
-      toast.success(reservation ? '予約情報を更新しました' : '新しい予約を登録しました');
+      toast.success(reservation ? '予約情報を更新しました' : '��しい予約を登録しました');
     } catch (err: any) {
       console.error('Save error:', err);
       setError(err.message);
@@ -661,7 +673,7 @@ export function ReservationModal({
                   </div>
 
                   <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">0歳の場合（ヶ月）</label>
+                    <label className="block text-xs text-slate-700 mb-1.5">ヶ月</label>
                     <input
                       type="number"
                       min="0"

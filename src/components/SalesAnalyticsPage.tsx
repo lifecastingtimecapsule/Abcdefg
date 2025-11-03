@@ -78,11 +78,8 @@ export function SalesAnalyticsPage() {
       const data = await apiRequest<SalesData>(`/sales-analytics?${params}`);
       setSalesData(data);
     } catch (err: any) {
-      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
-      if (err?.message !== 'UNAUTHORIZED') {
-        console.error('Load sales data error:', err);
-        toast.error('売上データの読み込みに失敗しました');
-      }
+      console.error('Load sales data error:', err);
+      toast.error('売上データの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }

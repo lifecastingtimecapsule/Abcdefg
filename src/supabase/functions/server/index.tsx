@@ -479,6 +479,13 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
       }
     }
 
+    // 月齢が入力されていて歳が空の場合は0をセット
+    let finalAgeYears = child_age_years !== null && child_age_years !== undefined ? child_age_years : null;
+    const hasMonths = child_age_months !== null && child_age_months !== undefined;
+    if (finalAgeYears === null && hasMonths) {
+      finalAgeYears = 0;
+    }
+
     const customerData = {
       customer_id: customerId,
       customer_code: customerCode,
@@ -487,8 +494,8 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
       parent_name_kana: parent_name_kana || null,
       child_name,
       child_name_kana: child_name_kana || null,
-      child_age_years: child_age_years !== null && child_age_years !== undefined ? child_age_years : null,
-      child_age_months: child_age_months !== null && child_age_months !== undefined ? child_age_months : null,
+      child_age_years: finalAgeYears,
+      child_age_months: hasMonths ? child_age_months : null,
       phone,
       line_url: line_url || null,
       postal_code,

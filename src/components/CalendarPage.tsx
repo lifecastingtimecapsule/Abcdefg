@@ -58,11 +58,8 @@ export function CalendarPage({ userRole }: { userRole: string }) {
       // Auto-create work orders for past confirmed reservations
       await autoCreateWorkOrders(resData.reservations, menuData.menu_items || []);
     } catch (err: any) {
-      // UNAUTHORIZEDエラーの場合は再認証モーダルが表示されるので、ここではエラー表示しない
-      if (err?.message !== 'UNAUTHORIZED') {
-        console.error('Load data error:', err);
-        toast.error('データの読み込みに失敗しました');
-      }
+      console.error('Load data error:', err);
+      toast.error('データの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }

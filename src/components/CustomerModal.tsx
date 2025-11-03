@@ -135,6 +135,10 @@ export function CustomerModal({
     setLoading(true);
 
     try {
+      // 月齢が入力されていて歳が空の場合は0をセット
+      const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
+                      (formData.child_age_months ? 0 : null);
+      
       await apiRequest('/customers', {
         method: 'POST',
         body: JSON.stringify({
@@ -144,7 +148,7 @@ export function CustomerModal({
           parent_name_kana: formData.parent_name_kana,
           child_name: formData.child_name,
           child_name_kana: formData.child_name_kana,
-          child_age_years: formData.child_age_years ? parseInt(formData.child_age_years) : null,
+          child_age_years: ageYears,
           child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
           phone: formData.phone,
           line_url: formData.line_url,
