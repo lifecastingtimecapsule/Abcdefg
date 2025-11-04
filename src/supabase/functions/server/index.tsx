@@ -266,6 +266,145 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
   }
 });
 
+// ========== Users ==========
+
+// Get all users
+app.get('/make-server-fe84bde0/users', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    const users = await kv.getByPrefix('user:');
+    const activeUsers = users.filter((u: any) => u.active_flag !== false);
+
+    // スタッフ権限の場合は限定された情報のみを返す
+    if (role !== 'admin') {
+      const limitedUsers = activeUsers.map((u: any) => ({
+        user_id: u.user_id,
+        login_id: u.login_id,
+        name: u.name,
+      }));
+      return c.json({ users: limitedUsers });
+    }
+
+    // 管理者の場合は全情報を返す
+    return c.json({ users: activeUsers });
+  } catch (error) {
+    console.log(`Get users error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Update user (admin only)
+app.post('/make-server-fe84bde0/users/update', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const body = await c.req.json();
+    const { user_id, name, role: newRole, active_flag, update_login_id, update_password } = body;
+
+    if (!user_id) {
+      return c.json({ error: 'user_id is required' }, 400);
+    }
+
+    const userData = await kv.get(`user:${user_id}`);
+    if (!userData) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Check if new login_id is unique (if provided)
+    if (update_login_id && update_login_id !== userData.login_id) {
+      const allUsers = await kv.getByPrefix('user:');
+      const existingUser = allUsers.find((u: any) => u.login_id === update_login_id && u.user_id !== user_id);
+      if (existingUser) {
+        return c.json({ error: 'このログインIDは既に使用されています' }, 400);
+      }
+    }
+
+    // Update user in KV store
+    const updatedUser = {
+      ...userData,
+      name: name !== undefined ? name : userData.name,
+      role: newRole !== undefined ? newRole : userData.role,
+      active_flag: active_flag !== undefined ? active_flag : userData.active_flag,
+      login_id: update_login_id || userData.login_id,
+      updated_at: new Date().toISOString(),
+    };
+
+    await kv.set(`user:${user_id}`, updatedUser);
+
+    // Update password if provided
+    if (update_password) {
+      try {
+        await supabase.auth.admin.updateUserById(user_id, { password: update_password });
+      } catch (pwError) {
+        console.error(`Failed to update password: ${pwError}`);
+        return c.json({ error: 'パスワードの更新に失敗しました' }, 500);
+      }
+    }
+
+    return c.json({ success: true, user: updatedUser });
+  } catch (error) {
+    console.log(`Update user error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Delete user (admin only)
+app.delete('/make-server-fe84bde0/users/:user_id', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const userId = c.req.param('user_id');
+    if (!userId) {
+      return c.json({ error: 'user_id is required' }, 400);
+    }
+
+    // Don't allow deleting yourself
+    if (userId === user.id) {
+      return c.json({ error: '自分自身を削除することはできません' }, 400);
+    }
+
+    const userData = await kv.get(`user:${userId}`);
+    if (!userData) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Soft delete - set active_flag to false
+    const updatedUser = {
+      ...userData,
+      active_flag: false,
+      updated_at: new Date().toISOString(),
+    };
+
+    await kv.set(`user:${userId}`, updatedUser);
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Delete user error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
 // ========== Locations ==========
 
 // Get all locations

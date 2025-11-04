@@ -20,9 +20,10 @@ interface DashboardData {
 
 interface DashboardProps {
   onNavigate?: (page: string) => void;
+  userRole?: string;
 }
 
-export function Dashboard({ onNavigate }: DashboardProps) {
+export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
@@ -57,13 +58,15 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
   const loadAdditionalData = async () => {
     try {
+      // すべてのデータを並列取得
       const [resData, custData, locData, usersData, menuData] = await Promise.all([
         apiRequest<{ reservations: Reservation[] }>('/reservations'),
         apiRequest<{ customers: Customer[] }>('/customers'),
         apiRequest<{ locations: any[] }>('/locations'),
-        apiRequest<{ users: any[] }>('/users'),
+        apiRequest<{ users: any[] }>('/users'), // スタッフ権限でも限定情報を返すようサーバー側で対応済み
         apiRequest<{ menu_items: any[] }>('/menu-items'),
       ]);
+      
       setReservations(resData.reservations);
       setCustomers(custData.customers);
       setLocations(locData.locations);

@@ -66,13 +66,13 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
         setIncentives(rangeData.incentives);
       }
 
-      if (userRole === 'admin') {
-        try {
-          const userData = await apiRequest('/users');
-          setUsers(userData.users);
-        } catch (err) {
-          console.error('Failed to load users:', err);
-        }
+      // Load users (スタッフ権限でも限定情報を返すようサーバー側で対応済み)
+      try {
+        const userData = await apiRequest('/users');
+        setUsers(userData.users);
+      } catch (err) {
+        console.error('Failed to load users:', err);
+        setUsers([]);
       }
     } catch (err: any) {
       console.error('Load incentives error:', err);

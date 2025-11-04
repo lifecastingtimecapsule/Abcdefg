@@ -45,14 +45,13 @@ export function CalendarPage({ userRole }: { userRole: string }) {
       setLocations(locData.locations);
       setMenuItems(menuData.menu_items || []);
 
-      // Try to load users if admin
-      if (userRole === 'admin') {
-        try {
-          const userData = await apiRequest('/users');
-          setUsers(userData.users);
-        } catch (err) {
-          console.error('Failed to load users:', err);
-        }
+      // Load users (スタッフ権限でも限定情報を返すようサーバー側で対応済み)
+      try {
+        const userData = await apiRequest('/users');
+        setUsers(userData.users);
+      } catch (err) {
+        console.error('Failed to load users:', err);
+        setUsers([]);
       }
 
       // Auto-create work orders for past confirmed reservations

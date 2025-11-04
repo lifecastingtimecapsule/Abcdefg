@@ -20,7 +20,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole }
         { id: 'calendar', label: 'カレンダー', icon: Calendar, roles: ['admin', 'staff'] },
         { id: 'customers', label: '顧客管理', icon: Users, roles: ['admin', 'staff'] },
         { id: 'work-orders', label: '作品管理', icon: Package, roles: ['admin', 'staff'] },
-        { id: 'sales-incentives', label: userRole === 'admin' ? '売上・インセンティブ' : 'インセンティブ', icon: TrendingUp, roles: ['admin', 'staff'] },
+        { id: 'sales-incentives', label: '売上・インセンティブ', icon: TrendingUp, roles: ['admin'] },
         { id: 'operations', label: '運営管理', icon: UserCog, roles: ['admin'] },
       ]
     },

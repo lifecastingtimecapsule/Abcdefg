@@ -101,6 +101,9 @@ export default function App() {
       if (currentPage === 'operations' && currentUser.role !== 'admin') {
         return false;
       }
+      if (currentPage === 'sales-incentives' && currentUser.role !== 'admin') {
+        return false;
+      }
       return true;
     };
 
@@ -113,7 +116,7 @@ export default function App() {
     
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard onNavigate={setCurrentPage} />;
+        return <Dashboard onNavigate={setCurrentPage} userRole={currentUser.role} />;
       case 'calendar':
         return <CalendarPage userRole={currentUser.role} />;
       case 'customers':
@@ -132,7 +135,7 @@ export default function App() {
           onReauthRequest={() => setShowReauthModal(true)} 
         />;
       default:
-        return <Dashboard onNavigate={setCurrentPage} />;
+        return <Dashboard onNavigate={setCurrentPage} userRole={currentUser.role} />;
     }
   };
 

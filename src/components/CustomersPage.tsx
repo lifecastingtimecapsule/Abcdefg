@@ -63,13 +63,14 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
         params.append('search', searchTerm);
       }
 
+      // すべてのデータを並列取得
       const [custData, resData, woData, menuData, locData, staffDataRes] = await Promise.all([
         apiRequest(`/customers?${params.toString()}`),
         apiRequest('/reservations'),
         apiRequest('/work-orders'),
         apiRequest('/menu-items'),
         apiRequest('/locations'),
-        apiRequest('/users').catch(() => ({ users: [] })), // Catch error if not admin
+        apiRequest('/users'), // スタッフ権限でも限定情報を返すようサーバー側で対応済み
       ]);
       
       setCustomers(custData.customers);
