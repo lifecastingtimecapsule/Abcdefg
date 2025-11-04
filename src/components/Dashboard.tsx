@@ -363,13 +363,11 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                         <span className={`inline-block px-3 py-1 rounded-full text-xs ${
                           reservation.status === 'confirmed' ? 'bg-blue-100 text-blue-700' :
                           reservation.status === 'tentative' ? 'bg-amber-100 text-amber-700' :
-                          reservation.status === 'rescheduled' ? 'bg-purple-100 text-purple-700' :
                           reservation.status === 'cancelled' ? 'bg-red-100 text-red-700' :
                           'bg-slate-100 text-slate-700'
                         }`}>
                           {reservation.status === 'confirmed' ? '✓ 確定' :
                            reservation.status === 'tentative' ? '⏳ スタンバイ' :
-                           reservation.status === 'rescheduled' ? '🔄 予約変更' :
                            reservation.status === 'cancelled' ? '✕ キャンセル' : reservation.status}
                         </span>
                       </td>
@@ -386,12 +384,12 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
       <section>
         <div className="flex items-center gap-2 mb-4">
           <AlertCircle className="w-6 h-6 text-yellow-500" />
-          <h2 className="text-slate-900">仮予約・予約変更</h2>
+          <h2 className="text-slate-900">スタンバイ予約</h2>
         </div>
 
         {data.tentative_reservations.length === 0 ? (
           <div className="bg-white rounded-2xl p-8 text-center text-slate-500">
-            仮予約・予約変更はありません
+            スタンバイ予約はありません
           </div>
         ) : (
           <div className="bg-white rounded-2xl overflow-hidden shadow-sm">
@@ -420,11 +418,9 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                         <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${
                           reservation.status === 'tentative'
                             ? 'bg-amber-100 text-amber-700'
-                            : reservation.status === 'rescheduled'
-                            ? 'bg-purple-100 text-purple-700'
                             : 'bg-slate-100 text-slate-700'
                         }`}>
-                          {reservation.status === 'tentative' ? '⏳ スタンバイ' : reservation.status === 'rescheduled' ? '🔄 予約変更' : reservation.status}
+                          {reservation.status === 'tentative' ? '⏳ スタンバイ' : reservation.status}
                         </span>
                       </td>
                       <td className="px-4 py-3">

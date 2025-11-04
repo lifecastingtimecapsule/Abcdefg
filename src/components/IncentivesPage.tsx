@@ -479,7 +479,7 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
             <li>基本: 1予約 = ¥1,000</li>
             <li>年間データは確定状態の予約のみ集計</li>
             <li>付与月: 予約日の月でカウント</li>
-            <li>キャンセル・予約変更の予約はインセンティブ対象外</li>
+            <li>キャンセルの予約はインセンティブ対象外</li>
             <li>手動調整額も含めた合計額を表示</li>
           </ul>
         </div>

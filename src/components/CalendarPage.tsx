@@ -437,8 +437,6 @@ export function CalendarPage({ userRole }: { userRole: string }) {
                                 ? 'bg-amber-100 text-amber-700'
                                 : reservation.status === 'cancelled'
                                 ? 'bg-red-100 text-red-700'
-                                : reservation.status === 'rescheduled'
-                                ? 'bg-purple-100 text-purple-700'
                                 : 'bg-slate-100 text-slate-700'
                             }`}
                           >
@@ -448,8 +446,6 @@ export function CalendarPage({ userRole }: { userRole: string }) {
                               ? '⏳ スタンバイ'
                               : reservation.status === 'cancelled'
                               ? '✕ キャンセル'
-                              : reservation.status === 'rescheduled'
-                              ? '🔄 予約変更'
                               : reservation.status}
                           </span>
                           {reservation.payment_status === 'paid' && (
