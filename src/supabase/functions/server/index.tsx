@@ -286,6 +286,7 @@ app.get('/make-server-fe84bde0/users', async (c) => {
         user_id: u.user_id,
         login_id: u.login_id,
         name: u.name,
+        role: u.role, // roleを含める（担当スタッフ選択時の管理者除外用）
       }));
       return c.json({ users: limitedUsers });
     }

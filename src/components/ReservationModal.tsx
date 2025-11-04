@@ -59,6 +59,7 @@ export function ReservationModal({
     menu_item_id: '',
     additional_units: '0',
     // Customer fields for new customer
+    external_customer_number: '',
     parent_name: '',
     parent_name_kana: '',
     child_name: '',
@@ -102,6 +103,7 @@ export function ReservationModal({
       
       // Save initial customer data for comparison
       const customerData = {
+        external_customer_number: customer?.external_customer_number || '',
         parent_name: customer?.parent_name || '',
         parent_name_kana: customer?.parent_name_kana || '',
         child_name: customer?.child_name || '',
@@ -189,6 +191,7 @@ export function ReservationModal({
     setFormData(prev => ({ 
       ...prev,
       customer_id: customer.customer_id,
+      external_customer_number: customer.external_customer_number || '',
       parent_name: customer.parent_name || '',
       parent_name_kana: customer.parent_name_kana || '',
       child_name: customer.child_name || '',
@@ -258,6 +261,7 @@ export function ReservationModal({
         const customerData = await apiRequest('/customers', {
           method: 'POST',
           body: JSON.stringify({
+            external_customer_number: formData.external_customer_number || null,
             parent_name: formData.parent_name,
             parent_name_kana: formData.parent_name_kana,
             child_name: formData.child_name,
@@ -281,6 +285,7 @@ export function ReservationModal({
         const customerData = await apiRequest('/customers', {
           method: 'POST',
           body: JSON.stringify({
+            external_customer_number: formData.external_customer_number || null,
             parent_name: formData.parent_name,
             parent_name_kana: formData.parent_name_kana,
             child_name: formData.child_name,
@@ -305,6 +310,7 @@ export function ReservationModal({
           method: 'POST',
           body: JSON.stringify({
             customer_id: customerId,
+            external_customer_number: formData.external_customer_number || null,
             parent_name: formData.parent_name,
             parent_name_kana: formData.parent_name_kana,
             child_name: formData.child_name,
@@ -550,14 +556,22 @@ export function ReservationModal({
                   )}
                 </div>
 
-                {formData.customer_id && !isViewMode && (
-                  <div className="mt-2.5 p-2.5 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="flex items-center gap-2 text-green-800">
-                      <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-                      <span className="text-xs">既存顧客が選択されています</span>
+                {formData.customer_id && !isViewMode && (() => {
+                  const selectedCustomer = customers.find(c => c.customer_id === formData.customer_id);
+                  return (
+                    <div className="mt-2.5 p-2.5 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="flex items-center gap-2 text-green-800">
+                        <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
+                        <div className="flex-1">
+                          <span className="text-xs">既存顧客が選択されています</span>
+                          {selectedCustomer?.external_customer_number && (
+                            <span className="text-xs ml-2">• 顧客番号: {selectedCustomer.external_customer_number}</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             )}
 
@@ -565,9 +579,15 @@ export function ReservationModal({
             {!hideCustomerInfo && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-1">
                     <div className="w-1 h-5 bg-slate-300 rounded-full"></div>
                     <h3 className="text-sm text-slate-900">顧客情報{reservation && !isViewMode && ' (編集可能)'}</h3>
+                    {formData.customer_id && (() => {
+                      const selectedCustomer = customers.find(c => c.customer_id === formData.customer_id);
+                      return selectedCustomer?.external_customer_number ? (
+                        <span className="text-xs text-slate-500 ml-2">• 顧客番号: {selectedCustomer.external_customer_number}</span>
+                      ) : null;
+                    })()}
                   </div>
                   {reservation && isCustomerDataModified() && !isViewMode && (
                     <div className="flex items-center gap-1.5 px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs">
@@ -584,6 +604,27 @@ export function ReservationModal({
                     </p>
                   </div>
                 )}
+
+              {/* 顧客番号 */}
+              <div className="bg-slate-50 rounded-lg p-3.5">
+                <label className="block text-xs text-slate-700 mb-1.5">
+                  顧客番号
+                  {!isViewMode && <span className="text-slate-500 text-xs ml-2">（任意）</span>}
+                </label>
+                <input
+                  type="text"
+                  value={formData.external_customer_number}
+                  onChange={(e) => setFormData({ ...formData, external_customer_number: e.target.value })}
+                  placeholder={isViewMode ? (formData.external_customer_number ? '' : '未設定') : '例: 12345 または ABC-001'}
+                  disabled={isViewMode}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                />
+                {!isViewMode && (
+                  <p className="text-xs text-slate-500 mt-1.5">
+                    社内で使用している顧客番号を入力できます。未入力でも問題ありません。
+                  </p>
+                )}
+              </div>
 
               {/* 保護者情報 */}
               <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
@@ -656,7 +697,7 @@ export function ReservationModal({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-700 mb-1.5">年齢（歳）</label>
                     <input
@@ -1108,7 +1149,7 @@ export function ReservationModal({
                     <div className="bg-blue-100 border border-blue-300 rounded-lg p-3 text-sm text-blue-900">
                       <p className="flex items-start gap-2">
                         <span>✓</span>
-                        <span>元の顧客情報は変更されず、新しい顧客番号（A-xxxx）が発行されます。</span>
+                        <span>元の顧客情報は変更されず、新しい顧客番号（A-xxxx）が発行されます���</span>
                       </p>
                     </div>
                   </div>

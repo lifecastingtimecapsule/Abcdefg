@@ -559,7 +559,7 @@ export function CustomerModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-slate-700 mb-2">お子さま年齢（歳）</label>
               <input
