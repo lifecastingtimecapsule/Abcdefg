@@ -63,24 +63,56 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
         params.append('search', searchTerm);
       }
 
-      // すべてのデータを並列取得
-      const [custData, resData, woData, menuData, locData, staffDataRes] = await Promise.all([
+      // すべてのデータを並列取得（Promise.allSettledで個別エラーハンドリング）
+      const results = await Promise.allSettled([
         apiRequest(`/customers?${params.toString()}`),
         apiRequest('/reservations'),
         apiRequest('/work-orders'),
         apiRequest('/menu-items'),
         apiRequest('/locations'),
-        apiRequest('/users'), // スタッフ権限でも限定情報を返すようサーバー側で対応済み
+        apiRequest('/users'), // スタッフ権限では限定情報のみ、403の可能性あり
       ]);
       
-      setCustomers(custData.customers);
-      setTotal(custData.total || 0);
-      setTotalPages(custData.totalPages || 1);
-      setReservations(resData.reservations || []);
-      setWorkOrders(woData.work_orders || []);
-      setMenuItems(menuData.menu_items || []);
-      setLocations(locData.locations || []);
-      setStaffData(staffDataRes.users || []);
+      // 各結果を個別に処理
+      if (results[0].status === 'fulfilled') {
+        setCustomers(results[0].value.customers);
+        setTotal(results[0].value.total || 0);
+        setTotalPages(results[0].value.totalPages || 1);
+      } else {
+        console.error('Failed to load customers:', results[0].reason);
+        toast.error('顧客データの読み込みに失敗しました');
+      }
+      
+      if (results[1].status === 'fulfilled') {
+        setReservations(results[1].value.reservations || []);
+      } else {
+        console.error('Failed to load reservations:', results[1].reason);
+      }
+      
+      if (results[2].status === 'fulfilled') {
+        setWorkOrders(results[2].value.work_orders || []);
+      } else {
+        console.error('Failed to load work orders:', results[2].reason);
+      }
+      
+      if (results[3].status === 'fulfilled') {
+        setMenuItems(results[3].value.menu_items || []);
+      } else {
+        console.error('Failed to load menu items:', results[3].reason);
+      }
+      
+      if (results[4].status === 'fulfilled') {
+        setLocations(results[4].value.locations || []);
+      } else {
+        console.error('Failed to load locations:', results[4].reason);
+      }
+      
+      if (results[5].status === 'fulfilled') {
+        setStaffData(results[5].value.users || []);
+      } else {
+        console.error('Failed to load users:', results[5].reason);
+        setStaffData([]); // 403エラー時は空配列で継続
+      }
     } catch (err: any) {
       console.error('Load data error:', err);
       toast.error('データの読み込みに失敗しました');

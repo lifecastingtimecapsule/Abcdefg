@@ -33,25 +33,52 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [resData, custData, locData, menuData] = await Promise.all([
+      
+      // すべてのデータを並列取得（Promise.allSettledで個別エラーハンドリング）
+      const results = await Promise.allSettled([
         apiRequest('/reservations'),
         apiRequest('/customers'),
         apiRequest('/locations'),
         apiRequest('/menu-items'),
+        apiRequest('/users'), // スタッフ権限では限定情報のみ、403の可能性あり
       ]);
 
-      setReservations(resData.reservations);
-      setCustomers(custData.customers);
-      setLocations(locData.locations);
-      setMenuItems(menuData.menu_items || []);
+      let resData: any = { reservations: [] };
+      let menuData: any = { menu_items: [] };
 
-      // Load users (スタッフ権限でも限定情報を返すようサーバー側で対応済み)
-      try {
-        const userData = await apiRequest('/users');
-        setUsers(userData.users);
-      } catch (err) {
-        console.error('Failed to load users:', err);
-        setUsers([]);
+      // 各結果を個別に処理
+      if (results[0].status === 'fulfilled') {
+        resData = results[0].value;
+        setReservations(resData.reservations);
+      } else {
+        console.error('Failed to load reservations:', results[0].reason);
+        toast.error('予約データの読み込みに失敗しました');
+      }
+
+      if (results[1].status === 'fulfilled') {
+        setCustomers(results[1].value.customers);
+      } else {
+        console.error('Failed to load customers:', results[1].reason);
+      }
+
+      if (results[2].status === 'fulfilled') {
+        setLocations(results[2].value.locations);
+      } else {
+        console.error('Failed to load locations:', results[2].reason);
+      }
+
+      if (results[3].status === 'fulfilled') {
+        menuData = results[3].value;
+        setMenuItems(menuData.menu_items || []);
+      } else {
+        console.error('Failed to load menu items:', results[3].reason);
+      }
+
+      if (results[4].status === 'fulfilled') {
+        setUsers(results[4].value.users);
+      } else {
+        console.error('Failed to load users:', results[4].reason);
+        setUsers([]); // 403エラー時は空配列で継続
       }
 
       // Auto-create work orders for past confirmed reservations

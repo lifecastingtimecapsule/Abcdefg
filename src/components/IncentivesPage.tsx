@@ -51,28 +51,41 @@ export function IncentivesPage({ userRole, userId }: { userRole: string; userId:
     try {
       setLoading(true);
 
+      // インセンティブデータとユーザーデータを並列取得（Promise.allSettledで個別エラーハンドリング）
+      let incentiveRequest: Promise<any>;
+      
       if (viewMode === 'month') {
-        // 月間ビュー: 既存のAPI
         const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-        const incentiveData = await apiRequest(`/incentives?year_month=${yearMonth}${userRole !== 'admin' ? `&user_id=${userId}` : ''}`);
-        setIncentives(incentiveData.incentives);
+        incentiveRequest = apiRequest(`/incentives?year_month=${yearMonth}${userRole !== 'admin' ? `&user_id=${userId}` : ''}`);
       } else if (viewMode === 'year') {
-        // 年間ビュー: 新しいAPI
-        const yearData = await apiRequest(`/incentives/yearly?year=${selectedYear}${userRole !== 'admin' ? `&user_id=${userId}` : ''}`);
-        setYearlyData(yearData);
+        incentiveRequest = apiRequest(`/incentives/yearly?year=${selectedYear}${userRole !== 'admin' ? `&user_id=${userId}` : ''}`);
       } else {
-        // カスタムビュー: 範囲指定API
-        const rangeData = await apiRequest(`/incentives/range?start=${customDateRange.startMonth}&end=${customDateRange.endMonth}${userRole !== 'admin' ? `&user_id=${userId}` : ''}`);
-        setIncentives(rangeData.incentives);
+        incentiveRequest = apiRequest(`/incentives/range?start=${customDateRange.startMonth}&end=${customDateRange.endMonth}${userRole !== 'admin' ? `&user_id=${userId}` : ''}`);
       }
 
-      // Load users (スタッフ権限でも限定情報を返すようサーバー側で対応済み)
-      try {
-        const userData = await apiRequest('/users');
-        setUsers(userData.users);
-      } catch (err) {
-        console.error('Failed to load users:', err);
-        setUsers([]);
+      const results = await Promise.allSettled([
+        incentiveRequest,
+        apiRequest('/users'), // スタッフ権限では限定情報のみ、403の可能性あり
+      ]);
+
+      // インセンティブデータの処理
+      if (results[0].status === 'fulfilled') {
+        if (viewMode === 'year') {
+          setYearlyData(results[0].value);
+        } else {
+          setIncentives(results[0].value.incentives);
+        }
+      } else {
+        console.error('Failed to load incentives:', results[0].reason);
+        toast.error('インセンティブデータの読み込みに失敗しました');
+      }
+
+      // ユーザーデータの処理
+      if (results[1].status === 'fulfilled') {
+        setUsers(results[1].value.users);
+      } else {
+        console.error('Failed to load users:', results[1].reason);
+        setUsers([]); // 403エラー時は空配列で継続
       }
     } catch (err: any) {
       console.error('Load incentives error:', err);
