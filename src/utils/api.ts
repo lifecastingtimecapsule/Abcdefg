@@ -38,7 +38,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
         console.warn('[Auth] Session expired - triggering re-authentication');
         localStorage.removeItem('access_token');
         
-        // コールバックが設定されていれば実行（再ログインモーダル表示など）
+        // コールバッ���が設定されていれば実行（再ログインモーダル表示など）
         if (onUnauthorizedCallback) {
           onUnauthorizedCallback();
         } else {
@@ -54,9 +54,8 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
         console.error(`Server error (${response.status}):`, error);
         toast.error(`サーバーエラーが発生しました (${response.status})`);
       } else if (response.status === 403) {
-        // 権限エラー
-        console.error('Permission denied:', error);
-        toast.error('この操作を実行する権限がありません');
+        // 権限エラー（トーストは表示せず、コンソールログのみ）
+        console.warn('[Permission] Access denied:', error);
       }
       
       throw new Error(error.error || `HTTP ${response.status}`);

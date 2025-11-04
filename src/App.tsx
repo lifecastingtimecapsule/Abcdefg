@@ -96,6 +96,21 @@ export default function App() {
   const renderPage = () => {
     if (!currentUser) return <Dashboard onNavigate={setCurrentPage} />;
     
+    // Check if user has access to the current page
+    const hasAccess = () => {
+      if (currentPage === 'operations' && currentUser.role !== 'admin') {
+        return false;
+      }
+      return true;
+    };
+
+    // If no access, silently redirect to dashboard
+    if (!hasAccess()) {
+      // Use setTimeout to avoid state update during render
+      setTimeout(() => setCurrentPage('dashboard'), 0);
+      return <Dashboard onNavigate={setCurrentPage} />;
+    }
+    
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard onNavigate={setCurrentPage} />;
@@ -112,11 +127,10 @@ export default function App() {
           onReauthRequest={() => setShowReauthModal(true)} 
         />;
       case 'operations':
-        return currentUser.role === 'admin' ? 
-          <OperationsPage 
-            userRole={currentUser.role} 
-            onReauthRequest={() => setShowReauthModal(true)} 
-          /> : <Dashboard onNavigate={setCurrentPage} />;
+        return <OperationsPage 
+          userRole={currentUser.role} 
+          onReauthRequest={() => setShowReauthModal(true)} 
+        />;
       default:
         return <Dashboard onNavigate={setCurrentPage} />;
     }
