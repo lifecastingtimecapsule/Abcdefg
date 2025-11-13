@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner@2.0.3';
 import { LoginPage } from './components/LoginPage';
 import { PublicReservationPage } from './components/PublicReservationPage';
+import { ReservationCompletePage } from './components/ReservationCompletePage';
+import { ReservationStatusPage } from './components/ReservationStatusPage';
+import { MyReservationPage } from './components/MyReservationPage';
 import { ReauthModal } from './components/ReauthModal';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
@@ -23,7 +26,10 @@ export default function App() {
 
   // URLルーティングの監視
   useEffect(() => {
+    console.log('[App] 初期ルート:', window.location.pathname);
+    
     const handlePopState = () => {
+      console.log('[App] ルート変更:', window.location.pathname);
       setCurrentRoute(window.location.pathname);
     };
 
@@ -129,8 +135,8 @@ export default function App() {
     handleLogout();
   };
 
-  // 公開予約ページ（認証不要）
-  if (currentRoute === '/reservation' || currentRoute === '/yoyaku') {
+  // 公開ページ（認証不要）
+  if (currentRoute === '/reservation' || currentRoute === '/yoyaku' || currentRoute === '/public/reservation') {
     return (
       <>
         <Toaster 
@@ -142,6 +148,55 @@ export default function App() {
           }}
         />
         <PublicReservationPage />
+      </>
+    );
+  }
+
+  if (currentRoute.startsWith('/public/reservation/complete')) {
+    return (
+      <>
+        <Toaster 
+          position="top-center" 
+          richColors 
+          closeButton
+          toastOptions={{
+            duration: 4000,
+          }}
+        />
+        <ReservationCompletePage />
+      </>
+    );
+  }
+
+  if (currentRoute.startsWith('/public/reservation/status')) {
+    return (
+      <>
+        <Toaster 
+          position="top-center" 
+          richColors 
+          closeButton
+          toastOptions={{
+            duration: 4000,
+          }}
+        />
+        <ReservationStatusPage />
+      </>
+    );
+  }
+
+  if (currentRoute.startsWith('/my-reservation')) {
+    console.log('[App] 予約確認ページ表示:', currentRoute);
+    return (
+      <>
+        <Toaster 
+          position="top-center" 
+          richColors 
+          closeButton
+          toastOptions={{
+            duration: 4000,
+          }}
+        />
+        <MyReservationPage />
       </>
     );
   }

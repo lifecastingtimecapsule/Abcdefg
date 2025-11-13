@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, Edit2, Search, ChevronDown, ChevronUp, Calendar, Package, Clock, AlertCircle } from 'lucide-react';
+import { Plus, Edit2, Search, ChevronDown, ChevronUp, Calendar, Package, Clock, AlertCircle, Trash2 } from 'lucide-react';
 import { CustomerModal } from './CustomerModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { ReservationModal } from './ReservationModal';
@@ -156,6 +156,32 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
   const getMenuName = (menuItemId: string) => {
     const menu = menuItems.find(m => m.menu_item_id === menuItemId);
     return menu?.name || '-';
+  };
+
+  const handleDeleteCustomer = async (customer: Customer) => {
+    const customerReservations = getCustomerReservations(customer.customer_id);
+    const customerWorkOrders = getCustomerWorkOrders(customer.customer_id);
+    
+    const confirmMessage = `顧客「${customer.customer_code || customer.parent_name}」を削除してもよろしいですか？\n\n以下の関連データも同時に削除されます：\n・予約: ${customerReservations.length}件\n・制作物: ${customerWorkOrders.length}件\n\nこの操作は取り消せません。`;
+    
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      const result = await apiRequest(`/customers/${customer.customer_id}`, {
+        method: 'DELETE',
+      });
+      
+      toast.success(result.message || '顧客を削除しました');
+      await loadData();
+    } catch (err: any) {
+      console.error('Delete customer error:', err);
+      toast.error(err.message || '顧客の削除に失敗しました');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getLocationName = (locationId: string) => {
@@ -336,6 +362,18 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
                         </p>
                       )}
                     </div>
+                    {userRole === 'admin' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteCustomer(customer);
+                        }}
+                        className="p-2 hover:bg-red-50 rounded-lg transition text-red-600 shrink-0"
+                        title="顧客を削除"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    )}
                   </div>
 
                   <div className="space-y-2 text-sm text-slate-700">

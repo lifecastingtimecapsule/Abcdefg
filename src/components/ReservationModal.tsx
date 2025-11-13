@@ -67,6 +67,7 @@ export function ReservationModal({
     child_age_years: '',
     child_age_months: '',
     phone: '',
+    email: '',
     line_url: '',
     postal_code: '',
     address_text: '',
@@ -111,6 +112,7 @@ export function ReservationModal({
         child_age_years: customer?.child_age_years?.toString() || '',
         child_age_months: customer?.child_age_months?.toString() || '',
         phone: customer?.phone || '',
+        email: customer?.email || '',
         line_url: customer?.line_url || '',
         postal_code: customer?.postal_code || '',
         address_text: customer?.address_text || '',
@@ -199,6 +201,7 @@ export function ReservationModal({
       child_age_years: customer.child_age_years?.toString() || '',
       child_age_months: customer.child_age_months?.toString() || '',
       phone: customer.phone || '',
+      email: customer.email || '',
       line_url: customer.line_url || '',
       postal_code: customer.postal_code || '',
       address_text: customer.address_text || '',
@@ -222,6 +225,7 @@ export function ReservationModal({
       child_age_years: formData.child_age_years,
       child_age_months: formData.child_age_months,
       phone: formData.phone,
+      email: formData.email,
       line_url: formData.line_url,
       postal_code: formData.postal_code,
       address_text: formData.address_text,
@@ -269,6 +273,7 @@ export function ReservationModal({
             child_age_years: ageYears,
             child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
             phone: formData.phone,
+            email: formData.email,
             line_url: formData.line_url,
             postal_code: formData.postal_code,
             address_text: formData.address_text,
@@ -293,6 +298,7 @@ export function ReservationModal({
             child_age_years: ageYears,
             child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
             phone: formData.phone,
+            email: formData.email,
             line_url: formData.line_url,
             postal_code: formData.postal_code,
             address_text: formData.address_text,
@@ -318,6 +324,7 @@ export function ReservationModal({
             child_age_years: ageYears,
             child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
             phone: formData.phone,
+            email: formData.email,
             line_url: formData.line_url,
             postal_code: formData.postal_code,
             address_text: formData.address_text,
@@ -543,6 +550,7 @@ export function ReservationModal({
                                 <div className="text-xs text-slate-500 mt-0.5">
                                   {customer.external_customer_number && <span>顧客番号: {customer.external_customer_number} • </span>}
                                   {customer.phone}
+                                  {customer.email && <span> • {customer.email}</span>}
                                 </div>
                               </div>
                               <div className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
@@ -748,6 +756,22 @@ export function ReservationModal({
                   </div>
 
                   <div>
+                    <label className="block text-xs text-slate-700 mb-1.5">
+                      メールアドレス
+                    </label>
+                    <input
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      placeholder={isViewMode ? '' : 'example@email.com'}
+                      disabled={isViewMode}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                  <div>
                     <label className="block text-xs text-slate-700 mb-1.5">LINE URL</label>
                     <div className="flex gap-2">
                       <input
@@ -862,20 +886,17 @@ export function ReservationModal({
                     <label className="block text-xs text-slate-700 mb-1.5">
                       所要時間 {!isViewMode && <span className="text-red-500">*</span>}
                     </label>
-                    <select
+                    <input
+                      type="number"
+                      min="15"
+                      step="15"
                       value={formData.duration_minutes}
                       onChange={(e) => setFormData({ ...formData, duration_minutes: e.target.value })}
                       disabled={isViewMode}
+                      placeholder="60"
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
                       required={!isViewMode}
-                    >
-                      <option value="15">15分</option>
-                      <option value="30">30分</option>
-                      <option value="45">45分</option>
-                      <option value="60">60分</option>
-                      <option value="90">90分</option>
-                      <option value="120">120分</option>
-                    </select>
+                    />
                   </div>
 
                   <div className="md:col-span-2">
@@ -969,7 +990,8 @@ export function ReservationModal({
                           setFormData(prev => ({ 
                             ...prev, 
                             menu_item_id: e.target.value,
-                            work_required: selectedMenu.name 
+                            work_required: selectedMenu.name,
+                            duration_minutes: String(selectedMenu.duration_minutes || 60)
                           }));
                         } else {
                           setFormData({ ...formData, menu_item_id: e.target.value });

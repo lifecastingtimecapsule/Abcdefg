@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Clock, Mail, Phone, MapPin, User, Baby, Home, ChevronLeft, ChevronRight, Heart } from 'lucide-react';
+import { Calendar, Clock, Mail, Phone, MapPin, User, Baby, ChevronLeft, ChevronRight, Heart, Tag } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
-import { projectId } from '../utils/supabase/info';
-import logoImage from 'figma:asset/a5fc00399012eeaf62209d6c1238a54dcc136bcf.png';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 interface MenuItem {
   menu_item_id: string;
@@ -11,6 +10,11 @@ interface MenuItem {
   additional_unit_price: number;
   description?: string;
   is_active: boolean;
+  duration_minutes?: number;
+  discount_type?: 'none' | 'percentage' | 'fixed';
+  discount_value?: number;
+  discount_end_date?: string;
+  apply_discount_to_additional?: boolean;
 }
 
 interface Location {
@@ -25,6 +29,10 @@ export function PublicReservationPage() {
   const [loading, setLoading] = useState(false);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
+  const [bookedSlots, setBookedSlots] = useState<Array<{time: string, duration: number}>>([]);
+  const [bookedLocationIds, setBookedLocationIds] = useState<string[]>([]);
+  const [reservationSettings, setReservationSettings] = useState<any>(null);
+  const [locationAvailability, setLocationAvailability] = useState<any>(null);
   
   // フォームデータ
   const [selectedDate, setSelectedDate] = useState('');
@@ -32,11 +40,11 @@ export function PublicReservationPage() {
   const [selectedMenuId, setSelectedMenuId] = useState('');
   const [selectedLocationId, setSelectedLocationId] = useState('');
   const [parentName, setParentName] = useState('');
+  const [parentNameKana, setParentNameKana] = useState('');
   const [childName, setChildName] = useState('');
+  const [childNameKana, setChildNameKana] = useState('');
   const [childAgeYears, setChildAgeYears] = useState('');
   const [childAgeMonths, setChildAgeMonths] = useState('');
-  const [postalCode, setPostalCode] = useState('');
-  const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [notes, setNotes] = useState('');
@@ -48,23 +56,188 @@ export function PublicReservationPage() {
     loadPublicData();
   }, []);
 
+  // Load booked slots when date changes
+  useEffect(() => {
+    if (selectedDate) {
+      // 日付が選択されたら、まず全店舗の予約を取得して店舗間制限をチェック
+      loadBookedSlots(selectedDate, '');
+    } else {
+      setBookedSlots([]);
+      setBookedLocationIds([]);
+    }
+  }, [selectedDate]);
+
+  // Load booked slots for specific location when location is selected
+  useEffect(() => {
+    if (selectedDate && selectedLocationId) {
+      // 店舗が選択されたら、その店舗の予約のみを取得
+      loadBookedSlots(selectedDate, selectedLocationId);
+    }
+  }, [selectedLocationId]);
+
+  // Load location availability and menus when location is selected
+  useEffect(() => {
+    if (selectedLocationId) {
+      loadLocationAvailability(selectedLocationId);
+      loadMenuItemsForLocation(selectedLocationId);
+      // 店舗変更時に、選択済みの日付が新しい店舗で利用可能かチェックして、不可能ならクリア
+      if (selectedDate) {
+        // 日付を再検証するためにわずかに遅延
+        setTimeout(() => {
+          const date = new Date(selectedDate + 'T00:00:00');
+          if (!isDateAvailableForReservation(date)) {
+            setSelectedDate('');
+            setSelectedTime('');
+          }
+        }, 100);
+      }
+    } else {
+      setLocationAvailability(null);
+      // 店舗未選択時は全メニューを表示
+      loadPublicData();
+    }
+  }, [selectedLocationId]);
+
   const loadPublicData = async () => {
     try {
       const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+      console.log('[公開予約ページ] API URL:', apiUrl);
+      console.log('[公開予約ページ] projectId:', projectId);
       
-      const menuRes = await fetch(`${apiUrl}/public/menu-items`);
+      // Supabase Edge Functionsはanon keyが必要
+      const headers = {
+        'Authorization': `Bearer ${publicAnonKey}`,
+        'Content-Type': 'application/json',
+      };
+      
+      // Health check
+      try {
+        const healthRes = await fetch(`${apiUrl}/public/health`, { headers });
+        console.log('[公開予約ページ] Health check status:', healthRes.status);
+        if (healthRes.ok) {
+          const healthData = await healthRes.json();
+          console.log('[公開予約ページ] Health check:', healthData);
+        }
+      } catch (healthErr) {
+        console.error('[公開予約ページ] Health check failed:', healthErr);
+      }
+      
+      const menuUrl = `${apiUrl}/public/menu-items`;
+      console.log('[公開予約ページ] メニューURL:', menuUrl);
+      
+      const menuRes = await fetch(menuUrl, { headers });
+      console.log('[公開予約ページ] メニューレスポンス status:', menuRes.status);
+      
       if (menuRes.ok) {
         const menuData = await menuRes.json();
+        console.log('[公開予約ページ] 読み込まれたメニュー:', menuData.menu_items);
         setMenuItems(menuData.menu_items || []);
+      } else {
+        const errorText = await menuRes.text();
+        console.error('[公開予約ページ] メニューの読み込みに失敗:', menuRes.status, errorText);
       }
 
-      const locRes = await fetch(`${apiUrl}/public/locations`);
+      const locRes = await fetch(`${apiUrl}/public/locations`, { headers });
       if (locRes.ok) {
         const locData = await locRes.json();
         setLocations(locData.locations || []);
       }
+
+      // Load reservation settings
+      const settingsRes = await fetch(`${apiUrl}/public/reservation-settings`, { headers });
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        console.log('[公開予約ページ] 予約設定:', settingsData.settings);
+        setReservationSettings(settingsData.settings);
+      }
     } catch (err) {
       console.error('Failed to load public data:', err);
+    }
+  };
+
+  // Load menu items for specific location
+  const loadMenuItemsForLocation = async (locationId: string) => {
+    try {
+      const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+      const headers = {
+        'Authorization': `Bearer ${publicAnonKey}`,
+        'Content-Type': 'application/json',
+      };
+      
+      const menuUrl = `${apiUrl}/public/menu-items?location_id=${locationId}`;
+      console.log('[公開予約ページ] 店舗別メニューURL:', menuUrl);
+      
+      const menuRes = await fetch(menuUrl, { headers });
+      if (menuRes.ok) {
+        const menuData = await menuRes.json();
+        console.log(`[公開予約ページ] 店舗 ${locationId} のメニュー:`, menuData.menu_items);
+        setMenuItems(menuData.menu_items || []);
+      } else {
+        console.error('[公開予約ページ] 店舗別メニューの読み込みに失敗:', menuRes.status);
+      }
+    } catch (err) {
+      console.error('Failed to load menu items for location:', err);
+    }
+  };
+
+  // Load location availability settings
+  const loadLocationAvailability = async (locationId: string) => {
+    try {
+      const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+      const headers = {
+        'Authorization': `Bearer ${publicAnonKey}`,
+        'Content-Type': 'application/json',
+      };
+      
+      const response = await fetch(`${apiUrl}/public/location-availability/${locationId}`, { headers });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('[店舗可用性取得] データ:', data);
+        setLocationAvailability(data.availability || null);
+      } else {
+        console.error('[店舗可用性取得] エラー:', response.status);
+        setLocationAvailability(null);
+      }
+    } catch (err) {
+      console.error('Failed to load location availability:', err);
+      setLocationAvailability(null);
+    }
+  };
+
+  // Load booked slots when date or location changes
+  const loadBookedSlots = async (date: string, locationId: string) => {
+    if (!date) {
+      setBookedSlots([]);
+      setBookedLocationIds([]);
+      return;
+    }
+
+    try {
+      const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+      const headers = {
+        'Authorization': `Bearer ${publicAnonKey}`,
+        'Content-Type': 'application/json',
+      };
+      
+      // 店舗IDがある場合はその店舗のみ、ない場合は全店舗の予約を取得
+      const url = locationId 
+        ? `${apiUrl}/public/booked-slots?date=${date}&location_id=${locationId}`
+        : `${apiUrl}/public/booked-slots?date=${date}`;
+      
+      console.log('[予約スロット取得] URL:', url);
+      const response = await fetch(url, { headers });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('[予約スロット取得] データ:', data);
+        setBookedSlots(data.booked_slots || []);
+        setBookedLocationIds(data.booked_location_ids || []);
+      } else {
+        console.error('[予約スロット取得] エラー:', response.status);
+      }
+    } catch (err) {
+      console.error('Failed to load booked slots:', err);
     }
   };
 
@@ -75,47 +248,57 @@ export function PublicReservationPage() {
 
       const reservationDateTime = `${selectedDate}T${selectedTime}`;
 
+      console.log('[予約フォーム送信] データ送信中:', {
+        email,
+        parent_name: parentName,
+        child_name: childName,
+      });
+
       const response = await fetch(`${apiUrl}/public/reservations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Authorization': `Bearer ${publicAnonKey}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           reservation_date_time: reservationDateTime,
           menu_item_id: selectedMenuId,
           location_id: selectedLocationId,
           parent_name: parentName,
+          parent_name_kana: parentNameKana,
           child_name: childName,
+          child_name_kana: childNameKana,
           child_age_years: childAgeYears ? parseInt(childAgeYears) : null,
           child_age_months: childAgeMonths ? parseInt(childAgeMonths) : null,
           phone,
           email,
-          postal_code: postalCode,
-          address_text: address,
           notes_customer: notes,
         }),
       });
 
+      console.log('[予約フォーム送信] レスポンスステータス:', response.status);
+
       if (!response.ok) {
         const errorData = await response.json();
+        console.error('[予約フォーム送信] エラー:', errorData);
+        if (response.status === 409) {
+          // Conflict - time slot already booked
+          toast.error('この日時は既に予約が入っています。別の時間をお選びください。');
+          // Reload booked slots
+          await loadBookedSlots(selectedDate, selectedLocationId);
+          throw new Error(errorData.error || '予約に失敗しました');
+        }
         throw new Error(errorData.error || '予約に失敗しました');
       }
 
-      toast.success('予約を受け付けました！確認メールをお送りしました。');
+      const responseData = await response.json();
+      console.log('[予約フォーム送信] ✅ 予約成功:', responseData);
+
+      toast.success('予約を受け付けました！');
       
-      // フォームをリセット
-      setStep(1);
-      setSelectedDate('');
-      setSelectedTime('');
-      setSelectedMenuId('');
-      setSelectedLocationId('');
-      setParentName('');
-      setChildName('');
-      setChildAgeYears('');
-      setChildAgeMonths('');
-      setPostalCode('');
-      setAddress('');
-      setPhone('');
-      setEmail('');
-      setNotes('');
+      // 予約完了ページへ遷移
+      const reservationDataForUrl = encodeURIComponent(JSON.stringify(responseData.reservation));
+      window.location.href = `/public/reservation/complete?data=${reservationDataForUrl}`;
     } catch (err: any) {
       console.error('Reservation error:', err);
       toast.error(err.message || '予約に失敗しました');
@@ -172,14 +355,160 @@ export function PublicReservationPage() {
     return compareDate < today;
   };
 
+  // 日付が予約可能かどうかをチェック
+  const isDateAvailableForReservation = (date: Date) => {
+    if (!reservationSettings) {
+      return true; // 設定がない場合はすべて選択可能
+    }
+    
+    // 過去の日付は選択不可
+    if (isPastDate(date)) return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    
+    const diffTime = checkDate.getTime() - today.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    // 予約受付開始日より前は選択不可（N日前まで不可 = N日後以降から可能）
+    // 例: advance_reservation_days = 3 の場合、diffDays < 3 は選択不可（0,1,2日後）、diffDays >= 3 から可能（3日後以降）
+    if (diffDays < reservationSettings.advance_reservation_days) {
+      return false;
+    }
+    
+    // 予約受付終了日より後は選択不可
+    if (diffDays > reservationSettings.max_reservation_days) {
+      return false;
+    }
+    
+    // グローバル設定の曜日チェック
+    const dayOfWeek = date.getDay();
+    if (!reservationSettings.allowed_days.includes(dayOfWeek)) {
+      return false;
+    }
+    
+    // グローバル設定の休業日チェック
+    const dateStr = formatDateForInput(date);
+    if (reservationSettings.closed_dates && reservationSettings.closed_dates.includes(dateStr)) {
+      return false;
+    }
+
+    // 店舗別の設定チェック（店舗が選択されている場合）
+    if (selectedLocationId && locationAvailability) {
+      // 店舗別の定休日チェック
+      if (locationAvailability.regular_closed_days && locationAvailability.regular_closed_days.includes(dayOfWeek)) {
+        return false;
+      }
+      
+      // 店舗別の休業日チェック
+      if (locationAvailability.closed_dates && locationAvailability.closed_dates.includes(dateStr)) {
+        return false;
+      }
+    }
+    
+    return true;
+  };
+
   const calendarDays = getDaysInMonth(currentMonth);
   const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
 
-  const timeSlots = [
-    '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-    '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
-    '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00'
-  ];
+  // 時間スロットを生成（30分間隔固定）
+  const generateTimeSlots = () => {
+    if (!reservationSettings) {
+      // デフォルト: 9:00-18:00, 30分間隔
+      const slots = [];
+      for (let hour = 9; hour <= 18; hour++) {
+        slots.push(`${hour.toString().padStart(2, '0')}:00`);
+        if (hour < 18) {
+          slots.push(`${hour.toString().padStart(2, '0')}:30`);
+        }
+      }
+      return slots;
+    }
+
+    // 曜日ごとの営業時間をチェック
+    let startTime = reservationSettings.business_hours_start;
+    let endTime = reservationSettings.business_hours_end;
+    
+    if (selectedDate && reservationSettings.custom_hours) {
+      const date = new Date(selectedDate + 'T00:00:00');
+      const dayOfWeek = date.getDay();
+      if (reservationSettings.custom_hours[dayOfWeek]) {
+        startTime = reservationSettings.custom_hours[dayOfWeek].start;
+        endTime = reservationSettings.custom_hours[dayOfWeek].end;
+      }
+    }
+
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const [endHour, endMinute] = endTime.split(':').map(Number);
+    
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+    
+    const slots = [];
+    
+    // 30分間隔でスロットを生成（固定）
+    for (let minutes = startMinutes; minutes < endMinutes; minutes += 30) {
+      const hour = Math.floor(minutes / 60);
+      const minute = minutes % 60;
+      slots.push(`${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`);
+    }
+    
+    return slots;
+  };
+
+  const timeSlots = generateTimeSlots();
+
+  // 選択されたメニューの所要時間を取得
+  const getSelectedMenuDuration = () => {
+    if (!selectedMenuId) return 60;
+    const menu = menuItems.find(m => m.menu_item_id === selectedMenuId);
+    return menu?.duration_minutes || 60;
+  };
+
+  // 時間をミリ秒に変換
+  const timeToMinutes = (timeStr: string) => {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+
+  // 時間スロットの重複チェック
+  const isTimeSlotAvailable = (timeSlot: string) => {
+    // メニューが選択されている場合は、そのメニューの所要時間を使用
+    // 選択されていない場合は、デフォルトの60分を使用して予約済みスロットをチェック
+    const menuDuration = selectedMenuId ? getSelectedMenuDuration() : 60;
+    const slotStart = timeToMinutes(timeSlot);
+    const slotEnd = slotStart + menuDuration;
+
+    // 同時予約可能数を取得（デフォルト1）
+    const maxConcurrent = reservationSettings?.concurrent_reservations || 1;
+    
+    // この時間帯に重複する予約数をカウント
+    let overlappingCount = 0;
+    
+    for (const booked of bookedSlots) {
+      const bookedStart = timeToMinutes(booked.time);
+      const bookedEnd = bookedStart + booked.duration;
+      
+      // 時間帯が重複するかチェック
+      if (
+        (slotStart >= bookedStart && slotStart < bookedEnd) ||
+        (slotEnd > bookedStart && slotEnd <= bookedEnd) ||
+        (slotStart <= bookedStart && slotEnd >= bookedEnd)
+      ) {
+        overlappingCount++;
+      }
+    }
+    
+    // 重複予約数が同時予約可能数を超えている場合は予約不可
+    if (overlappingCount >= maxConcurrent) {
+      return false;
+    }
+    
+    return true;
+  };
 
   const previousMonth = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
@@ -196,26 +525,18 @@ export function PublicReservationPage() {
         <div className="max-w-6xl mx-auto px-6 py-6 md:py-8">
           <div className="flex items-center justify-between">
             <div className="flex-1"></div>
-            <div className="flex-1 flex items-center justify-center">
-              <img 
-                src={logoImage} 
-                alt="amoré​tto" 
-                className="h-10 md:h-12"
-                style={{ objectFit: 'contain' }}
-              />
-            </div>
-            <div className="flex-1 flex items-center justify-end">
-              <a
-                href="/login"
-                className="text-sm px-4 py-2 rounded-md transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-105"
-                style={{
-                  fontFamily: "'Noto Sans JP', sans-serif",
-                  color: '#C4A962',
-                  letterSpacing: '0.05em'
+            <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center">
+              <h1 
+                style={{ 
+                  fontFamily: "'Noto Serif JP', serif", 
+                  color: '#2C2C2C',
+                  fontSize: '1.75rem',
+                  letterSpacing: '0.15em',
+                  fontWeight: '400'
                 }}
               >
-                スタッフログイン
-              </a>
+                amoré​tto
+              </h1>
             </div>
           </div>
         </div>
@@ -264,10 +585,18 @@ export function PublicReservationPage() {
               </div>
             ))}
           </div>
-          <div className="flex justify-between max-w-md mx-auto px-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', fontSize: '0.875rem' }}>
-            <span>日時選択</span>
-            <span>お客様情報</span>
-            <span>確認</span>
+          <div className="flex items-center justify-center gap-2 md:gap-4 mt-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', fontSize: '0.875rem' }}>
+            <div className="flex items-center">
+              <span className="w-8 md:w-10 text-center whitespace-nowrap">日時選択</span>
+            </div>
+            <div className="w-12 md:w-20 h-0.5 mx-1 md:mx-2"></div>
+            <div className="flex items-center">
+              <span className="w-8 md:w-10 text-center whitespace-nowrap">お客様情報</span>
+            </div>
+            <div className="w-12 md:w-20 h-0.5 mx-1 md:mx-2"></div>
+            <div className="flex items-center">
+              <span className="w-8 md:w-10 text-center whitespace-nowrap">確認</span>
+            </div>
           </div>
         </div>
 
@@ -283,24 +612,66 @@ export function PublicReservationPage() {
 
                 {/* カレンダー */}
                 <div className="mb-8">
-                  <div className="flex items-center justify-between mb-6">
-                    <button
-                      onClick={previousMonth}
-                      className="p-2 rounded-lg transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-110"
-                      style={{ color: '#C4A962' }}
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-                    <h4 style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C' }}>
-                      {currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月
-                    </h4>
-                    <button
-                      onClick={nextMonth}
-                      className="p-2 rounded-lg transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-110"
-                      style={{ color: '#C4A962' }}
-                    >
-                      <ChevronRight className="w-5 h-5" />
-                    </button>
+                  {/* カレンダーヘッダー */}
+                  <div className="mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      {/* カレンダーナビゲーション */}
+                      <button
+                        onClick={previousMonth}
+                        className="p-2 rounded-lg transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-110"
+                        style={{ color: '#C4A962' }}
+                      >
+                        <ChevronLeft className="w-5 h-5" />
+                      </button>
+                      <h4 style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C' }}>
+                        {currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月
+                      </h4>
+                      
+                      {/* 店舗選択ドロップダウン（右上） */}
+                      <div className="flex items-center gap-2">
+                        <label className="hidden md:flex items-center gap-1.5 text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666' }}>
+                          <MapPin className="w-3.5 h-3.5" style={{ color: '#C4A962' }} />
+                          店舗
+                        </label>
+                        <select
+                          value={selectedLocationId}
+                          onChange={(e) => setSelectedLocationId(e.target.value)}
+                          className="px-3 py-1.5 md:px-4 md:py-2 border rounded-lg transition-all duration-300 focus:outline-none focus:border-[#C4A962] focus:ring-1 focus:ring-[#C4A962] text-sm md:text-base"
+                          style={{
+                            backgroundColor: '#FFFFFF',
+                            borderColor: selectedLocationId ? '#C4A962' : '#E5E0D8',
+                            fontFamily: "'Noto Sans JP', sans-serif",
+                            color: '#2C2C2C',
+                            minWidth: '120px'
+                          }}
+                        >
+                          <option value="">店舗を選択</option>
+                          {locations.map((location) => {
+                            // 他の店舗に予約がある場合、その店舗以外は選択不可
+                            const hasOtherLocationBooking = bookedLocationIds.length > 0 && !bookedLocationIds.includes(location.location_id);
+                            const isLocationAvailable = !hasOtherLocationBooking;
+                            
+                            return (
+                              <option 
+                                key={location.location_id} 
+                                value={location.location_id}
+                                disabled={!isLocationAvailable}
+                              >
+                                {location.location_name}{!isLocationAvailable ? ' (選択不可)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      
+                      <button
+                        onClick={nextMonth}
+                        className="p-2 rounded-lg transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-110"
+                        style={{ color: '#C4A962' }}
+                      >
+                        <ChevronRight className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-7 gap-1 md:gap-2">
@@ -320,12 +691,12 @@ export function PublicReservationPage() {
                       <div key={index}>
                         {date ? (
                           <button
-                            onClick={() => !isPastDate(date) && setSelectedDate(formatDateForInput(date))}
-                            disabled={isPastDate(date)}
+                            onClick={() => isDateAvailableForReservation(date) && setSelectedDate(formatDateForInput(date))}
+                            disabled={!isDateAvailableForReservation(date)}
                             className={`w-full aspect-square flex items-center justify-center text-sm rounded-lg transition-all duration-300 ${
                               selectedDate === formatDateForInput(date)
                                 ? 'text-white scale-105 shadow-md'
-                                : isPastDate(date)
+                                : !isDateAvailableForReservation(date)
                                 ? 'opacity-30 cursor-not-allowed'
                                 : 'hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-105 hover:shadow-sm'
                             }`}
@@ -350,26 +721,42 @@ export function PublicReservationPage() {
                   <div className="mb-8">
                     <label className="block mb-3" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
                       ご希望の時間
+                      {bookedSlots.length > 0 && (
+                        <span className="ml-3 text-xs" style={{ color: '#999999' }}>
+                          （×印は予約不可）
+                        </span>
+                      )}
                     </label>
                     <div className="grid grid-cols-3 md:grid-cols-5 gap-2 md:gap-3">
-                      {timeSlots.map((time) => (
-                        <button
-                          key={time}
-                          onClick={() => setSelectedTime(time)}
-                          className={`py-2.5 md:py-3 rounded-md transition-all duration-300 ${
-                            selectedTime === time ? 'text-white shadow-md scale-105' : 'border hover:border-[#C4A962] hover:bg-[#C4A962] hover:bg-opacity-5 hover:scale-105'
-                          }`}
-                          style={{
-                            fontFamily: "'Noto Sans JP', sans-serif",
-                            backgroundColor: selectedTime === time ? '#C4A962' : 'transparent',
-                            color: selectedTime === time ? '#FFFFFF' : '#2C2C2C',
-                            borderColor: '#E5E0D8',
-                            letterSpacing: '0.05em'
-                          }}
-                        >
-                          {time}
-                        </button>
-                      ))}
+                      {timeSlots.map((time) => {
+                        const isAvailable = isTimeSlotAvailable(time);
+                        return (
+                          <button
+                            key={time}
+                            onClick={() => isAvailable && setSelectedTime(time)}
+                            disabled={!isAvailable}
+                            className={`py-2.5 md:py-3 rounded-md transition-all duration-300 ${
+                              !isAvailable
+                                ? 'opacity-40 cursor-not-allowed'
+                                : selectedTime === time 
+                                ? 'text-white shadow-md scale-105' 
+                                : 'border hover:border-[#C4A962] hover:bg-[#C4A962] hover:bg-opacity-5 hover:scale-105'
+                            }`}
+                            style={{
+                              fontFamily: "'Noto Sans JP', sans-serif",
+                              backgroundColor: !isAvailable ? '#E5E5E5' : selectedTime === time ? '#C4A962' : 'transparent',
+                              color: !isAvailable ? '#999999' : selectedTime === time ? '#FFFFFF' : '#2C2C2C',
+                              borderColor: '#E5E0D8',
+                              letterSpacing: '0.05em'
+                            }}
+                          >
+                            {time}
+                            {!isAvailable && (
+                              <span className="block text-xs mt-0.5">×</span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -418,9 +805,14 @@ export function PublicReservationPage() {
                         }}
                       >
                         <option value="">時間を選択</option>
-                        {timeSlots.map((time) => (
-                          <option key={time} value={time}>{time}</option>
-                        ))}
+                        {timeSlots.map((time) => {
+                          const isAvailable = isTimeSlotAvailable(time);
+                          return (
+                            <option key={time} value={time} disabled={!isAvailable}>
+                              {time} {!isAvailable ? '(×)' : ''}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   </div>
@@ -431,74 +823,131 @@ export function PublicReservationPage() {
               <div>
                 <h3 className="mb-6" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', borderBottom: '1px solid #E5E0D8', paddingBottom: '0.75rem' }}>
                   メニューをお選びください
+                  {selectedLocationId && (
+                    <span className="ml-3 text-sm" style={{ color: '#666666', fontFamily: "'Noto Sans JP', sans-serif", fontWeight: 'normal' }}>
+                      （{locations.find(l => l.location_id === selectedLocationId)?.location_name}のメニュー）
+                    </span>
+                  )}
                 </h3>
-                <div className="grid gap-4 md:gap-6">
+                <div className="grid md:grid-cols-2 gap-4 md:gap-5">
                   {menuItems.length === 0 ? (
-                    <div className="p-6 text-center" style={{ backgroundColor: '#F8F6F3', color: '#666666', fontFamily: "'Noto Sans JP', sans-serif" }}>
-                      メニューが登録されていません
+                    <div className="md:col-span-2 p-8 text-center rounded-lg" style={{ backgroundColor: '#F8F6F3', color: '#666666', fontFamily: "'Noto Sans JP', sans-serif" }}>
+                      <div className="mb-2">メニューが登録されていません</div>
+                      {selectedLocationId && (
+                        <div className="text-sm" style={{ color: '#999999' }}>
+                          この店舗ではご利用いただけるメニューがありません
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    menuItems.map((menu) => (
-                      <button
-                        key={menu.menu_item_id}
-                        onClick={() => setSelectedMenuId(menu.menu_item_id)}
-                        className={`p-5 md:p-6 text-left rounded-md transition-all duration-300 border ${
-                          selectedMenuId === menu.menu_item_id
-                            ? 'border-[#C4A962] shadow-md scale-[1.02]'
-                            : 'border-[#E5E0D8] hover:border-[#C4A962] hover:shadow-lg hover:scale-[1.02]'
-                        }`}
-                        style={{
-                          backgroundColor: selectedMenuId === menu.menu_item_id ? '#FAFAF8' : '#FFFFFF'
-                        }}
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="mb-2" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C' }}>
+                    menuItems.map((menu) => {
+                      const hasActiveDiscount = menu.discount_type && menu.discount_type !== 'none' && 
+                        (!menu.discount_end_date || new Date(menu.discount_end_date) >= new Date());
+                      
+                      const calculateDiscountedPrice = (price: number) => {
+                        if (!hasActiveDiscount) return price;
+                        if (menu.discount_type === 'percentage') {
+                          return Math.floor(price * (1 - menu.discount_value / 100));
+                        } else if (menu.discount_type === 'fixed') {
+                          return Math.max(0, price - menu.discount_value);
+                        }
+                        return price;
+                      };
+
+                      const discountedBasePrice = calculateDiscountedPrice(menu.base_price);
+
+                      return (
+                        <button
+                          key={menu.menu_item_id}
+                          onClick={() => setSelectedMenuId(menu.menu_item_id)}
+                          className={`p-4 md:p-5 text-left rounded-lg transition-all duration-300 border ${
+                            selectedMenuId === menu.menu_item_id
+                              ? 'border-[#C4A962] shadow-lg scale-[1.02] ring-2 ring-[#C4A962] ring-opacity-20'
+                              : 'border-[#E5E0D8] hover:border-[#C4A962] hover:shadow-md hover:scale-[1.01]'
+                          }`}
+                          style={{
+                            backgroundColor: selectedMenuId === menu.menu_item_id ? '#FAFAF8' : '#FFFFFF',
+                            position: 'relative'
+                          }}
+                        >
+                          {/* 選択チェックマーク */}
+                          {selectedMenuId === menu.menu_item_id && (
+                            <div 
+                              className="absolute -top-2 -right-2 w-7 h-7 rounded-full flex items-center justify-center shadow-md"
+                              style={{ backgroundColor: '#C4A962', color: '#FFFFFF' }}
+                            >
+                              <Heart className="w-4 h-4" style={{ fill: '#FFFFFF' }} />
+                            </div>
+                          )}
+                          
+                          {/* 割引バッジ */}
+                          {hasActiveDiscount && (
+                            <div 
+                              className="absolute -top-2 -left-2 px-2.5 py-1 rounded-full shadow-md flex items-center gap-1"
+                              style={{ backgroundColor: '#DC2626', color: '#FFFFFF', fontFamily: "'Noto Sans JP', sans-serif" }}
+                            >
+                              <Tag className="w-3 h-3" />
+                              <span className="text-xs">
+                                {menu.discount_type === 'percentage' 
+                                  ? `${menu.discount_value}% OFF`
+                                  : `¥${menu.discount_value.toLocaleString()} OFF`
+                                }
+                              </span>
+                            </div>
+                          )}
+                          
+                          <div className="space-y-3">
+                            {/* メニュー名 */}
+                            <div style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', fontSize: '1.1rem' }}>
                               {menu.name}
                             </div>
+                            
+                            {/* 説明文 */}
                             {menu.description && (
-                              <div className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', lineHeight: '1.6' }}>
+                              <div className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', lineHeight: '1.7' }}>
                                 {menu.description}
                               </div>
                             )}
+                            
+                            {/* 所要時間 */}
+                            <div className="flex items-center gap-1.5 text-sm" style={{ color: '#C4A962', fontFamily: "'Noto Sans JP', sans-serif" }}>
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>約{menu.duration_minutes || 60}分</span>
+                            </div>
+                            
+                            {/* 価格 */}
+                            <div className="pt-2 border-t" style={{ borderColor: '#E5E0D8' }}>
+                              {hasActiveDiscount ? (
+                                <div className="space-y-1">
+                                  <div className="flex items-baseline gap-2">
+                                    <div style={{ fontFamily: "'Noto Serif JP', serif", color: '#DC2626', fontSize: '1.75rem', lineHeight: '1' }}>
+                                      ¥{discountedBasePrice.toLocaleString()}
+                                    </div>
+                                    <span style={{ fontSize: '0.875rem', color: '#666666' }}>+税</span>
+                                  </div>
+                                  <div style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#999999', fontSize: '0.875rem', textDecoration: 'line-through' }}>
+                                    通常価格 ¥{menu.base_price.toLocaleString()}
+                                  </div>
+                                  {menu.discount_end_date && (
+                                    <div className="text-xs" style={{ color: '#DC2626', fontFamily: "'Noto Sans JP', sans-serif" }}>
+                                      {new Date(menu.discount_end_date).toLocaleDateString('ja-JP')}まで
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-baseline gap-2">
+                                  <div style={{ fontFamily: "'Noto Serif JP', serif", color: '#C4A962', fontSize: '1.75rem', lineHeight: '1' }}>
+                                    ¥{menu.base_price.toLocaleString()}
+                                  </div>
+                                  <span style={{ fontSize: '0.875rem', color: '#666666' }}>+税</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div style={{ fontFamily: "'Noto Serif JP', serif", color: '#C4A962', fontSize: '1.25rem' }}>
-                            ¥{menu.base_price.toLocaleString()}
-                          </div>
-                        </div>
-                      </button>
-                    ))
+                        </button>
+                      );
+                    })
                   )}
-                </div>
-              </div>
-
-              {/* 店舗選択 */}
-              <div>
-                <h3 className="mb-6" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', borderBottom: '1px solid #E5E0D8', paddingBottom: '0.75rem' }}>
-                  店舗をお選びください
-                </h3>
-                <div className="grid gap-3 md:gap-4">
-                  {locations.map((location) => (
-                    <button
-                      key={location.location_id}
-                      onClick={() => setSelectedLocationId(location.location_id)}
-                      className={`p-4 md:p-5 text-left rounded-md transition-all duration-300 border ${
-                        selectedLocationId === location.location_id
-                          ? 'border-[#C4A962] shadow-md scale-[1.02]'
-                          : 'border-[#E5E0D8] hover:border-[#C4A962] hover:shadow-sm hover:scale-[1.02]'
-                      }`}
-                      style={{
-                        backgroundColor: selectedLocationId === location.location_id ? '#FAFAF8' : '#FFFFFF',
-                        fontFamily: "'Noto Sans JP', sans-serif",
-                        color: '#2C2C2C'
-                      }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4" style={{ color: '#C4A962' }} />
-                        <span>{location.location_name}</span>
-                      </div>
-                    </button>
-                  ))}
                 </div>
               </div>
 
@@ -556,6 +1005,27 @@ export function PublicReservationPage() {
                 />
               </div>
 
+              {/* 保護者名フリガナ */}
+              <div>
+                <label className="block mb-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
+                  保護者様のお名前（フリガナ） <span style={{ color: '#C4A962' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={parentNameKana}
+                  onChange={(e) => setParentNameKana(e.target.value)}
+                  placeholder="ヤマダ ハナコ"
+                  className="w-full px-4 py-3 border transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
+                  style={{
+                    backgroundColor: '#F8F6F3',
+                    borderColor: '#E5E0D8',
+                    fontFamily: "'Noto Sans JP', sans-serif",
+                    color: '#2C2C2C'
+                  }}
+                  required
+                />
+              </div>
+
               {/* お子様名 */}
               <div>
                 <label className="block mb-2 flex items-center gap-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
@@ -578,19 +1048,46 @@ export function PublicReservationPage() {
                 />
               </div>
 
+              {/* お子様名フリガナ */}
+              <div>
+                <label className="block mb-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
+                  お子様のお名前（フリガナ） <span style={{ color: '#C4A962' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={childNameKana}
+                  onChange={(e) => setChildNameKana(e.target.value)}
+                  placeholder="ヤマダ タロウ"
+                  className="w-full px-4 py-3 border transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
+                  style={{
+                    backgroundColor: '#F8F6F3',
+                    borderColor: '#E5E0D8',
+                    fontFamily: "'Noto Sans JP', sans-serif",
+                    color: '#2C2C2C'
+                  }}
+                  required
+                />
+              </div>
+
               {/* お子様の年齢 */}
               <div>
                 <label className="block mb-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
                   お子様の年齢
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className={childAgeYears === '0' ? "grid grid-cols-2 gap-3" : ""}>
                   <div>
                     <input
                       type="number"
                       min="0"
                       max="20"
                       value={childAgeYears}
-                      onChange={(e) => setChildAgeYears(e.target.value)}
+                      onChange={(e) => {
+                        setChildAgeYears(e.target.value);
+                        // 0歳以外になったらカ月をリセット
+                        if (e.target.value !== '0') {
+                          setChildAgeMonths('');
+                        }
+                      }}
                       placeholder="0"
                       className="w-full px-4 py-3 border transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
                       style={{
@@ -602,24 +1099,26 @@ export function PublicReservationPage() {
                     />
                     <p className="text-sm mt-1" style={{ color: '#666666', fontFamily: "'Noto Sans JP', sans-serif" }}>歳</p>
                   </div>
-                  <div>
-                    <input
-                      type="number"
-                      min="0"
-                      max="11"
-                      value={childAgeMonths}
-                      onChange={(e) => setChildAgeMonths(e.target.value)}
-                      placeholder="0"
-                      className="w-full px-4 py-3 border transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
-                      style={{
-                        backgroundColor: '#F8F6F3',
-                        borderColor: '#E5E0D8',
-                        fontFamily: "'Noto Sans JP', sans-serif",
-                        color: '#2C2C2C'
-                      }}
-                    />
-                    <p className="text-sm mt-1" style={{ color: '#666666', fontFamily: "'Noto Sans JP', sans-serif" }}>ヶ月</p>
-                  </div>
+                  {childAgeYears === '0' && (
+                    <div>
+                      <input
+                        type="number"
+                        min="0"
+                        max="11"
+                        value={childAgeMonths}
+                        onChange={(e) => setChildAgeMonths(e.target.value)}
+                        placeholder="0"
+                        className="w-full px-4 py-3 border transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
+                        style={{
+                          backgroundColor: '#F8F6F3',
+                          borderColor: '#E5E0D8',
+                          fontFamily: "'Noto Sans JP', sans-serif",
+                          color: '#2C2C2C'
+                        }}
+                      />
+                      <p className="text-sm mt-1" style={{ color: '#666666', fontFamily: "'Noto Sans JP', sans-serif" }}>ヶ月</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -667,47 +1166,6 @@ export function PublicReservationPage() {
                 />
               </div>
 
-              {/* 郵便番号 */}
-              <div>
-                <label className="block mb-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
-                  郵便番号
-                </label>
-                <input
-                  type="text"
-                  value={postalCode}
-                  onChange={(e) => setPostalCode(e.target.value)}
-                  placeholder="123-4567"
-                  className="w-full px-4 py-3 border transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
-                  style={{
-                    backgroundColor: '#F8F6F3',
-                    borderColor: '#E5E0D8',
-                    fontFamily: "'Noto Sans JP', sans-serif",
-                    color: '#2C2C2C'
-                  }}
-                />
-              </div>
-
-              {/* 住所 */}
-              <div>
-                <label className="block mb-2 flex items-center gap-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
-                  <Home className="w-4 h-4" style={{ color: '#C4A962' }} />
-                  ご住所
-                </label>
-                <input
-                  type="text"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="東京都渋谷区..."
-                  className="w-full px-4 py-3 border transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
-                  style={{
-                    backgroundColor: '#F8F6F3',
-                    borderColor: '#E5E0D8',
-                    fontFamily: "'Noto Sans JP', sans-serif",
-                    color: '#2C2C2C'
-                  }}
-                />
-              </div>
-
               {/* 備考 */}
               <div>
                 <label className="block mb-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
@@ -731,7 +1189,7 @@ export function PublicReservationPage() {
               <div className="flex gap-3 pt-6" style={{ borderTop: '1px solid #E5E0D8' }}>
                 <button
                   onClick={() => setStep(1)}
-                  className="flex-1 py-3.5 md:py-4 border rounded-md transition-all duration-300 hover:shadow-md hover:scale-105"
+                  className="flex-1 py-3.5 md:py-4 border rounded-md transition-all duration-300 hover:shadow-md hover:scale-105 text-center"
                   style={{
                     borderColor: '#C4A962',
                     color: '#C4A962',
@@ -751,13 +1209,13 @@ export function PublicReservationPage() {
                 </button>
                 <button
                   onClick={() => {
-                    if (!parentName || !childName || !phone || !email) {
+                    if (!parentName || !parentNameKana || !childName || !childNameKana || !phone || !email) {
                       toast.error('必須項目を入力してください');
                       return;
                     }
                     setStep(3);
                   }}
-                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 hover:shadow-lg hover:scale-105"
+                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 hover:shadow-lg hover:scale-105 text-center"
                   style={{
                     backgroundColor: '#C4A962',
                     color: '#FFFFFF',
@@ -793,7 +1251,68 @@ export function PublicReservationPage() {
                     <div>
                       <div className="text-sm mb-1" style={{ color: '#666666' }}>メニュー</div>
                       <div style={{ color: '#2C2C2C' }}>
-                        {menuItems.find(m => m.menu_item_id === selectedMenuId)?.name}
+                        {(() => {
+                          const selectedMenu = menuItems.find(m => m.menu_item_id === selectedMenuId);
+                          if (!selectedMenu) return '-';
+                          
+                          const hasActiveDiscount = selectedMenu.discount_type && selectedMenu.discount_type !== 'none' && 
+                            (!selectedMenu.discount_end_date || new Date(selectedMenu.discount_end_date) >= new Date());
+                          
+                          const calculateDiscountedPrice = (price: number) => {
+                            if (!hasActiveDiscount) return price;
+                            if (selectedMenu.discount_type === 'percentage') {
+                              return Math.floor(price * (1 - selectedMenu.discount_value / 100));
+                            } else if (selectedMenu.discount_type === 'fixed') {
+                              return Math.max(0, price - selectedMenu.discount_value);
+                            }
+                            return price;
+                          };
+
+                          const discountedBasePrice = calculateDiscountedPrice(selectedMenu.base_price);
+
+                          return (
+                            <>
+                              <div>{selectedMenu.name}</div>
+                              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                                {hasActiveDiscount ? (
+                                  <>
+                                    <span style={{ color: '#999999', textDecoration: 'line-through', fontSize: '0.875rem' }}>
+                                      ¥{selectedMenu.base_price.toLocaleString()}
+                                      <span style={{ fontSize: '0.7rem', marginLeft: '0.25rem' }}>+TAX</span>
+                                    </span>
+                                    <span style={{ color: '#DC2626' }}>
+                                      ¥{discountedBasePrice.toLocaleString()}
+                                      <span style={{ fontSize: '0.8rem', marginLeft: '0.25rem' }}>+TAX</span>
+                                    </span>
+                                    <span 
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
+                                      style={{ backgroundColor: '#DC2626', color: '#FFFFFF' }}
+                                    >
+                                      <Tag className="w-3 h-3" />
+                                      {selectedMenu.discount_type === 'percentage' 
+                                        ? `${selectedMenu.discount_value}% OFF`
+                                        : `¥${selectedMenu.discount_value.toLocaleString()} OFF`
+                                      }
+                                    </span>
+                                    {selectedMenu.apply_discount_to_additional && (
+                                      <span 
+                                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs"
+                                        style={{ backgroundColor: '#DBEAFE', color: '#1E40AF' }}
+                                      >
+                                        追加の型取にも適用
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span style={{ color: '#C4A962' }}>
+                                    ¥{selectedMenu.base_price.toLocaleString()}
+                                    <span style={{ fontSize: '0.8rem', marginLeft: '0.25rem' }}>+TAX</span>
+                                  </span>
+                                )}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -811,6 +1330,7 @@ export function PublicReservationPage() {
                     <div>
                       <div className="text-sm mb-1" style={{ color: '#666666' }}>保護者様</div>
                       <div style={{ color: '#2C2C2C' }}>{parentName}</div>
+                      <div className="text-sm mt-1" style={{ color: '#666666' }}>（{parentNameKana}）</div>
                     </div>
 
                     <div>
@@ -823,6 +1343,7 @@ export function PublicReservationPage() {
                           </span>
                         )}
                       </div>
+                      <div className="text-sm mt-1" style={{ color: '#666666' }}>（{childNameKana}）</div>
                     </div>
 
                     <div>
@@ -831,13 +1352,7 @@ export function PublicReservationPage() {
                       <div style={{ color: '#2C2C2C' }}>{email}</div>
                     </div>
 
-                    {(postalCode || address) && (
-                      <div>
-                        <div className="text-sm mb-1" style={{ color: '#666666' }}>ご住所</div>
-                        {postalCode && <div style={{ color: '#2C2C2C' }}>〒{postalCode}</div>}
-                        {address && <div style={{ color: '#2C2C2C' }}>{address}</div>}
-                      </div>
-                    )}
+
 
                     {notes && (
                       <div>
@@ -861,7 +1376,7 @@ export function PublicReservationPage() {
                 <button
                   onClick={() => setStep(2)}
                   disabled={loading}
-                  className="flex-1 py-3.5 md:py-4 border rounded-md transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100"
+                  className="flex-1 py-3.5 md:py-4 border rounded-md transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100 text-center"
                   style={{
                     borderColor: '#C4A962',
                     color: '#C4A962',
@@ -884,7 +1399,7 @@ export function PublicReservationPage() {
                 <button
                   onClick={handleSubmit}
                   disabled={loading}
-                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100"
+                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100 text-center"
                   style={{
                     backgroundColor: '#C4A962',
                     color: '#FFFFFF',
@@ -906,12 +1421,18 @@ export function PublicReservationPage() {
       <footer className="border-t py-12" style={{ borderColor: '#E5E0D8', backgroundColor: '#F5F3EF' }}>
         <div className="max-w-4xl mx-auto px-6 text-center">
           <div className="mb-4 flex flex-col items-center">
-            <img 
-              src={logoImage} 
-              alt="amoré​tto" 
-              className="h-8 md:h-10 mb-3"
-              style={{ objectFit: 'contain' }}
-            />
+            <h2 
+              className="mb-3"
+              style={{ 
+                fontFamily: "'Noto Serif JP', serif", 
+                color: '#2C2C2C',
+                fontSize: '1.5rem',
+                letterSpacing: '0.15em',
+                fontWeight: '400'
+              }}
+            >
+              amoré​tto
+            </h2>
             <p className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666' }}>
               LifeCasting™studio
             </p>

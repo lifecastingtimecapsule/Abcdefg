@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { createClient } from '../utils/supabase/client';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { LogIn } from 'lucide-react';
 
 interface LoginPageProps {
@@ -18,11 +19,11 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(true);
 
     try {
-      const response = await fetch(`https://${(await import('../utils/supabase/info')).projectId}.supabase.co/functions/v1/make-server-fe84bde0/login`, {
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${(await import('../utils/supabase/info')).publicAnonKey}`,
+          'Authorization': `Bearer ${publicAnonKey}`,
         },
         body: JSON.stringify({
           login_id: loginId,

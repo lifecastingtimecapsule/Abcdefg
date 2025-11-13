@@ -37,6 +37,7 @@ export function CustomerModal({
     child_age_years: '',
     child_age_months: '',
     phone: '',
+    email: '',
     line_url: '',
     postal_code: '',
     address_text: '',
@@ -72,6 +73,7 @@ export function CustomerModal({
         child_age_years: customer.child_age_years?.toString() || '',
         child_age_months: customer.child_age_months?.toString() || '',
         phone: customer.phone || '',
+        email: customer.email || '',
         line_url: customer.line_url || '',
         postal_code: customer.postal_code || '',
         address_text: customer.address_text || '',
@@ -151,6 +153,7 @@ export function CustomerModal({
           child_age_years: ageYears,
           child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
           phone: formData.phone,
+          email: formData.email,
           line_url: formData.line_url,
           postal_code: formData.postal_code,
           address_text: formData.address_text,
@@ -603,6 +606,20 @@ export function CustomerModal({
               />
             </div>
 
+            <div>
+              <label className="block text-slate-700 mb-2">メールアドレス</label>
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                placeholder="例: example@email.com"
+                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={isViewMode}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-slate-700 mb-2">LINE URL</label>
               {isViewMode && formData.line_url ? (

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { LocationsPage } from './LocationsPage';
 import { StaffManagementPage } from './StaffManagementPageEnhanced';
 import { MenuSettingsPage } from './MenuSettingsPage';
+import { ReservationSettingsPage } from './ReservationSettingsPage';
+import { LocationAvailabilityPage } from './LocationAvailabilityPage';
 
 interface OperationsPageProps {
   userRole: string;
@@ -9,12 +11,14 @@ interface OperationsPageProps {
 }
 
 export function OperationsPage({ userRole, onReauthRequest }: OperationsPageProps) {
-  const [activeTab, setActiveTab] = useState<'locations' | 'staff' | 'menu'>('locations');
+  const [activeTab, setActiveTab] = useState<'locations' | 'staff' | 'menu' | 'reservation-settings' | 'location-availability'>('locations');
 
   const tabs = [
     { id: 'locations' as const, label: '拠点管理' },
     { id: 'staff' as const, label: 'スタッフ管理' },
     { id: 'menu' as const, label: 'メニュー設定' },
+    { id: 'reservation-settings' as const, label: '予約受付設定' },
+    { id: 'location-availability' as const, label: '店舗別予約可能日' },
   ];
 
   return (
@@ -51,6 +55,12 @@ export function OperationsPage({ userRole, onReauthRequest }: OperationsPageProp
         )}
         {activeTab === 'menu' && (
           <MenuSettingsPage />
+        )}
+        {activeTab === 'reservation-settings' && (
+          <ReservationSettingsPage />
+        )}
+        {activeTab === 'location-availability' && (
+          <LocationAvailabilityPage />
         )}
       </div>
     </div>
