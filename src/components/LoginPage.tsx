@@ -105,7 +105,10 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         </div>
 
         <p className="text-center text-slate-600 mt-6 text-sm">
-          社内用システム - 関係者以外の利用は禁止されています
+          スタッフ専用ログイン - 関係者以外の利用は禁止されています
+        </p>
+        <p className="text-center text-slate-500 mt-2 text-xs">
+          お客様の予約は <a href="/reservation" className="text-blue-500 hover:underline">こちら</a> から
         </p>
       </div>
     </div>

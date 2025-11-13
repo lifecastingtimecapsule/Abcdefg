@@ -250,6 +250,55 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
     });
     
     console.log('✅ Default admin account created successfully!');
+
+    // Create default location (豊川店)
+    const locationId = crypto.randomUUID();
+    await kv.set(`location:${locationId}`, {
+      location_id: locationId,
+      location_name: '豊川店',
+      address_text: '',
+      phone: '',
+      active_flag: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    console.log('✅ Default location (豊川店) created successfully!');
+
+    // Create default menu items
+    const defaultMenuItems = [
+      {
+        name: 'お好きな部位一本+写真',
+        base_price: 15000,
+        additional_unit_price: 5000,
+        description: '部位の追加は一本当たり5,000円',
+        is_active: true,
+      },
+      {
+        name: 'お好きな部位二本+写真',
+        base_price: 20000,
+        additional_unit_price: 5000,
+        description: '部位の追加は一本当たり5,000円',
+        is_active: true,
+      },
+      {
+        name: 'ご家族全員の手+写真',
+        base_price: 25000,
+        additional_unit_price: 5000,
+        description: '家族全員の手形を残せます',
+        is_active: true,
+      },
+    ];
+
+    for (const menuItem of defaultMenuItems) {
+      const menuId = crypto.randomUUID();
+      await kv.set(`menu_item:${menuId}`, {
+        menu_item_id: menuId,
+        ...menuItem,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    console.log('✅ Default menu items created successfully!');
     
     return c.json({ 
       success: true,
@@ -887,10 +936,26 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
     
     let createdCount = 0;
     const createdWorkOrders = [];
+    
+    // Get current time in JST (Asia/Tokyo)
+    const getJapanNow = () => {
+      const now = new Date();
+      const jstOffset = 9 * 60; // JST is UTC+9
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      return new Date(utc + (jstOffset * 60000));
+    };
+    const japanNow = getJapanNow();
 
     for (const reservation of reservations) {
       // Check if reservation is confirmed and has work_required
       if (reservation.status === 'confirmed' && reservation.work_required && reservation.work_required.trim() !== '') {
+        // Check if reservation date has passed (in JST)
+        const reservationDate = new Date(reservation.reservation_date_time);
+        if (reservationDate >= japanNow) {
+          // Skip: reservation date has not passed yet
+          continue;
+        }
+        
         // Check if work order already exists
         const existingWorkOrder = workOrders.find((wo: any) => wo.reservation_id === reservation.reservation_id);
         
@@ -899,7 +964,6 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
           const workOrderId = crypto.randomUUID();
           
           // Calculate due date: 14 days from reservation date
-          const reservationDate = new Date(reservation.reservation_date_time);
           const dueDate = new Date(reservationDate);
           dueDate.setDate(dueDate.getDate() + 14);
 
@@ -1753,8 +1817,30 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
     const reservations = await kv.getByPrefix('reservation:');
     const customers = await kv.getByPrefix('customer:');
 
-    // Filter non-delivered work orders
-    const activeWorkOrders = workOrders.filter((wo: any) => wo.status !== '引渡し済');
+    // Get current time in JST (Asia/Tokyo)
+    const getJapanNow = () => {
+      const now = new Date();
+      const jstOffset = 9 * 60; // JST is UTC+9
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      return new Date(utc + (jstOffset * 60000));
+    };
+    const japanNow = getJapanNow();
+
+    // Filter non-delivered work orders AND only those where reservation date has passed
+    const activeWorkOrders = workOrders.filter((wo: any) => {
+      if (wo.status === '引渡し済') return false;
+      
+      // Check if reservation date has passed (for confirmed reservations)
+      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
+      if (!reservation) return true; // Keep if no reservation found
+      
+      // Only filter confirmed reservations
+      if (reservation.status !== 'confirmed') return true;
+      
+      // Check if reservation date has passed
+      const reservationDate = new Date(reservation.reservation_date_time);
+      return reservationDate < japanNow;
+    });
 
     // Sort by priority
     const sortedWorkOrders = activeWorkOrders.sort((a: any, b: any) => {
@@ -1810,9 +1896,9 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       return { ...r, customer };
     });
 
-    // Tentative and rescheduled reservations
+    // Tentative reservations
     const tentativeReservations = reservations.filter((r: any) => 
-      r.status === 'tentative' || r.status === 'rescheduled'
+      r.status === 'tentative'
     ).map((r: any) => {
       const customer = customers.find((c: any) => c.customer_id === r.customer_id);
       return { ...r, customer };
@@ -1821,7 +1907,7 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
     // Calculate statistics
     const stats = {
       total_customers: customers.length,
-      active_work_orders: workOrders.filter((wo: any) => wo.status !== '引渡し済').length,
+      active_work_orders: activeWorkOrders.length,
       upcoming_reservations: reservations.filter((r: any) => {
         const resDate = new Date(r.reservation_date_time);
         const now = new Date();
@@ -1858,9 +1944,8 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       });
     }
 
-    // Overdue work orders
-    const overdueWorkOrders = workOrders.filter((wo: any) => {
-      if (wo.status === '引渡し済') return false;
+    // Overdue work orders (from already filtered activeWorkOrders)
+    const overdueWorkOrders = activeWorkOrders.filter((wo: any) => {
       const dueDate = new Date(wo.due_date);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -2122,6 +2207,266 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     });
   } catch (error) {
     console.log(`Get sales analytics error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ========== Public API (認証不要) ==========
+
+// Get menu items (public)
+app.get('/make-server-fe84bde0/public/menu-items', async (c) => {
+  try {
+    const menuItems = await kv.getByPrefix('menu_item:');
+    const activeMenuItems = menuItems.filter((m: any) => m.is_active !== false);
+    return c.json({ menu_items: activeMenuItems });
+  } catch (error) {
+    console.log(`Get public menu items error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Get locations (public)
+app.get('/make-server-fe84bde0/public/locations', async (c) => {
+  try {
+    const locations = await kv.getByPrefix('location:');
+    const activeLocations = locations.filter((l: any) => l.active_flag !== false);
+    return c.json({ locations: activeLocations });
+  } catch (error) {
+    console.log(`Get public locations error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Create public reservation (public)
+app.post('/make-server-fe84bde0/public/reservations', async (c) => {
+  try {
+    const body = await c.req.json();
+    const {
+      reservation_date_time,
+      menu_item_id,
+      location_id,
+      parent_name,
+      child_name,
+      child_age_years,
+      child_age_months,
+      postal_code,
+      address_text,
+      phone,
+      email,
+      notes_customer,
+    } = body;
+
+    // Validation
+    if (!reservation_date_time || !menu_item_id || !location_id || !parent_name || !child_name || !phone || !email) {
+      return c.json({ error: '必須項目が入力されていません' }, 400);
+    }
+
+    // Check if customer already exists by phone
+    let customer = null;
+    const customers = await kv.getByPrefix('customer:');
+    const existingCustomer = customers.find((c: any) => c.phone === phone && c.active_flag !== false);
+
+    if (existingCustomer) {
+      // Update existing customer
+      customer = {
+        ...existingCustomer,
+        parent_name,
+        child_name,
+        child_age_years: child_age_years !== null && child_age_years !== undefined ? child_age_years : existingCustomer.child_age_years,
+        child_age_months: child_age_months !== null && child_age_months !== undefined ? child_age_months : existingCustomer.child_age_months,
+        postal_code: postal_code || existingCustomer.postal_code,
+        address_text: address_text || existingCustomer.address_text,
+        updated_at: new Date().toISOString(),
+      };
+      await kv.set(`customer:${customer.customer_id}`, customer);
+    } else {
+      // Create new customer
+      const customerId = crypto.randomUUID();
+      const allCustomers = await kv.getByPrefix('customer:');
+      const maxCode = allCustomers.reduce((max: number, c: any) => {
+        const match = c.customer_code?.match(/A-(\\d+)/);
+        if (match) {
+          const num = parseInt(match[1]);
+          return num > max ? num : max;
+        }
+        return max;
+      }, 1000);
+      const customerCode = `A-${maxCode + 1}`;
+
+      // 月齢が入力されていて歳が空の場合は0をセット
+      let finalAgeYears = child_age_years !== null && child_age_years !== undefined ? child_age_years : null;
+      const hasMonths = child_age_months !== null && child_age_months !== undefined;
+      if (finalAgeYears === null && hasMonths) {
+        finalAgeYears = 0;
+      }
+
+      customer = {
+        customer_id: customerId,
+        customer_code: customerCode,
+        external_customer_number: null,
+        parent_name,
+        parent_name_kana: null,
+        child_name,
+        child_name_kana: null,
+        child_age_years: finalAgeYears,
+        child_age_months: hasMonths ? child_age_months : null,
+        phone,
+        line_url: null,
+        postal_code,
+        address_text,
+        notes_internal: notes_customer ? `お客様からの備考: ${notes_customer}` : null,
+        active_flag: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      await kv.set(`customer:${customerId}`, customer);
+    }
+
+    // Create reservation
+    const reservationId = crypto.randomUUID();
+    const menuItem = await kv.get(`menu_item:${menu_item_id}`);
+
+    const reservationData = {
+      reservation_id: reservationId,
+      reservation_date_time,
+      duration_minutes: 30,
+      location_id,
+      customer_id: customer.customer_id,
+      staff_id_main: null,
+      status: 'tentative', // 仮予約
+      payment_status: 'unpaid',
+      payment_method: null,
+      work_required: menuItem?.name || null,
+      notes_staff: notes_customer ? `お客様備考: ${notes_customer}` : '公開予約フォームから登録',
+      menu_item_id,
+      additional_units: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      updated_by_user_id: null, // Public reservation
+    };
+
+    await kv.set(`reservation:${reservationId}`, reservationData);
+
+    // Send confirmation email
+    try {
+      const resendApiKey = Deno.env.get('RESEND_API_KEY');
+      if (resendApiKey) {
+        const location = await kv.get(`location:${location_id}`);
+        const reservationDate = new Date(reservation_date_time);
+        const dateStr = reservationDate.toLocaleDateString('ja-JP', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric',
+          weekday: 'short'
+        });
+        const timeStr = reservationDate.toLocaleTimeString('ja-JP', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+
+        const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans JP', sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+    .info-box { background: white; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #ec4899; }
+    .info-row { margin: 10px 0; }
+    .label { font-weight: bold; color: #ec4899; }
+    .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 8px; }
+    .footer { text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 style="margin: 0;">アマレット</h1>
+      <p style="margin: 10px 0 0 0;">ライフキャスティング専門店</p>
+    </div>
+    <div class="content">
+      <h2 style="color: #1f2937; margin-top: 0;">仮予約を承りました</h2>
+      <p>${parent_name} 様</p>
+      <p>この度はアマレットにご予約いただき、誠にありがとうございます。<br>以下の内容で仮予約を承りました。</p>
+      
+      <div class="info-box">
+        <div class="info-row">
+          <span class="label">予約日時:</span> ${dateStr} ${timeStr}
+        </div>
+        <div class="info-row">
+          <span class="label">メニュー:</span> ${menuItem?.name || '-'}
+        </div>
+        <div class="info-row">
+          <span class="label">店舗:</span> ${location?.location_name || '-'}
+        </div>
+        <div class="info-row">
+          <span class="label">保護者様:</span> ${parent_name}
+        </div>
+        <div class="info-row">
+          <span class="label">お子様:</span> ${child_name}
+          ${child_age_years !== null || child_age_months !== null ? `(${child_age_years || 0}歳${child_age_months ? ` ${child_age_months}ヶ月` : ''})` : ''}
+        </div>
+      </div>
+
+      <div class="warning">
+        <strong>⚠️ 重要なお知らせ</strong><br>
+        こちらは<strong>仮予約</strong>となります。<br>
+        近日中にスタッフから確認のお電話（${phone}）をさせていただきます。<br>
+        お電話にて正式な予約確定となりますので、予めご了承ください。
+      </div>
+
+      <p>ご不明な点がございましたら、お気軽にお問い合わせください。<br>スタッフ一同、心よりお待ちしております。</p>
+      
+      <div class="footer">
+        <p>アマレット ライフキャスティング専門店<br>
+        このメールは送信専用です。ご返信いただいてもお答えできませんのでご了承ください。</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+        `;
+
+        const emailResponse = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${resendApiKey}`,
+          },
+          body: JSON.stringify({
+            from: 'アマレット <noreply@resend.dev>',
+            to: [email],
+            subject: '【アマレット】仮予約を承りました',
+            html: emailHtml,
+          }),
+        });
+
+        if (!emailResponse.ok) {
+          const errorData = await emailResponse.json();
+          console.error('Email sending failed:', errorData);
+        } else {
+          console.log('Confirmation email sent successfully to:', email);
+        }
+      } else {
+        console.log('RESEND_API_KEY not configured, skipping email');
+      }
+    } catch (emailError) {
+      console.error('Email sending error:', emailError);
+      // Don't fail the reservation if email fails
+    }
+
+    return c.json({ 
+      success: true, 
+      reservation_id: reservationId,
+      customer_id: customer.customer_id,
+      message: '仮予約を承りました。確認メールをお送りしましたのでご確認ください。'
+    });
+
+  } catch (error) {
+    console.log(`Create public reservation error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });

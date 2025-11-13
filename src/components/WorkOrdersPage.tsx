@@ -150,8 +150,25 @@ export function WorkOrdersPage() {
       // Reload work orders after auto-creation
       const updatedWoData = await apiRequest('/work-orders');
 
+      // Get current Japan time
+      const now = new Date();
+      const japanNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+
+      // Filter work orders: only show those where reservation date has passed (for confirmed reservations)
+      const filteredWorkOrders = updatedWoData.work_orders.filter((wo: any) => {
+        const reservation = resData.reservations.find((r: any) => r.reservation_id === wo.reservation_id);
+        if (!reservation) return true; // Keep if no reservation found
+        
+        // Only filter confirmed reservations
+        if (reservation.status !== 'confirmed') return true;
+        
+        // Check if reservation date has passed
+        const reservationDate = new Date(reservation.reservation_date_time);
+        return reservationDate < japanNow;
+      });
+
       // Sort work orders
-      const sorted = updatedWoData.work_orders.sort((a: any, b: any) => {
+      const sorted = filteredWorkOrders.sort((a: any, b: any) => {
         if (a.priority_order !== null && b.priority_order !== null) {
           return a.priority_order - b.priority_order;
         }
@@ -316,7 +333,7 @@ export function WorkOrdersPage() {
   };
 
   const handleBatchCreateWorkOrders = async () => {
-    if (!window.confirm('確定済みの予約で制作物がない場合、自動的に制作物を生成します。実行しますか？')) {
+    if (!window.confirm('予約日が過ぎた確定済み予約で制作物がない場合、自動的に制作物を生成します。実行しますか？')) {
       return;
     }
 

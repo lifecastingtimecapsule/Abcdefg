@@ -1,6 +1,7 @@
 import { ReactNode, useState } from 'react';
-import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed, TrendingUp, User as UserIcon } from 'lucide-react';
 import { createClient } from '../utils/supabase/client';
+import { User } from '../types';
 
 interface LayoutProps {
   children: ReactNode;
@@ -8,10 +9,23 @@ interface LayoutProps {
   onNavigate: (page: string) => void;
   onLogout: () => void;
   userRole: string;
+  currentUser: User | null;
 }
 
-export function Layout({ children, currentPage, onNavigate, onLogout, userRole }: LayoutProps) {
+export function Layout({ children, currentPage, onNavigate, onLogout, userRole, currentUser }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const formatLastLogin = (dateString: string | undefined) => {
+    if (!dateString) return '初回ログイン';
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('ja-JP', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Tokyo',
+    }).format(date);
+  };
 
   const navSections = [
     {
@@ -60,6 +74,26 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole }
       {mobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 top-[57px] bg-white z-30 overflow-y-auto">
           <nav className="p-4 space-y-4">
+            {/* User info at the top of mobile menu */}
+            {currentUser && (
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 mb-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full flex items-center justify-center">
+                    <UserIcon className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-slate-900">{currentUser.name}</p>
+                    <p className="text-xs text-slate-600">
+                      {currentUser.role === 'admin' ? '管理者' : 'スタッフ'}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500">
+                  前回ログイン: {formatLastLogin(currentUser.last_login_at)}
+                </p>
+              </div>
+            )}
+
             {filteredNavSections.map((section, sectionIndex) => (
               <div key={sectionIndex}>
                 {section.title && (
@@ -144,14 +178,37 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole }
           ))}
         </nav>
 
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-slate-200">
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition"
-          >
-            <LogOut className="w-5 h-5" />
-            <span>ログアウト</span>
-          </button>
+        <div className="absolute bottom-0 left-0 right-0 border-t border-slate-200">
+          {/* User info */}
+          {currentUser && (
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full flex items-center justify-center flex-shrink-0">
+                  <UserIcon className="w-5 h-5 text-white" />
+                </div>
+                <div className="overflow-hidden">
+                  <p className="text-slate-900 text-sm truncate">{currentUser.name}</p>
+                  <p className="text-xs text-slate-600">
+                    {currentUser.role === 'admin' ? '管理者' : 'スタッフ'}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">
+                前回: {formatLastLogin(currentUser.last_login_at)}
+              </p>
+            </div>
+          )}
+          
+          {/* Logout button */}
+          <div className="p-4">
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition"
+            >
+              <LogOut className="w-5 h-5" />
+              <span>ログアウト</span>
+            </button>
+          </div>
         </div>
       </aside>
 
