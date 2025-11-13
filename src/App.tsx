@@ -75,15 +75,17 @@ export default function App() {
   const tryInitializeSystem = async () => {
     try {
       // システムの初期化を試みる（既に初期化済みの場合はエラーが返る）
-      // Note: /initialize endpoint does not require authentication
-      const { projectId } = await import('./utils/supabase/info');
+      const { projectId, publicAnonKey } = await import('./utils/supabase/info');
       const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0/initialize`;
       
       console.log('[Init] Attempting system initialization...');
       
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${publicAnonKey}`
+        }
       });
       
       if (response.ok) {
@@ -159,10 +161,10 @@ export default function App() {
     );
   }
 
-  // スタッフ用ログインページ（分かりにくいパス）
+  // スタッフ用ログインページ
   if (!isAuthenticated) {
-    // スタッフ用ログインページは /admin-sys-login でアクセス
-    if (currentRoute !== '/admin-sys-login') {
+    // スタッフ用ログインページは /login または /admin-sys-login でアクセス
+    if (currentRoute !== '/login' && currentRoute !== '/admin-sys-login') {
       window.history.pushState({}, '', '/reservation');
       setCurrentRoute('/reservation');
       return null;

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Calendar, Clock, Mail, Phone, MapPin, User, Baby, Home, ChevronLeft, ChevronRight, Heart } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId } from '../utils/supabase/info';
+import logoImage from 'figma:asset/a5fc00399012eeaf62209d6c1238a54dcc136bcf.png';
 
 interface MenuItem {
   menu_item_id: string;
@@ -194,15 +195,28 @@ export function PublicReservationPage() {
       <header className="border-b" style={{ borderColor: '#E5E0D8', backgroundColor: '#FFFFFF' }}>
         <div className="max-w-6xl mx-auto px-6 py-6 md:py-8">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="mb-1" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C' }}>
-                Amoretto
-              </h1>
-              <p className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666' }}>
-                ライフキャスティング専門店
-              </p>
+            <div className="flex-1"></div>
+            <div className="flex-1 flex items-center justify-center">
+              <img 
+                src={logoImage} 
+                alt="amoré​tto" 
+                className="h-10 md:h-12"
+                style={{ objectFit: 'contain' }}
+              />
             </div>
-            <Heart className="w-8 h-8 md:w-10 md:h-10" style={{ color: '#C4A962' }} />
+            <div className="flex-1 flex items-center justify-end">
+              <a
+                href="/login"
+                className="text-sm px-4 py-2 rounded-md transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-105"
+                style={{
+                  fontFamily: "'Noto Sans JP', sans-serif",
+                  color: '#C4A962',
+                  letterSpacing: '0.05em'
+                }}
+              >
+                スタッフログイン
+              </a>
+            </div>
           </div>
         </div>
       </header>
@@ -272,7 +286,7 @@ export function PublicReservationPage() {
                   <div className="flex items-center justify-between mb-6">
                     <button
                       onClick={previousMonth}
-                      className="p-2 hover:opacity-70 transition-opacity"
+                      className="p-2 rounded-lg transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-110"
                       style={{ color: '#C4A962' }}
                     >
                       <ChevronLeft className="w-5 h-5" />
@@ -282,7 +296,7 @@ export function PublicReservationPage() {
                     </h4>
                     <button
                       onClick={nextMonth}
-                      className="p-2 hover:opacity-70 transition-opacity"
+                      className="p-2 rounded-lg transition-all duration-300 hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-110"
                       style={{ color: '#C4A962' }}
                     >
                       <ChevronRight className="w-5 h-5" />
@@ -308,18 +322,17 @@ export function PublicReservationPage() {
                           <button
                             onClick={() => !isPastDate(date) && setSelectedDate(formatDateForInput(date))}
                             disabled={isPastDate(date)}
-                            className={`w-full aspect-square flex items-center justify-center text-sm transition-all duration-300 ${
+                            className={`w-full aspect-square flex items-center justify-center text-sm rounded-lg transition-all duration-300 ${
                               selectedDate === formatDateForInput(date)
-                                ? 'text-white'
+                                ? 'text-white scale-105 shadow-md'
                                 : isPastDate(date)
                                 ? 'opacity-30 cursor-not-allowed'
-                                : 'hover:border hover:opacity-80'
+                                : 'hover:bg-[#C4A962] hover:bg-opacity-10 hover:scale-105 hover:shadow-sm'
                             }`}
                             style={{
                               fontFamily: "'Noto Sans JP', sans-serif",
                               backgroundColor: selectedDate === formatDateForInput(date) ? '#C4A962' : isToday(date) ? '#F8F6F3' : 'transparent',
-                              color: selectedDate === formatDateForInput(date) ? '#FFFFFF' : '#2C2C2C',
-                              borderColor: '#E5E0D8'
+                              color: selectedDate === formatDateForInput(date) ? '#FFFFFF' : '#2C2C2C'
                             }}
                           >
                             {date.getDate()}
@@ -343,8 +356,8 @@ export function PublicReservationPage() {
                         <button
                           key={time}
                           onClick={() => setSelectedTime(time)}
-                          className={`py-2.5 md:py-3 transition-all duration-300 ${
-                            selectedTime === time ? 'text-white' : 'border hover:opacity-80'
+                          className={`py-2.5 md:py-3 rounded-md transition-all duration-300 ${
+                            selectedTime === time ? 'text-white shadow-md scale-105' : 'border hover:border-[#C4A962] hover:bg-[#C4A962] hover:bg-opacity-5 hover:scale-105'
                           }`}
                           style={{
                             fontFamily: "'Noto Sans JP', sans-serif",
@@ -362,6 +375,58 @@ export function PublicReservationPage() {
                 )}
               </div>
 
+              {/* フォーム入力 */}
+              <div>
+                <h3 className="mb-6" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', borderBottom: '1px solid #E5E0D8', paddingBottom: '0.75rem' }}>
+                  日時を直接入力
+                </h3>
+                <div className="p-5 rounded-lg" style={{ backgroundColor: '#F8F6F3' }}>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block mb-2 flex items-center gap-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
+                        <Calendar className="w-4 h-4" style={{ color: '#C4A962' }} />
+                        日付
+                      </label>
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        min={new Date().toISOString().split('T')[0]}
+                        className="w-full px-4 py-3 border rounded-md transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderColor: '#E5E0D8',
+                          fontFamily: "'Noto Sans JP', sans-serif",
+                          color: '#2C2C2C'
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-2 flex items-center gap-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
+                        <Clock className="w-4 h-4" style={{ color: '#C4A962' }} />
+                        時間
+                      </label>
+                      <select
+                        value={selectedTime}
+                        onChange={(e) => setSelectedTime(e.target.value)}
+                        className="w-full px-4 py-3 border rounded-md transition-all duration-300 focus:outline-none focus:border-[#C4A962]"
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderColor: '#E5E0D8',
+                          fontFamily: "'Noto Sans JP', sans-serif",
+                          color: '#2C2C2C'
+                        }}
+                      >
+                        <option value="">時間を選択</option>
+                        {timeSlots.map((time) => (
+                          <option key={time} value={time}>{time}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* メニュー選択 */}
               <div>
                 <h3 className="mb-6" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', borderBottom: '1px solid #E5E0D8', paddingBottom: '0.75rem' }}>
@@ -377,10 +442,10 @@ export function PublicReservationPage() {
                       <button
                         key={menu.menu_item_id}
                         onClick={() => setSelectedMenuId(menu.menu_item_id)}
-                        className={`p-5 md:p-6 text-left transition-all duration-300 border ${
+                        className={`p-5 md:p-6 text-left rounded-md transition-all duration-300 border ${
                           selectedMenuId === menu.menu_item_id
-                            ? 'border-[#C4A962]'
-                            : 'border-[#E5E0D8] hover:border-[#C4A962] hover:shadow-sm'
+                            ? 'border-[#C4A962] shadow-md scale-[1.02]'
+                            : 'border-[#E5E0D8] hover:border-[#C4A962] hover:shadow-lg hover:scale-[1.02]'
                         }`}
                         style={{
                           backgroundColor: selectedMenuId === menu.menu_item_id ? '#FAFAF8' : '#FFFFFF'
@@ -417,10 +482,10 @@ export function PublicReservationPage() {
                     <button
                       key={location.location_id}
                       onClick={() => setSelectedLocationId(location.location_id)}
-                      className={`p-4 md:p-5 text-left transition-all duration-300 border ${
+                      className={`p-4 md:p-5 text-left rounded-md transition-all duration-300 border ${
                         selectedLocationId === location.location_id
-                          ? 'border-[#C4A962]'
-                          : 'border-[#E5E0D8] hover:border-[#C4A962]'
+                          ? 'border-[#C4A962] shadow-md scale-[1.02]'
+                          : 'border-[#E5E0D8] hover:border-[#C4A962] hover:shadow-sm hover:scale-[1.02]'
                       }`}
                       style={{
                         backgroundColor: selectedLocationId === location.location_id ? '#FAFAF8' : '#FFFFFF',
@@ -446,7 +511,7 @@ export function PublicReservationPage() {
                     }
                     setStep(2);
                   }}
-                  className="px-10 md:px-12 py-3.5 md:py-4 transition-all duration-300"
+                  className="px-10 md:px-12 py-3.5 md:py-4 rounded-md transition-all duration-300 hover:shadow-lg hover:scale-105"
                   style={{
                     backgroundColor: '#C4A962',
                     color: '#FFFFFF',
@@ -666,7 +731,7 @@ export function PublicReservationPage() {
               <div className="flex gap-3 pt-6" style={{ borderTop: '1px solid #E5E0D8' }}>
                 <button
                   onClick={() => setStep(1)}
-                  className="flex-1 py-3.5 md:py-4 border transition-all duration-300"
+                  className="flex-1 py-3.5 md:py-4 border rounded-md transition-all duration-300 hover:shadow-md hover:scale-105"
                   style={{
                     borderColor: '#C4A962',
                     color: '#C4A962',
@@ -692,7 +757,7 @@ export function PublicReservationPage() {
                     }
                     setStep(3);
                   }}
-                  className="flex-1 py-3.5 md:py-4 transition-all duration-300"
+                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 hover:shadow-lg hover:scale-105"
                   style={{
                     backgroundColor: '#C4A962',
                     color: '#FFFFFF',
@@ -796,7 +861,7 @@ export function PublicReservationPage() {
                 <button
                   onClick={() => setStep(2)}
                   disabled={loading}
-                  className="flex-1 py-3.5 md:py-4 border transition-all duration-300 disabled:opacity-50"
+                  className="flex-1 py-3.5 md:py-4 border rounded-md transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100"
                   style={{
                     borderColor: '#C4A962',
                     color: '#C4A962',
@@ -819,7 +884,7 @@ export function PublicReservationPage() {
                 <button
                   onClick={handleSubmit}
                   disabled={loading}
-                  className="flex-1 py-3.5 md:py-4 transition-all duration-300 disabled:opacity-50"
+                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100"
                   style={{
                     backgroundColor: '#C4A962',
                     color: '#FFFFFF',
@@ -840,12 +905,15 @@ export function PublicReservationPage() {
       {/* フッター */}
       <footer className="border-t py-12" style={{ borderColor: '#E5E0D8', backgroundColor: '#F5F3EF' }}>
         <div className="max-w-4xl mx-auto px-6 text-center">
-          <div className="mb-4">
-            <h3 className="mb-2" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C' }}>
-              Amoretto
-            </h3>
+          <div className="mb-4 flex flex-col items-center">
+            <img 
+              src={logoImage} 
+              alt="amoré​tto" 
+              className="h-8 md:h-10 mb-3"
+              style={{ objectFit: 'contain' }}
+            />
             <p className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666' }}>
-              ライフキャスティング専門店
+              LifeCasting™studio
             </p>
           </div>
           <p className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', letterSpacing: '0.05em' }}>
