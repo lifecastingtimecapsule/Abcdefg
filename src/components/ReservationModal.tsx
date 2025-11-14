@@ -337,7 +337,7 @@ export function ReservationModal({
       const reservation_date_time = `${formData.reservation_date}T${formData.reservation_time}`;
 
       // Create/update reservation
-      await apiRequest('/reservations', {
+      const reservationResponse = await apiRequest('/reservations', {
         method: 'POST',
         body: JSON.stringify({
           ...(reservation ? { reservation_id: reservation.reservation_id } : {}),
@@ -356,7 +356,13 @@ export function ReservationModal({
       });
 
       onSave();
-      toast.success(reservation ? '予約情報を更新しました' : '��しい予約を登録しました');
+      
+      // Show reservation number for new reservations
+      if (!reservation && reservationResponse.reservation?.reservation_number) {
+        toast.success('新しい予約を登録しました。予約番号: ' + reservationResponse.reservation.reservation_number, { duration: 8000 });
+      } else {
+        toast.success(reservation ? '予約情報を更新しました' : '新しい予約を登録しました');
+      }
     } catch (err: any) {
       console.error('Save error:', err);
       setError(err.message);

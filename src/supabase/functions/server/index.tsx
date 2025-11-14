@@ -812,8 +812,35 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
 
     const reservationId = reservation_id || crypto.randomUUID();
 
+    // Generate reservation_number if not exists (for new reservations)
+    let reservationNumber = body.reservation_number;
+    if (!reservation_id) {
+      // Generate a unique 5-character lowercase alphanumeric reservation number
+      const allReservations = await kv.getByPrefix('reservation:');
+      const existingNumbers = new Set(allReservations.map((r: any) => r.reservation_number).filter(Boolean));
+      
+      let attempts = 0;
+      const maxAttempts = 100;
+      
+      do {
+        // Generate random 5-character lowercase alphanumeric string
+        const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        reservationNumber = Array.from({ length: 5 }, () => 
+          chars.charAt(Math.floor(Math.random() * chars.length))
+        ).join('');
+        attempts++;
+        
+        if (attempts >= maxAttempts) {
+          throw new Error('予約番号の生成に失敗しました');
+        }
+      } while (existingNumbers.has(reservationNumber));
+      
+      console.log(`[予約作成] 新しい予約番号を生成: ${reservationNumber}`);
+    }
+
     const reservationData = {
       reservation_id: reservationId,
+      reservation_number: reservationNumber,
       reservation_date_time,
       duration_minutes: duration_minutes || 30,
       location_id,
@@ -3250,25 +3277,61 @@ app.post('/make-server-fe84bde0/public/my-reservation-login', async (c) => {
     const body = await c.req.json();
     const { email, reservation_number } = body;
     
+    console.log('[予約確認ログイン] リクエスト受信:', { email, reservation_number });
+    
     if (!email || !reservation_number) {
+      console.log('[予約確認ログイン] ❌ 入力不足');
       return c.json({ error: 'メールアドレスと予約番号が必要です' }, 400);
     }
     
     // Find reservation by reservation number
     const reservations = await kv.getByPrefix('reservation:');
+    console.log('[予約確認ログイン] 全予約数:', reservations.length);
+    console.log('[予約確認ログイン] 検索する予約番号:', reservation_number);
+    
+    // Debug: Show all reservation numbers
+    const reservationNumbers = reservations.map((r: any) => r.reservation_number).filter(Boolean);
+    console.log('[予約確認ログイン] 存在する予約番号リスト:', reservationNumbers.slice(0, 10), '...(最初の10件)');
+    
     const reservation = reservations.find((r: any) => r.reservation_number === reservation_number);
     
+    console.log('[予約確認ログイン] 予約検索結果:', reservation ? `見つかりました (予約ID: ${reservation.reservation_id})` : '見つかりませんでした');
+    
     if (!reservation) {
+      console.log('[予約確認ログイン] ❌ 予約番号が存在しません:', reservation_number);
       return c.json({ error: '予約が見つかりませんでした' }, 404);
     }
     
     // Get customer data
     const customer = await kv.get(`customer:${reservation.customer_id}`);
     
+    console.log('[予約確認ログイン] 顧客データ:', {
+      customer_id: customer?.customer_id,
+      customer_code: customer?.customer_code,
+      parent_name: customer?.parent_name,
+      email_stored: customer?.email || '(なし)',
+      email_input: email,
+      has_email: !!customer?.email,
+      email_matches: customer?.email?.toLowerCase() === email.toLowerCase()
+    });
+    
     // Verify email matches
-    if (!customer || customer.email?.toLowerCase() !== email.toLowerCase()) {
+    if (!customer) {
+      console.log('[予約確認ログイン] ❌ 顧客データが見つかりません');
       return c.json({ error: 'メールアドレスまたは予約番号が正しくありません' }, 401);
     }
+    
+    if (!customer.email) {
+      console.log('[予約確認ログイン] ❌ 顧客にメールアドレスが登録されていません');
+      return c.json({ error: 'この予約にはメールアドレスが登録されていません。管理画面から顧客情報を編集してメールアドレスを追加してください。' }, 401);
+    }
+    
+    if (customer.email.toLowerCase() !== email.toLowerCase()) {
+      console.log('[予約確認ログイン] ❌ メールアドレスが一致しません');
+      return c.json({ error: 'メールアドレスまたは予約番号が正しくありません' }, 401);
+    }
+    
+    console.log('[予約確認ログイン] ✅ ログイン成功');
     
     // Get related data
     const menuItem = await kv.get(`menu_item:${reservation.menu_item_id}`);

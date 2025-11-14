@@ -71,7 +71,15 @@ export function MyReservationPage() {
       if (!response.ok) {
         const errorData = await response.json();
         console.error('[MyReservation] エラーレスポンス:', errorData);
-        throw new Error(errorData.error || 'ログインに失敗しました');
+        
+        // より詳細なエラーメッセージを表示
+        if (response.status === 404) {
+          throw new Error('予約が見つかりませんでした。予約番号をご確認ください。');
+        } else if (response.status === 401) {
+          throw new Error('メールアドレスまたは予約番号が正しくありません。\n\n※この予約にメールアドレスが登録されていない可能性があります。管理画面から顧客情報を編集してメールアドレスを追加してください。');
+        } else {
+          throw new Error(errorData.error || 'ログインに失敗しました');
+        }
       }
 
       const data = await response.json();
