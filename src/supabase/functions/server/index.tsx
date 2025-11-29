@@ -400,7 +400,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
         await supabase.auth.admin.updateUserById(user_id, { password: update_password });
       } catch (pwError) {
         console.error(`Failed to update password: ${pwError}`);
-        return c.json({ error: 'パスワードの更新に失敗しました' }, 500);
+        return c.json({ error: 'パスワードの��新に失敗しました' }, 500);
       }
     }
 
@@ -808,6 +808,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       notes_staff,
       menu_item_id,
       additional_units,
+      photo_required,
     } = body;
 
     const reservationId = reservation_id || crypto.randomUUID();
@@ -853,6 +854,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       notes_staff,
       menu_item_id: menu_item_id || null,
       additional_units: additional_units || 0,
+      photo_required: photo_required || 'not_set',
       created_at: body.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
       updated_by_user_id: user.id,
@@ -879,7 +881,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
           work_order_id: workOrderId,
           reservation_id: reservationId,
           product_type: work_required,
-          status: '制作中',
+          status: '乾燥中',
           due_date: dueDate.toISOString().split('T')[0],
           delivered_date: null,
           priority_order: null,
@@ -1000,7 +1002,7 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
             work_order_id: workOrderId,
             reservation_id: reservation.reservation_id,
             product_type: reservation.work_required,
-            status: '制作中',
+            status: '乾燥中',
             due_date: dueDate.toISOString().split('T')[0],
             delivered_date: null,
             priority_order: null,
@@ -1067,6 +1069,12 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
       delivered_date,
       priority_order,
       notes_internal,
+      photo_data_status,
+      nameplate_name,
+      coloring_type,
+      frame_color,
+      mount_color,
+      status_comments,
     } = body;
 
     const workOrderId = work_order_id || crypto.randomUUID();
@@ -1093,11 +1101,17 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
       work_order_id: workOrderId,
       reservation_id,
       product_type,
-      status: status || '制作中',
+      status: status || '乾燥中',
       due_date,
       delivered_date,
       priority_order: priority_order ?? null,
       notes_internal,
+      photo_data_status: photo_data_status || 'not_set',
+      nameplate_name: nameplate_name || null,
+      coloring_type: coloring_type || null,
+      frame_color: frame_color || null,
+      mount_color: mount_color || null,
+      status_comments: status_comments || {},
       created_at: body.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
       updated_by_user_id: user.id,
@@ -2862,30 +2876,6 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
         console.log('[予約メール送信] メニュー:', menuItem?.name);
         console.log('[予約メール送信] 店舗:', location?.location_name);
 
-        // Get app base URL from environment, or try to infer from request headers
-        let appBaseUrl = Deno.env.get('APP_BASE_URL');
-        if (!appBaseUrl) {
-          // Try to get from Referer header
-          const referer = c.req.header('Referer') || c.req.header('Origin');
-          if (referer) {
-            try {
-              const url = new URL(referer);
-              appBaseUrl = `${url.protocol}//${url.host}`;
-              console.log('[予約メール送信] RefererからベースURLを推測:', appBaseUrl);
-            } catch (e) {
-              console.warn('[予約メール送信] Refererの解析に失敗:', e);
-            }
-          }
-        }
-        
-        // Fallback to a placeholder - this will need to be configured
-        if (!appBaseUrl) {
-          appBaseUrl = 'https://your-app-url.com';
-          console.warn('[予約メール送信] ⚠️ APP_BASE_URL環境変数が設定されていません。メール内のリンクが正しく動作しない可能性があります。');
-        }
-        
-        console.log('[予約メール送信] アプリベースURL:', appBaseUrl);
-
         const emailHtml = `
 <!DOCTYPE html>
 <html>
@@ -3063,16 +3053,21 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
       </div>
 
       <div class="notice-box">
-        <div class="notice-title">📋 予約の確認・管理</div>
+        <div class="notice-title">📋 ご来店前のお願い</div>
         <div class="notice-text">
-          下記のボタンから、予約内容の確認、変更リクエスト、キャンセルが可能です。<br>
-          予約番号とメールアドレスでログインしてください。制作が開始されましたら、制作状況と納期もご確認いただけます。
+          ・予約時間の10分前までにご来店ください<br>
+          ・遅れる場合は必ずお電話にてご連絡ください<br>
+          ・ご予約の変更・キャンセルをご希望の場合は、お電話・メール・公式LINEにてご連絡ください<br>
+          ・当日キャンセルの場合はキャンセル料が発生する場合がございます
         </div>
-        <center>
-          <a href="${appBaseUrl}/my-reservation?number=${reservationNumber}&email=${encodeURIComponent(email)}" class="btn">
-            予約を確認・管理する
-          </a>
-        </center>
+      </div>
+
+      <div class="notice-box" style="background: linear-gradient(135deg, #E8F8F5 0%, #E1F5FE 100%); border-left: 4px solid #06C755;">
+        <div class="notice-title" style="color: #06C755;">💬 公式LINE</div>
+        <div class="notice-text">
+          変更・キャンセルは公式LINEからも受け付けております<br>
+          <a href="https://lin.ee/LbmijXx" style="color: #06C755; text-decoration: underline;">https://lin.ee/LbmijXx</a>
+        </div>
       </div>
 
       <div class="closing">
@@ -3171,248 +3166,7 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
   }
 });
 
-// Get reservation status by reservation number (public)
-app.get('/make-server-fe84bde0/public/reservation-status', async (c) => {
-  try {
-    const reservationNumber = c.req.query('reservation_number');
-    
-    if (!reservationNumber) {
-      return c.json({ error: '予約番号が指定されていません' }, 400);
-    }
-    
-    // Find reservation by reservation number
-    const reservations = await kv.getByPrefix('reservation:');
-    const reservation = reservations.find((r: any) => r.reservation_number === reservationNumber);
-    
-    if (!reservation) {
-      return c.json({ error: '予約が見つかりませんでした' }, 404);
-    }
-    
-    // Get related data
-    const customer = await kv.get(`customer:${reservation.customer_id}`);
-    const menuItem = await kv.get(`menu_item:${reservation.menu_item_id}`);
-    const location = await kv.get(`location:${reservation.location_id}`);
-    
-    const responseData = {
-      reservation_number: reservation.reservation_number,
-      reservation_date_time: reservation.reservation_date_time,
-      duration_minutes: reservation.duration_minutes,
-      status: reservation.status,
-      customer_code: customer?.customer_code,
-      parent_name: customer?.parent_name,
-      child_name: customer?.child_name,
-      phone: customer?.phone,
-      email: customer?.email,
-      menu_name: menuItem?.name || reservation.work_required,
-      location_name: location?.location_name,
-      location_address: location?.address_text,
-      created_at: reservation.created_at,
-    };
-    
-    return c.json({ reservation: responseData });
-  } catch (error) {
-    console.log(`Get reservation status error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
 
-// Cancel reservation by reservation number (public)
-app.post('/make-server-fe84bde0/public/cancel-reservation', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { reservation_number } = body;
-    
-    if (!reservation_number) {
-      return c.json({ error: '予約番号が指定されていません' }, 400);
-    }
-    
-    // Find reservation by reservation number
-    const reservations = await kv.getByPrefix('reservation:');
-    const reservation = reservations.find((r: any) => r.reservation_number === reservation_number);
-    
-    if (!reservation) {
-      return c.json({ error: '予約が見つかりませんでした' }, 404);
-    }
-    
-    // Check if already cancelled
-    if (reservation.status === 'cancelled') {
-      return c.json({ error: 'この予約は既にキャンセルされています' }, 400);
-    }
-    
-    // Check if cancellation is allowed (24 hours before reservation)
-    const reservationDate = new Date(reservation.reservation_date_time);
-    const now = new Date();
-    const hoursDiff = (reservationDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-    
-    if (hoursDiff < 24) {
-      return c.json({ 
-        error: '予約日時の24時間前を過ぎているため、キャンセルできません。お電話にてお問い合わせください。' 
-      }, 400);
-    }
-    
-    // Update reservation status
-    const updatedReservation = {
-      ...reservation,
-      status: 'cancelled',
-      updated_at: new Date().toISOString(),
-    };
-    
-    await kv.set(`reservation:${reservation.reservation_id}`, updatedReservation);
-    
-    console.log(`[予約キャンセル] 予約番号: ${reservation_number}, 予約ID: ${reservation.reservation_id}`);
-    
-    return c.json({ 
-      success: true, 
-      message: '予約をキャンセルしました' 
-    });
-  } catch (error) {
-    console.log(`Cancel reservation error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Login to customer reservation management (public)
-app.post('/make-server-fe84bde0/public/my-reservation-login', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { email, reservation_number } = body;
-    
-    console.log('[予約確認ログイン] リクエスト受信:', { email, reservation_number });
-    
-    if (!email || !reservation_number) {
-      console.log('[予約確認ログイン] ❌ 入力不足');
-      return c.json({ error: 'メールアドレスと予約番号が必要です' }, 400);
-    }
-    
-    // Find reservation by reservation number
-    const reservations = await kv.getByPrefix('reservation:');
-    console.log('[予約確認ログイン] 全予約数:', reservations.length);
-    console.log('[予約確認ログイン] 検索する予約番号:', reservation_number);
-    
-    // Debug: Show all reservation numbers
-    const reservationNumbers = reservations.map((r: any) => r.reservation_number).filter(Boolean);
-    console.log('[予約確認ログイン] 存在する予約番号リスト:', reservationNumbers.slice(0, 10), '...(最初の10件)');
-    
-    const reservation = reservations.find((r: any) => r.reservation_number === reservation_number);
-    
-    console.log('[予約確認ログイン] 予約検索結果:', reservation ? `見つかりました (予約ID: ${reservation.reservation_id})` : '見つかりませんでした');
-    
-    if (!reservation) {
-      console.log('[予約確認ログイン] ❌ 予約番号が存在しません:', reservation_number);
-      return c.json({ error: '予約が見つかりませんでした' }, 404);
-    }
-    
-    // Get customer data
-    const customer = await kv.get(`customer:${reservation.customer_id}`);
-    
-    console.log('[予約確認ログイン] 顧客データ:', {
-      customer_id: customer?.customer_id,
-      customer_code: customer?.customer_code,
-      parent_name: customer?.parent_name,
-      email_stored: customer?.email || '(なし)',
-      email_input: email,
-      has_email: !!customer?.email,
-      email_matches: customer?.email?.toLowerCase() === email.toLowerCase()
-    });
-    
-    // Verify email matches
-    if (!customer) {
-      console.log('[予約確認ログイン] ❌ 顧客データが見つかりません');
-      return c.json({ error: 'メールアドレスまたは予約番号が正しくありません' }, 401);
-    }
-    
-    if (!customer.email) {
-      console.log('[予約確認ログイン] ❌ 顧客にメールアドレスが登録されていません');
-      return c.json({ error: 'この予約にはメールアドレスが登録されていません。管理画面から顧客情報を編集してメールアドレスを追加してください。' }, 401);
-    }
-    
-    if (customer.email.toLowerCase() !== email.toLowerCase()) {
-      console.log('[予約確認ログイン] ❌ メールアドレスが一致しません');
-      return c.json({ error: 'メールアドレスまたは予約番号が正しくありません' }, 401);
-    }
-    
-    console.log('[予約確認ログイン] ✅ ログイン成功');
-    
-    // Get related data
-    const menuItem = await kv.get(`menu_item:${reservation.menu_item_id}`);
-    const location = await kv.get(`location:${reservation.location_id}`);
-    
-    // Get work orders for this reservation (only in_progress and completed, not overdue)
-    const allWorkOrders = await kv.getByPrefix('work_order:');
-    const workOrders = allWorkOrders
-      .filter((wo: any) => wo.reservation_id === reservation.reservation_id)
-      .filter((wo: any) => wo.status === 'in_progress' || wo.status === 'completed')
-      .map((wo: any) => ({
-        work_order_id: wo.work_order_id,
-        product_name: wo.product_name,
-        status: wo.status,
-        scheduled_delivery_date: wo.scheduled_delivery_date,
-      }));
-    
-    const reservationData = {
-      reservation_number: reservation.reservation_number,
-      reservation_date_time: reservation.reservation_date_time,
-      duration_minutes: reservation.duration_minutes,
-      status: reservation.status,
-      customer_code: customer.customer_code,
-      parent_name: customer.parent_name,
-      child_name: customer.child_name,
-      phone: customer.phone,
-      email: customer.email,
-      menu_name: menuItem?.name || reservation.work_required,
-      location_name: location?.location_name,
-      location_address: location?.address_text,
-      created_at: reservation.created_at,
-    };
-    
-    return c.json({ 
-      reservation: reservationData,
-      work_orders: workOrders,
-    });
-  } catch (error) {
-    console.log(`My reservation login error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Submit change request (public)
-app.post('/make-server-fe84bde0/public/request-change', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { reservation_number, email, change_request } = body;
-    
-    if (!reservation_number || !email || !change_request) {
-      return c.json({ error: '必須項目が入力されていません' }, 400);
-    }
-    
-    // Find reservation
-    const reservations = await kv.getByPrefix('reservation:');
-    const reservation = reservations.find((r: any) => r.reservation_number === reservation_number);
-    
-    if (!reservation) {
-      return c.json({ error: '予約が見つかりませんでした' }, 404);
-    }
-    
-    // Add change request to reservation notes
-    const updatedReservation = {
-      ...reservation,
-      notes_staff: `${reservation.notes_staff || ''}\n\n【顧客からの変更リクエスト】\n日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}\nメール: ${email}\n内容: ${change_request}`,
-      updated_at: new Date().toISOString(),
-    };
-    
-    await kv.set(`reservation:${reservation.reservation_id}`, updatedReservation);
-    
-    console.log(`[変更リクエスト] 予約番号: ${reservation_number}, メール: ${email}`);
-    
-    return c.json({ 
-      success: true, 
-      message: '変更リクエストを送信しました' 
-    });
-  } catch (error) {
-    console.log(`Change request error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
 
 // Delete customer and all related data (admin only)
 app.delete('/make-server-fe84bde0/customers/:customer_id', async (c) => {

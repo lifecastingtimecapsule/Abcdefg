@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, Calendar, Clock, MapPin, User, Mail, Phone, FileText, Search } from 'lucide-react';
-import { ImageWithFallback } from './figma/ImageWithFallback';
+import { CheckCircle, Mail, Calendar, Clock, MapPin, User, Phone, FileText } from 'lucide-react';
 
 export function ReservationCompletePage() {
   const [reservationData, setReservationData] = useState<any>(null);
@@ -25,7 +24,7 @@ export function ReservationCompletePage() {
         <div className="text-center">
           <p style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#999999' }}>予約情報が見つかりません</p>
           <button
-            onClick={() => window.location.href = '/public/reservation'}
+            onClick={() => window.location.href = '/reservation'}
             className="mt-4 px-6 py-3 text-white rounded-lg transition-all duration-300"
             style={{
               backgroundColor: '#C4A962',
@@ -67,7 +66,13 @@ export function ReservationCompletePage() {
       <header className="border-b" style={{ borderColor: '#E5E0D8', backgroundColor: '#FFFFFF' }}>
         <div className="max-w-4xl mx-auto px-6 py-6 md:py-8">
           <div className="flex items-center justify-center">
-            <h1 style={{ fontFamily: "'Noto Serif JP', serif", color: '#C4A962', letterSpacing: '0.1em' }}>
+            <h1 style={{ 
+              fontFamily: "'Noto Serif JP', serif", 
+              color: '#2C2C2C', 
+              fontSize: '1.75rem',
+              letterSpacing: '0.15em',
+              fontWeight: '400'
+            }}>
               Amorétto
             </h1>
           </div>
@@ -83,25 +88,35 @@ export function ReservationCompletePage() {
               <CheckCircle className="w-12 h-12" style={{ color: '#2E7D32' }} />
             </div>
             <h2 className="mb-3" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C' }}>
-              ご予約ありがとうございます
+              仮予約を受け付けました
             </h2>
             <p className="mb-8" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', lineHeight: '1.8' }}>
-              予約が完了しました。<br />
-              予約番号は大切に保管してください。
+              ご予約ありがとうございます。<br />
+              ご登録いただいたメールアドレスに確認メールをお送りしております。<br />
+              スタッフから確認のご連絡をさせていただきます。
             </p>
 
-            {/* 予約番号 */}
-            <div className="inline-block px-8 py-6 rounded-lg border-2 mb-8" style={{ background: 'linear-gradient(135deg, #FFF9E6 0%, #F8F6F3 100%)', borderColor: '#C4A962' }}>
-              <p className="text-sm mb-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#999999' }}>予約番号</p>
-              <p className="font-mono tracking-wider" style={{ fontSize: '2rem', color: '#C4A962', fontWeight: 600 }}>
-                {reservationData.reservation_number}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 mb-8 text-left">
+              <p className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', lineHeight: '1.8' }}>
+                <strong style={{ color: '#2C2C2C' }}>ご予約の変更・キャンセルについて</strong><br />
+                変更やキャンセルをご希望の場合は、お電話・メール・公式LINEにてご連絡ください。<br />
+                <a 
+                  href="https://lin.ee/LbmijXx" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 mt-2"
+                  style={{ color: '#06C755', textDecoration: 'underline' }}
+                >
+                  公式LINE: https://lin.ee/LbmijXx
+                </a>
               </p>
             </div>
           </div>
 
+          {/* 予約内容 */}
           <div className="border-t px-8 md:px-12 py-8" style={{ borderColor: '#E5E0D8' }}>
             <h2 className="mb-6 pb-3 border-b" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', borderColor: '#E5E0D8' }}>
-              予約内容
+              ご予約内容
             </h2>
             
             <div className="space-y-5">
@@ -216,22 +231,11 @@ export function ReservationCompletePage() {
             </div>
           </div>
 
-          {/* 注意事項 */}
-          <div className="border-t px-8 md:px-12 py-8" style={{ borderColor: '#E5E0D8', backgroundColor: '#FFF9E6' }}>
-            <h3 className="mb-3" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C', fontWeight: 600 }}>ご来店前のお願い</h3>
-            <ul className="text-sm space-y-2 list-disc list-inside" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666', lineHeight: '1.8' }}>
-              <li>予約時間の10分前までにご来店ください</li>
-              <li>遅れる場合は必ずお電話にてご連絡ください</li>
-              <li>キャンセルされる場合は、予約状況確認ページからお手続きください</li>
-              <li>当日キャンセルの場合はキャンセル料が発生する場合がございます</li>
-            </ul>
-          </div>
-
           {/* アクションボタン */}
-          <div className="px-8 md:px-12 py-8 space-y-3">
+          <div className="px-8 md:px-12 py-8 flex justify-center">
             <button
-              onClick={() => window.location.href = `/my-reservation?number=${reservationData.reservation_number}&email=${encodeURIComponent(reservationData.email)}`}
-              className="w-full px-6 py-4 text-white rounded-lg transition-all duration-300 flex items-center justify-center gap-2"
+              onClick={() => window.location.href = 'https://www.lifecastingstudio-amaretto.com/'}
+              className="px-8 py-4 text-white rounded-lg transition-all duration-300"
               style={{
                 backgroundColor: '#C4A962',
                 fontFamily: "'Noto Sans JP', sans-serif",
@@ -247,37 +251,20 @@ export function ReservationCompletePage() {
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
-              <Search className="w-5 h-5" />
-              予約状況を確認する
-            </button>
-            <button
-              onClick={() => window.location.href = '/public/reservation'}
-              className="w-full px-6 py-4 border-2 rounded-lg transition-all duration-300"
-              style={{
-                borderColor: '#E5E0D8',
-                color: '#666666',
-                fontFamily: "'Noto Sans JP', sans-serif",
-                fontWeight: 600
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#F8F6F3';
-                e.currentTarget.style.borderColor = '#C4A962';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.borderColor = '#E5E0D8';
-              }}
-            >
               トップページへ戻る
             </button>
           </div>
         </div>
 
         {/* 確認メールの案内 */}
-        <div className="mt-6 text-center">
+        <div className="mt-6 text-center space-y-2">
           <p className="text-sm flex items-center justify-center gap-2" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#999999' }}>
             <Mail className="w-4 h-4" />
             ご登録のメールアドレスに確認メールをお送りしました。
+          </p>
+          <p className="text-xs" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#BBBBBB' }}>
+            ※メールの配信には最大5分程度かかる場合がございます。<br />
+            しばらく経ってもメールが届かない場合は、迷惑メールフォルダもご確認ください。
           </p>
         </div>
       </main>

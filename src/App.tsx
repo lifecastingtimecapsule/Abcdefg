@@ -3,8 +3,6 @@ import { Toaster } from 'sonner@2.0.3';
 import { LoginPage } from './components/LoginPage';
 import { PublicReservationPage } from './components/PublicReservationPage';
 import { ReservationCompletePage } from './components/ReservationCompletePage';
-import { ReservationStatusPage } from './components/ReservationStatusPage';
-import { MyReservationPage } from './components/MyReservationPage';
 import { ReauthModal } from './components/ReauthModal';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
@@ -168,38 +166,7 @@ export default function App() {
     );
   }
 
-  if (currentRoute.startsWith('/public/reservation/status')) {
-    return (
-      <>
-        <Toaster 
-          position="top-center" 
-          richColors 
-          closeButton
-          toastOptions={{
-            duration: 4000,
-          }}
-        />
-        <ReservationStatusPage />
-      </>
-    );
-  }
 
-  if (currentRoute.startsWith('/my-reservation')) {
-    console.log('[App] 予約確認ページ表示:', currentRoute);
-    return (
-      <>
-        <Toaster 
-          position="top-center" 
-          richColors 
-          closeButton
-          toastOptions={{
-            duration: 4000,
-          }}
-        />
-        <MyReservationPage />
-      </>
-    );
-  }
 
   // デフォルトルートから公開予約ページへリダイレクト
   if (currentRoute === '/' && !isAuthenticated && !loading) {

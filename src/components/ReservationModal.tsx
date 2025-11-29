@@ -58,6 +58,7 @@ export function ReservationModal({
     notes_staff: '',
     menu_item_id: '',
     additional_units: '0',
+    photo_required: 'not_set', // 撮影必要性: 'not_set' | 'required' | 'not_required'
     // Customer fields for new customer
     external_customer_number: '',
     parent_name: '',
@@ -135,6 +136,7 @@ export function ReservationModal({
         notes_staff: reservation.notes_staff || '',
         menu_item_id: reservation.menu_item_id || '',
         additional_units: reservation.additional_units?.toString() || '0',
+        photo_required: reservation.photo_required || 'not_set',
         // Load customer data for editing
         ...customerData,
       });
@@ -972,6 +974,20 @@ export function ReservationModal({
                   >
                     <option value="unpaid">未払い</option>
                     <option value="paid">💰 支払済</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-700 mb-1.5">撮影データ</label>
+                  <select
+                    value={formData.photo_required}
+                    onChange={(e) => setFormData({ ...formData, photo_required: e.target.value })}
+                    disabled={isViewMode}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="not_set">📋 未設定</option>
+                    <option value="required">📷 撮影あり</option>
+                    <option value="not_required">⭕ 撮影なし</option>
                   </select>
                 </div>
               </div>

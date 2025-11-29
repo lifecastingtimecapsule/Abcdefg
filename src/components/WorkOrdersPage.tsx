@@ -1,25 +1,33 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, AlertCircle, Clock, GripVertical } from 'lucide-react';
+import { Plus, AlertCircle, Clock, GripVertical, CheckCircle2, Circle, Palette, Hammer, Frame, Search, Filter } from 'lucide-react';
 import { WorkOrderModal } from './WorkOrderModal';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { WorkOrder, Customer, Reservation } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
 
 const ItemType = 'WORK_ORDER';
 
-interface WorkOrderRowProps {
+interface WorkOrderCardProps {
   workOrder: WorkOrder;
   index: number;
   moveCard: (dragIndex: number, hoverIndex: number) => void;
   onEdit: (workOrder: WorkOrder) => void;
-  onView: (workOrder: WorkOrder) => void;
   customers: Customer[];
   reservations: Reservation[];
 }
 
-function WorkOrderRow({ workOrder, index, moveCard, onEdit, onView, customers, reservations }: WorkOrderRowProps) {
+const STATUS_CONFIG = {
+  '乾燥中': { icon: Circle, color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200' },
+  '成形': { icon: Hammer, color: 'text-stone-600', bg: 'bg-stone-50', border: 'border-stone-200' },
+  '着色': { icon: Palette, color: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200' },
+  '額装': { icon: Frame, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200' },
+  '完成': { icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200' },
+};
+
+function WorkOrderCard({ workOrder, index, moveCard, onEdit, customers, reservations }: WorkOrderCardProps) {
   const [{ isDragging }, drag, preview] = useDrag({
     type: ItemType,
     item: { index },
@@ -47,7 +55,7 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, onView, customers, r
     return new Date(japanDateStr);
   };
 
-  const isOverdue = workOrder.status !== '引渡し済' && new Date(workOrder.due_date) < getJapanToday();
+  const isOverdue = workOrder.status !== '完成' && new Date(workOrder.due_date) < getJapanToday();
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -58,58 +66,73 @@ function WorkOrderRow({ workOrder, index, moveCard, onEdit, onView, customers, r
     }).format(date);
   };
 
+  const statusConfig = STATUS_CONFIG[workOrder.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG['乾燥中'];
+  const StatusIcon = statusConfig.icon;
+
   return (
-    <tr
+    <div
       ref={(node) => preview(drop(node))}
-      onClick={() => onView(workOrder)}
-      className={`border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
-        isDragging ? 'opacity-50' : ''
-      } ${isOverdue ? 'bg-red-50' : ''}`}
+      className={`
+        mb-3 bg-white rounded-none border-l-4 shadow-sm transition-all hover:shadow-md cursor-pointer
+        ${isDragging ? 'opacity-50' : 'opacity-100'}
+        ${statusConfig.border.replace('border-', 'border-l-')}
+        border-y border-r border-gray-100
+      `}
+      onClick={() => onEdit(workOrder)}
     >
-      <td 
-        ref={drag} 
-        className="px-4 py-3 cursor-move"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <GripVertical className="w-5 h-5 text-slate-400" />
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-slate-900">{customer?.child_name || '-'}</div>
-        {customer?.external_customer_number && (
-          <div className="text-sm text-slate-600">顧客番号: {customer.external_customer_number}</div>
-        )}
-      </td>
-      <td className="px-4 py-3 text-slate-700">{workOrder.product_type}</td>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Clock className="w-4 h-4 text-slate-500" />
-          <span className={isOverdue ? 'text-red-600' : 'text-slate-700'}>
-            {formatDate(workOrder.due_date)}
-          </span>
-          {isOverdue && <AlertCircle className="w-4 h-4 text-red-500" />}
-        </div>
-      </td>
-      <td className="px-4 py-3">
-        <span className={`inline-block px-3 py-1 rounded-full text-xs ${
-          workOrder.status === '制作中' ? 'bg-yellow-100 text-yellow-700' :
-          workOrder.status === 'お渡し待ち' ? 'bg-green-100 text-green-700' :
-          'bg-blue-100 text-blue-700'
-        }`}>
-          {workOrder.status}
-        </span>
-      </td>
-      <td className="px-4 py-3 text-slate-600 text-sm max-w-xs truncate">
-        {workOrder.notes_internal || '-'}
-      </td>
-      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-        <button
-          onClick={() => onEdit(workOrder)}
-          className="px-3 py-1 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition text-sm"
+      <div className="p-4 flex items-start gap-3">
+        <div 
+          ref={drag} 
+          className="mt-1 cursor-move text-gray-300 hover:text-gray-500 p-1"
+          onClick={(e) => e.stopPropagation()}
         >
-          編集
-        </button>
-      </td>
-    </tr>
+          <GripVertical className="w-5 h-5" />
+        </div>
+        
+        <div className="flex-1 min-w-0">
+          <div className="flex justify-between items-start mb-1">
+             <h3 className="text-[#2C2C2C] font-medium font-serif truncate text-lg">
+               {customer?.child_name || '未登録顧客'}
+               <span className="text-xs text-gray-400 ml-2 font-sans">{customer?.external_customer_number}</span>
+             </h3>
+             <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${statusConfig.bg} ${statusConfig.color}`}>
+               <StatusIcon className="w-3 h-3" />
+               {workOrder.status}
+             </span>
+          </div>
+          
+          <div className="text-sm text-gray-600 mb-2 font-serif">{workOrder.product_type}</div>
+          
+          <div className="flex items-center gap-4 text-xs text-gray-500">
+             <div className={`flex items-center gap-1 ${isOverdue ? 'text-red-600 font-medium' : ''}`}>
+                <Clock className="w-3.5 h-3.5" />
+                <span>納期: {formatDate(workOrder.due_date)}</span>
+                {isOverdue && <AlertCircle className="w-3.5 h-3.5" />}
+             </div>
+             
+             {workOrder.nameplate_name && (
+               <div className="truncate max-w-[120px] bg-gray-50 px-2 py-0.5 rounded text-gray-600">
+                 📛 {workOrder.nameplate_name}
+               </div>
+             )}
+          </div>
+
+          {/* Color/Frame Indicators */}
+          <div className="mt-3 flex gap-2">
+             {workOrder.coloring_type && (
+                <span className={`text-[10px] px-2 py-0.5 border rounded ${workOrder.coloring_type === '金' ? 'bg-[#F9F5E6] text-[#B8860B] border-[#E6D690]' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                  {workOrder.coloring_type}
+                </span>
+             )}
+             {workOrder.frame_color && (
+                <span className={`text-[10px] px-2 py-0.5 border rounded ${workOrder.frame_color === '黒' ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200'}`}>
+                  額: {workOrder.frame_color}
+                </span>
+             )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -117,12 +140,13 @@ export function WorkOrdersPage() {
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuItems, setMenuItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [modalMode, setModalMode] = useState<'view' | 'edit'>('edit');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     loadData();
@@ -140,54 +164,34 @@ export function WorkOrdersPage() {
 
       setMenuItems(menuData.menu_items || []);
 
-      // Auto-create work orders for past confirmed reservations
       await autoCreateWorkOrders(
         resData.reservations, 
         menuData.menu_items || [], 
         woData.work_orders
       );
 
-      // Reload work orders after auto-creation
       const updatedWoData = await apiRequest('/work-orders');
-
-      // Get current Japan time
       const now = new Date();
       const japanNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
 
-      // Filter work orders: only show those where reservation date has passed (for confirmed reservations)
       const filteredWorkOrders = updatedWoData.work_orders.filter((wo: any) => {
         const reservation = resData.reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-        if (!reservation) return true; // Keep if no reservation found
-        
-        // Only filter confirmed reservations
+        if (!reservation) return true;
         if (reservation.status !== 'confirmed') return true;
-        
-        // Check if reservation date has passed
         const reservationDate = new Date(reservation.reservation_date_time);
         return reservationDate < japanNow;
       });
 
-      // Sort work orders
       const sorted = filteredWorkOrders.sort((a: any, b: any) => {
         if (a.priority_order !== null && b.priority_order !== null) {
           return a.priority_order - b.priority_order;
         }
         if (a.priority_order !== null) return -1;
         if (b.priority_order !== null) return 1;
-
         const aDate = new Date(a.due_date);
         const bDate = new Date(b.due_date);
         if (aDate < bDate) return -1;
         if (aDate > bDate) return 1;
-
-        const aRes = resData.reservations.find((r: any) => r.reservation_id === a.reservation_id);
-        const bRes = resData.reservations.find((r: any) => r.reservation_id === b.reservation_id);
-        if (aRes && bRes) {
-          const aResDate = new Date(aRes.reservation_date_time);
-          const bResDate = new Date(bRes.reservation_date_time);
-          return aResDate.getTime() - bResDate.getTime();
-        }
-
         return 0;
       });
 
@@ -208,11 +212,9 @@ export function WorkOrdersPage() {
     existingWorkOrders: any[]
   ) => {
     try {
-      // Get current Japan time
       const now = new Date();
       const japanNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
 
-      // Find past confirmed reservations
       const pastConfirmedReservations = reservationsList.filter((reservation) => {
         const reservationDate = new Date(reservation.reservation_date_time);
         return (
@@ -221,60 +223,42 @@ export function WorkOrdersPage() {
         );
       });
 
-      if (pastConfirmedReservations.length === 0) {
-        return; // No past confirmed reservations
-      }
+      if (pastConfirmedReservations.length === 0) return;
 
-      // Get existing reservation IDs that already have work orders
       const existingReservationIds = new Set(
         existingWorkOrders.map((wo: any) => wo.reservation_id).filter(Boolean)
       );
 
-      // Filter out reservations that already have work orders
       const reservationsNeedingWorkOrders = pastConfirmedReservations.filter(
         (reservation) => !existingReservationIds.has(reservation.reservation_id)
       );
 
-      if (reservationsNeedingWorkOrders.length === 0) {
-        return; // All past confirmed reservations already have work orders
-      }
+      if (reservationsNeedingWorkOrders.length === 0) return;
 
-      // Create work orders for reservations that don't have them
       let createdCount = 0;
       for (const reservation of reservationsNeedingWorkOrders) {
         try {
           const reservationDate = new Date(reservation.reservation_date_time);
-          
-          // Calculate due date: 4 weeks (28 days) after reservation date
           const dueDate = new Date(reservationDate);
-          dueDate.setDate(dueDate.getDate() + 28);
+          dueDate.setDate(dueDate.getDate() + 28); // 4 weeks
           const dueDateStr = dueDate.toISOString().split('T')[0];
 
-          // Get menu name as work type
           const menuItem = menuItemsList.find((m) => m.menu_item_id === reservation.menu_item_id);
           const workType = menuItem ? menuItem.name : 'メニュー不明';
 
-          // Create work order
           await apiRequest('/work-orders', {
             method: 'POST',
             body: JSON.stringify({
               reservation_id: reservation.reservation_id,
               product_type: workType,
               due_date: dueDateStr,
-              status: '制作中',
-              notes_internal: '予約確定により自動作成',
+              status: '乾燥中', // Default new status
+              notes: '予約確定により自動作成',
             }),
           });
-
           createdCount++;
-          console.log(`Work order created for reservation ${reservation.reservation_id}`);
         } catch (err: any) {
-          // Skip if duplicate (already exists)
-          if (err.message?.includes('既に存在')) {
-            console.log(`Work order already exists for reservation ${reservation.reservation_id}, skipping...`);
-          } else {
-            console.error(`Failed to create work order for reservation ${reservation.reservation_id}:`, err);
-          }
+          console.error(err);
         }
       }
 
@@ -291,12 +275,6 @@ export function WorkOrdersPage() {
     setEditingWorkOrder(null);
     setModalMode('edit');
     await loadData();
-  };
-
-  const handleView = (workOrder: WorkOrder) => {
-    setEditingWorkOrder(workOrder);
-    setModalMode('view');
-    setModalOpen(true);
   };
 
   const handleEdit = (workOrder: WorkOrder) => {
@@ -351,140 +329,133 @@ export function WorkOrdersPage() {
   };
 
   const filteredWorkOrders = workOrders.filter(wo => {
-    if (filterStatus === 'all') return true;
-    return wo.status === filterStatus;
+    if (filterStatus !== 'all' && wo.status !== filterStatus) return false;
+    
+    if (searchTerm) {
+       const reservation = reservations.find(r => r.reservation_id === wo.reservation_id);
+       const customer = customers.find(c => c.customer_id === reservation?.customer_id);
+       const name = customer?.child_name || '';
+       const number = customer?.external_customer_number || '';
+       const searchLower = searchTerm.toLowerCase();
+       return name.toLowerCase().includes(searchLower) || number.toLowerCase().includes(searchLower);
+    }
+    
+    return true;
   });
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+      <div className="flex items-center justify-center h-[80vh] bg-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#C4A962] border-t-transparent"></div>
+          <p className="text-[#C4A962] font-serif tracking-widest">読み込み中...</p>
+        </div>
       </div>
     );
   }
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <h1 className="text-slate-900">作品管理</h1>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={savePriorityOrder}
-              className="px-4 py-2 bg-green-500 text-white rounded-xl hover:bg-green-600 transition"
-            >
-              並び順を保存
-            </button>
-            <button
-              onClick={() => {
-                setEditingWorkOrder(null);
-                setModalMode('edit');
-                setModalOpen(true);
-              }}
-              className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
-            >
-              <Plus className="w-5 h-5" />
-              <span>制作物追加</span>
-            </button>
-            <button
-              onClick={handleBatchCreateWorkOrders}
-              className="flex items-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-xl hover:from-green-600 hover:to-emerald-700 transition"
-            >
-              <AlertCircle className="w-5 h-5" />
-              <span>確定済予約を一括生成</span>
-            </button>
-          </div>
+      <div className="max-w-5xl mx-auto pb-20 font-serif text-[#2C2C2C]">
+        {/* Header */}
+        <div className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-[#E0E0E0] py-4 px-4 mb-6">
+           <div className="flex items-center justify-between mb-4">
+             <h1 className="text-2xl font-medium tracking-wide text-[#2C2C2C]">作品管理</h1>
+             <div className="flex gap-2">
+                <button
+                  onClick={savePriorityOrder}
+                  className="px-4 py-2 bg-white border border-[#C4A962] text-[#C4A962] text-sm rounded-none hover:bg-[#C4A962] hover:text-white transition-colors duration-300"
+                >
+                  並び順保存
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingWorkOrder(null);
+                    setModalMode('edit');
+                    setModalOpen(true);
+                  }}
+                  className="px-4 py-2 bg-[#C4A962] text-white text-sm rounded-none hover:bg-[#B39851] transition-colors duration-300 flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  追加
+                </button>
+             </div>
+           </div>
+           
+           {/* Search & Action Bar */}
+           <div className="flex flex-col md:flex-row gap-3 mb-4">
+              <div className="relative flex-1">
+                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                 <input 
+                    type="text" 
+                    placeholder="名前や顧客番号で検索" 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 bg-[#F9F9F9] border border-gray-200 focus:outline-none focus:border-[#C4A962] rounded-none transition-colors"
+                 />
+              </div>
+              <button
+                 onClick={handleBatchCreateWorkOrders}
+                 className="px-4 py-2 bg-gray-100 text-gray-600 text-xs rounded-none hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
+               >
+                 <AlertCircle className="w-3 h-3" />
+                 未作成予約を一括生成
+               </button>
+           </div>
+
+           {/* Status Filters */}
+           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+              <button
+                onClick={() => setFilterStatus('all')}
+                className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm border transition-all ${
+                  filterStatus === 'all' 
+                    ? 'bg-[#2C2C2C] text-white border-[#2C2C2C]' 
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                すべて
+              </button>
+              {Object.entries(STATUS_CONFIG).map(([status, config]) => (
+                <button
+                  key={status}
+                  onClick={() => setFilterStatus(status)}
+                  className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm border transition-all flex items-center gap-1.5 ${
+                    filterStatus === status
+                      ? `${config.bg} ${config.color} ${config.border}`
+                      : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                   {filterStatus === status && <config.icon className="w-3 h-3" />}
+                   {status}
+                </button>
+              ))}
+           </div>
         </div>
 
-        {/* Filter */}
-        <div className="flex items-center gap-3 overflow-x-auto pb-2">
-          <button
-            onClick={() => setFilterStatus('all')}
-            className={`px-4 py-2 rounded-xl transition whitespace-nowrap ${
-              filterStatus === 'all'
-                ? 'bg-blue-500 text-white'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            すべて
-          </button>
-          <button
-            onClick={() => setFilterStatus('制作中')}
-            className={`px-4 py-2 rounded-xl transition whitespace-nowrap ${
-              filterStatus === '制作中'
-                ? 'bg-yellow-500 text-white'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            制作中
-          </button>
-          <button
-            onClick={() => setFilterStatus('お渡し待ち')}
-            className={`px-4 py-2 rounded-xl transition whitespace-nowrap ${
-              filterStatus === 'お渡し待ち'
-                ? 'bg-green-500 text-white'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            お渡し待ち
-          </button>
-          <button
-            onClick={() => setFilterStatus('引渡し済')}
-            className={`px-4 py-2 rounded-xl transition whitespace-nowrap ${
-              filterStatus === '引渡し済'
-                ? 'bg-blue-500 text-white'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            引渡し済
-          </button>
-        </div>
-
-        {/* Work Orders Table */}
-        <div className="bg-white rounded-2xl overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="px-4 py-3 text-left text-slate-700 w-12"></th>
-                  <th className="px-4 py-3 text-left text-slate-700">顧客</th>
-                  <th className="px-4 py-3 text-left text-slate-700">作品タイプ</th>
-                  <th className="px-4 py-3 text-left text-slate-700">納期</th>
-                  <th className="px-4 py-3 text-left text-slate-700">ステータス</th>
-                  <th className="px-4 py-3 text-left text-slate-700">メモ</th>
-                  <th className="px-4 py-3 text-left text-slate-700">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredWorkOrders.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
-                      制作物がありません
-                    </td>
-                  </tr>
-                ) : (
-                  filteredWorkOrders.map((workOrder, index) => (
-                    <WorkOrderRow
-                      key={workOrder.work_order_id}
-                      workOrder={workOrder}
-                      index={index}
-                      moveCard={moveCard}
-                      onEdit={handleEdit}
-                      onView={handleView}
-                      customers={customers}
-                      reservations={reservations}
-                    />
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-          <p className="text-blue-900 text-sm">
-            💡 ドラッグ＆ドロップで制作の優先順位を変更できます。変更したら「並び順を保存」ボタンをクリックしてください。
-          </p>
+        {/* Content */}
+        <div className="px-4">
+          {filteredWorkOrders.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                <Package className="w-8 h-8 text-gray-300" />
+              </div>
+              <p>表示する作品がありません</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredWorkOrders.map((workOrder, index) => (
+                <WorkOrderCard
+                  key={workOrder.work_order_id}
+                  workOrder={workOrder}
+                  index={index}
+                  moveCard={moveCard}
+                  onEdit={handleEdit}
+                  customers={customers}
+                  reservations={reservations}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {modalOpen && (

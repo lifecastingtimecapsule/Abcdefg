@@ -535,7 +535,7 @@ export function PublicReservationPage() {
                   fontWeight: '400'
                 }}
               >
-                amoré​tto
+                Amorétto
               </h1>
             </div>
           </div>
@@ -605,6 +605,109 @@ export function PublicReservationPage() {
           {/* ステップ1: 日時とメニュー選択 */}
           {step === 1 && (
             <div className="space-y-8 md:space-y-12">
+              {/* 店舗選択セクション - 最優先で表示 */}
+              <div>
+                <h3 className="mb-4 md:mb-6" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', borderBottom: '1px solid #E5E0D8', paddingBottom: '0.75rem' }}>
+                  <MapPin className="w-5 h-5 inline-block mr-2 mb-1" style={{ color: '#C4A962' }} />
+                  ご希望の店舗をお選びください
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                  {locations.map((location) => {
+                    // 他の店舗に予約がある場合、その店舗以外は選択不可
+                    const hasOtherLocationBooking = bookedLocationIds.length > 0 && !bookedLocationIds.includes(location.location_id);
+                    const isLocationAvailable = !hasOtherLocationBooking;
+                    const isSelected = selectedLocationId === location.location_id;
+                    
+                    return (
+                      <button
+                        key={location.location_id}
+                        onClick={() => isLocationAvailable && setSelectedLocationId(location.location_id)}
+                        disabled={!isLocationAvailable}
+                        className={`relative p-6 rounded-xl border-2 transition-all duration-300 text-left ${
+                          !isLocationAvailable 
+                            ? 'opacity-40 cursor-not-allowed' 
+                            : 'hover:shadow-lg hover:scale-[1.02] active:scale-[0.98]'
+                        }`}
+                        style={{
+                          backgroundColor: isSelected ? '#FFF9E6' : '#FFFFFF',
+                          borderColor: isSelected ? '#C4A962' : '#E5E0D8',
+                          boxShadow: isSelected ? '0 4px 12px rgba(196, 169, 98, 0.2)' : 'none'
+                        }}
+                      >
+                        {/* 選択チェックマーク */}
+                        {isSelected && (
+                          <div className="absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: '#C4A962' }}>
+                            <svg className="w-4 h-4 text-white" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" stroke="currentColor">
+                              <path d="M5 13l4 4L19 7"></path>
+                            </svg>
+                          </div>
+                        )}
+                        
+                        {/* 店舗アイコン */}
+                        <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full mb-3 ${
+                          isSelected ? 'bg-[#C4A962]' : 'bg-[#FFF9E6]'
+                        }`}>
+                          <MapPin className={`w-6 h-6 ${isSelected ? 'text-white' : 'text-[#C4A962]'}`} />
+                        </div>
+                        
+                        {/* 店舗名 */}
+                        <h4 className="mb-2" style={{ 
+                          fontFamily: "'Noto Serif JP', serif", 
+                          color: isSelected ? '#C4A962' : '#2C2C2C',
+                          fontSize: '1.125rem',
+                          fontWeight: '600'
+                        }}>
+                          {location.location_name}
+                        </h4>
+                        
+                        {/* 住所 */}
+                        {location.address_text && (
+                          <p className="text-sm mb-2" style={{ 
+                            fontFamily: "'Noto Sans JP', sans-serif", 
+                            color: '#666666',
+                            lineHeight: '1.6'
+                          }}>
+                            {location.address_text}
+                          </p>
+                        )}
+                        
+                        {/* 電話番号 */}
+                        {location.phone && (
+                          <div className="flex items-center gap-2 text-sm" style={{ color: '#999999' }}>
+                            <Phone className="w-4 h-4" />
+                            <span style={{ fontFamily: "'Noto Sans JP', sans-serif" }}>{location.phone}</span>
+                          </div>
+                        )}
+                        
+                        {/* 選択不可メッセージ */}
+                        {!isLocationAvailable && (
+                          <div className="mt-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                            <p className="text-xs" style={{ 
+                              fontFamily: "'Noto Sans JP', sans-serif", 
+                              color: '#C4A962' 
+                            }}>
+                              ※ 選択した日時は別の店舗でご予約済みです
+                            </p>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {!selectedLocationId && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+                    <div className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: '#3B82F6' }}>
+                      <span className="text-white text-xs font-bold">!</span>
+                    </div>
+                    <p className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#1E40AF' }}>
+                      まずは店舗をお選びください。店舗によって営業日や予約可能な時間帯が異なります。
+                    </p>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <h3 className="mb-6" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', borderBottom: '1px solid #E5E0D8', paddingBottom: '0.75rem' }}>
                   ご希望の日時をお選びください
@@ -626,43 +729,6 @@ export function PublicReservationPage() {
                       <h4 style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C' }}>
                         {currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月
                       </h4>
-                      
-                      {/* 店舗選択ドロップダウン（右上） */}
-                      <div className="flex items-center gap-2">
-                        <label className="hidden md:flex items-center gap-1.5 text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666' }}>
-                          <MapPin className="w-3.5 h-3.5" style={{ color: '#C4A962' }} />
-                          店舗
-                        </label>
-                        <select
-                          value={selectedLocationId}
-                          onChange={(e) => setSelectedLocationId(e.target.value)}
-                          className="px-3 py-1.5 md:px-4 md:py-2 border rounded-lg transition-all duration-300 focus:outline-none focus:border-[#C4A962] focus:ring-1 focus:ring-[#C4A962] text-sm md:text-base"
-                          style={{
-                            backgroundColor: '#FFFFFF',
-                            borderColor: selectedLocationId ? '#C4A962' : '#E5E0D8',
-                            fontFamily: "'Noto Sans JP', sans-serif",
-                            color: '#2C2C2C',
-                            minWidth: '120px'
-                          }}
-                        >
-                          <option value="">店舗を選択</option>
-                          {locations.map((location) => {
-                            // 他の店舗に予約がある場合、その店舗以外は選択不可
-                            const hasOtherLocationBooking = bookedLocationIds.length > 0 && !bookedLocationIds.includes(location.location_id);
-                            const isLocationAvailable = !hasOtherLocationBooking;
-                            
-                            return (
-                              <option 
-                                key={location.location_id} 
-                                value={location.location_id}
-                                disabled={!isLocationAvailable}
-                              >
-                                {location.location_name}{!isLocationAvailable ? ' (選択不可)' : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
                       
                       <button
                         onClick={nextMonth}
@@ -1409,7 +1475,7 @@ export function PublicReservationPage() {
                   onMouseEnter={(e) => !loading && (e.currentTarget.style.backgroundColor = '#B39952')}
                   onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#C4A962')}
                 >
-                  {loading ? '送信中...' : '予約を確定する'}
+                  {loading ? '送信中...' : '仮予約を送信する'}
                 </button>
               </div>
             </div>

@@ -243,7 +243,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                 key={wo.work_order_id}
                 onClick={() => handleWorkOrderClick(wo)}
                 className={`bg-white rounded-2xl p-4 shadow-sm border-2 transition hover:shadow-md cursor-pointer ${
-                  isOverdue(wo.due_date) && wo.status !== '引渡し済'
+                  isOverdue(wo.due_date) && wo.status !== '完成'
                     ? 'border-red-300 bg-red-50 hover:border-red-400'
                     : 'border-slate-200 hover:border-blue-300'
                 }`}
@@ -252,7 +252,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                   {wo.customer?.external_customer_number && (
                     <div className="text-sm text-slate-600">顧客番号: {wo.customer.external_customer_number}</div>
                   )}
-                  {isOverdue(wo.due_date) && wo.status !== '引渡し済' && (
+                  {isOverdue(wo.due_date) && wo.status !== '完成' && (
                     <AlertCircle className="w-5 h-5 text-red-500" />
                   )}
                 </div>
@@ -272,7 +272,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                       dueDate.setHours(0, 0, 0, 0);
                       const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                       
-                      if (wo.status === '引渡し済') return null;
+                      if (wo.status === '完成') return null;
                       if (daysUntilDue < 0) return null; // 期限切れは既存の赤枠で表示
                       if (daysUntilDue <= 7) {
                         return (
@@ -299,9 +299,12 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                   <div className="text-slate-700">{wo.product_type}</div>
 
                   <div className={`inline-block px-3 py-1 rounded-full text-xs ${
-                    wo.status === '制作中' ? 'bg-yellow-100 text-yellow-700' :
-                    wo.status === 'お渡し待ち' ? 'bg-green-100 text-green-700' :
-                    'bg-blue-100 text-blue-700'
+                    wo.status === '乾燥中' ? 'bg-orange-100 text-orange-700' :
+                    wo.status === '成形' ? 'bg-stone-100 text-stone-700' :
+                    wo.status === '着色' ? 'bg-yellow-100 text-yellow-700' :
+                    wo.status === '額装' ? 'bg-indigo-100 text-indigo-700' :
+                    wo.status === '完成' ? 'bg-emerald-100 text-emerald-700' :
+                    'bg-slate-100 text-slate-700'
                   }`}>
                     {wo.status}
                   </div>

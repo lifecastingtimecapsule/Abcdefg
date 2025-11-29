@@ -40,6 +40,7 @@ export interface Reservation {
   location_id: string;
   status: 'confirmed' | 'cancelled' | 'completed';
   notes?: string;
+  photo_required?: 'not_set' | 'required' | 'not_required';
   created_at: string;
   updated_at: string;
   customer?: Customer;
@@ -52,15 +53,25 @@ export interface WorkOrder {
   customer_id: string;
   reservation_id?: string;
   product_type: string;
-  status: '制作中' | 'お渡し待ち' | '引渡し済';
+  // New statuses
+  status: '乾燥中' | '成形' | '着色' | '額装' | '完成';
   due_date: string;
   delivery_date?: string;
   assigned_staff_id?: string;
   notes?: string;
+  // New fields
+  nameplate_name?: string;
+  coloring_type?: '金' | '銀';
+  frame_color?: '白' | '黒';
+  mount_color?: '白' | '黒';
+  status_comments?: Record<string, string>; // Key is status, value is comment
+  
+  photo_data_status?: 'not_set' | 'available' | 'not_available';
   created_at: string;
   updated_at: string;
   customer?: Customer;
   assigned_staff?: User;
+  priority_order?: number;
 }
 
 // ロケーション関連
