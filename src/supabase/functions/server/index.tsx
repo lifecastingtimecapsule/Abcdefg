@@ -542,6 +542,14 @@ app.get('/make-server-fe84bde0/customers', async (c) => {
           cust.address_text,
         ].filter(Boolean).map(field => String(field).toLowerCase());
         
+        // Search in children array if exists
+        if (cust.children && Array.isArray(cust.children)) {
+          cust.children.forEach((child: any) => {
+            if (child.name) searchFields.push(child.name.toLowerCase());
+            if (child.name_kana) searchFields.push(child.name_kana.toLowerCase());
+          });
+        }
+        
         return searchFields.some(field => field.includes(search));
       });
     }
@@ -605,7 +613,11 @@ app.get('/make-server-fe84bde0/customers/search', async (c) => {
         (cust.child_name && cust.child_name.toLowerCase().includes(searchName)) ||
         (cust.parent_name && cust.parent_name.toLowerCase().includes(searchName)) ||
         (cust.child_name_kana && cust.child_name_kana.toLowerCase().includes(searchName)) ||
-        (cust.parent_name_kana && cust.parent_name_kana.toLowerCase().includes(searchName))
+        (cust.parent_name_kana && cust.parent_name_kana.toLowerCase().includes(searchName)) ||
+        (cust.children && Array.isArray(cust.children) && cust.children.some((child: any) => 
+          (child.name && child.name.toLowerCase().includes(searchName)) || 
+          (child.name_kana && child.name_kana.toLowerCase().includes(searchName))
+        ))
       );
     }
     
@@ -633,6 +645,7 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
       child_name_kana,
       child_age_years,
       child_age_months,
+      children, // New field for multiple children
       phone,
       email,
       line_url,
@@ -686,6 +699,7 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
       child_name_kana: child_name_kana || null,
       child_age_years: finalAgeYears,
       child_age_months: hasMonths ? child_age_months : null,
+      children: children || [], // Save children array
       phone,
       email: email || null,
       line_url: line_url || null,
@@ -1067,6 +1081,7 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
       status,
       due_date,
       delivered_date,
+      pickup_date,
       priority_order,
       notes_internal,
       photo_data_status,
@@ -1104,6 +1119,7 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
       status: status || '乾燥中',
       due_date,
       delivered_date,
+      pickup_date,
       priority_order: priority_order ?? null,
       notes_internal,
       photo_data_status: photo_data_status || 'not_set',
@@ -1132,6 +1148,40 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
     return c.json({ success: true, work_order: workOrderData });
   } catch (error) {
     console.log(`Create/Update work order error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Delete work order
+app.delete('/make-server-fe84bde0/work-orders/:id', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const workOrderId = c.req.param('id');
+    const workOrder = await kv.get(`work_order:${workOrderId}`);
+
+    if (!workOrder) {
+      return c.json({ error: 'Work order not found' }, 404);
+    }
+
+    await kv.del(`work_order:${workOrderId}`);
+
+    // Audit log
+    await kv.set(`audit:${crypto.randomUUID()}`, {
+      ref_table: 'work_orders',
+      ref_id: workOrderId,
+      action_type: 'delete',
+      before_json: workOrder,
+      acted_by_user_id: user.id,
+      acted_at: new Date().toISOString(),
+    });
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Delete work order error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });

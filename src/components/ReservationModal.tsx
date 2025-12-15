@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { X, Search, User, Phone, Hash, Edit2, ExternalLink, AlertCircle, Calendar, MapPin } from 'lucide-react';
+import { X, Search, User, Phone, Hash, Edit2, ExternalLink, AlertCircle, Calendar, MapPin, Plus, Trash2 } from 'lucide-react';
+import { Child } from '../types';
 
 interface ReservationModalProps {
   reservation: any | null;
@@ -63,10 +64,7 @@ export function ReservationModal({
     external_customer_number: '',
     parent_name: '',
     parent_name_kana: '',
-    child_name: '',
-    child_name_kana: '',
-    child_age_years: '',
-    child_age_months: '',
+    children: [] as Child[],
     phone: '',
     email: '',
     line_url: '',
@@ -108,10 +106,15 @@ export function ReservationModal({
         external_customer_number: customer?.external_customer_number || '',
         parent_name: customer?.parent_name || '',
         parent_name_kana: customer?.parent_name_kana || '',
-        child_name: customer?.child_name || '',
-        child_name_kana: customer?.child_name_kana || '',
-        child_age_years: customer?.child_age_years?.toString() || '',
-        child_age_months: customer?.child_age_months?.toString() || '',
+        children: customer?.children && Array.isArray(customer.children) && customer.children.length > 0 
+          ? customer.children 
+          : customer ? [{
+              name: customer.child_name || '',
+              name_kana: customer.child_name_kana || '',
+              age_years: customer.child_age_years,
+              age_months: customer.child_age_months,
+              gender: customer.child_gender || null,
+            }] : [],
         phone: customer?.phone || '',
         email: customer?.email || '',
         line_url: customer?.line_url || '',
@@ -140,6 +143,12 @@ export function ReservationModal({
         // Load customer data for editing
         ...customerData,
       });
+    } else if (mode === 'edit' && !reservation) {
+      // New reservation: initialize with one empty child
+      setFormData(prev => ({
+        ...prev,
+        children: [{ name: '', name_kana: '', age_years: null, age_months: null, gender: null }]
+      }));
     }
   }, [reservation, customers]);
 
@@ -198,10 +207,15 @@ export function ReservationModal({
       external_customer_number: customer.external_customer_number || '',
       parent_name: customer.parent_name || '',
       parent_name_kana: customer.parent_name_kana || '',
-      child_name: customer.child_name || '',
-      child_name_kana: customer.child_name_kana || '',
-      child_age_years: customer.child_age_years?.toString() || '',
-      child_age_months: customer.child_age_months?.toString() || '',
+      children: customer.children && Array.isArray(customer.children) && customer.children.length > 0 
+          ? customer.children 
+          : [{
+              name: customer.child_name || '',
+              name_kana: customer.child_name_kana || '',
+              age_years: customer.child_age_years,
+              age_months: customer.child_age_months,
+              gender: customer.child_gender || null,
+            }],
       phone: customer.phone || '',
       email: customer.email || '',
       line_url: customer.line_url || '',
@@ -222,10 +236,7 @@ export function ReservationModal({
     const currentData = {
       parent_name: formData.parent_name,
       parent_name_kana: formData.parent_name_kana,
-      child_name: formData.child_name,
-      child_name_kana: formData.child_name_kana,
-      child_age_years: formData.child_age_years,
-      child_age_months: formData.child_age_months,
+      children: formData.children,
       phone: formData.phone,
       email: formData.email,
       line_url: formData.line_url,
@@ -236,9 +247,42 @@ export function ReservationModal({
 
     return JSON.stringify(currentData) !== JSON.stringify(initialCustomerData);
   };
+  
+  const handleAddChild = () => {
+    setFormData(prev => ({
+      ...prev,
+      children: [...prev.children, { name: '', name_kana: '', age_years: null, age_months: null, gender: null }]
+    }));
+  };
+
+  const handleRemoveChild = (index: number) => {
+    if (formData.children.length <= 1) {
+      toast.error('少なくとも1人のお子さま情報が必要です');
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      children: prev.children.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleChildChange = (index: number, field: keyof Child, value: any) => {
+    setFormData(prev => {
+      const newChildren = [...prev.children];
+      newChildren[index] = { ...newChildren[index], [field]: value };
+      return { ...prev, children: newChildren };
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validation
+    const invalidChild = formData.children.find(c => !c.name.trim());
+    if (invalidChild) {
+      setError('すべて���お子さまの名前を入力してください');
+      return;
+    }
     
     // If editing reservation and customer data is modified, show save mode dialog
     if (isCustomerDataModified()) {
@@ -260,9 +304,8 @@ export function ReservationModal({
 
       // Create new customer if needed (for new reservations without existing customer_id)
       if (!customerId) {
-        // 月齢が入力されていて歳が空の場合は0をセット
-        const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
-                        (formData.child_age_months ? 0 : null);
+        // Use the first child as the primary child for backward compatibility
+        const primaryChild = formData.children[0];
         
         const customerData = await apiRequest('/customers', {
           method: 'POST',
@@ -270,10 +313,16 @@ export function ReservationModal({
             external_customer_number: formData.external_customer_number || null,
             parent_name: formData.parent_name,
             parent_name_kana: formData.parent_name_kana,
-            child_name: formData.child_name,
-            child_name_kana: formData.child_name_kana,
-            child_age_years: ageYears,
-            child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
+            
+            // Legacy fields (synced with first child)
+            child_name: primaryChild.name,
+            child_name_kana: primaryChild.name_kana,
+            child_age_years: primaryChild.age_years,
+            child_age_months: primaryChild.age_months,
+            
+            // New children array
+            children: formData.children,
+            
             phone: formData.phone,
             email: formData.email,
             line_url: formData.line_url,
@@ -285,9 +334,8 @@ export function ReservationModal({
         customerId = customerData.customer.customer_id;
       } else if (mode === 'create_new') {
         // Create a new customer (別の顧客として新規作成)
-        // 月齢が入力されていて歳が空の場合は0をセット
-        const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
-                        (formData.child_age_months ? 0 : null);
+        // Use the first child as the primary child for backward compatibility
+        const primaryChild = formData.children[0];
         
         const customerData = await apiRequest('/customers', {
           method: 'POST',
@@ -295,10 +343,16 @@ export function ReservationModal({
             external_customer_number: formData.external_customer_number || null,
             parent_name: formData.parent_name,
             parent_name_kana: formData.parent_name_kana,
-            child_name: formData.child_name,
-            child_name_kana: formData.child_name_kana,
-            child_age_years: ageYears,
-            child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
+            
+            // Legacy fields (synced with first child)
+            child_name: primaryChild.name,
+            child_name_kana: primaryChild.name_kana,
+            child_age_years: primaryChild.age_years,
+            child_age_months: primaryChild.age_months,
+            
+            // New children array
+            children: formData.children,
+            
             phone: formData.phone,
             email: formData.email,
             line_url: formData.line_url,
@@ -310,9 +364,8 @@ export function ReservationModal({
         customerId = customerData.customer.customer_id;
       } else if (mode === 'update') {
         // Update existing customer information (既存顧客を上書き)
-        // 月齢が入力されていて歳が空の場合は0をセット
-        const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
-                        (formData.child_age_months ? 0 : null);
+        // Use the first child as the primary child for backward compatibility
+        const primaryChild = formData.children[0];
         
         await apiRequest('/customers', {
           method: 'POST',
@@ -321,10 +374,16 @@ export function ReservationModal({
             external_customer_number: formData.external_customer_number || null,
             parent_name: formData.parent_name,
             parent_name_kana: formData.parent_name_kana,
-            child_name: formData.child_name,
-            child_name_kana: formData.child_name_kana,
-            child_age_years: ageYears,
-            child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
+            
+            // Legacy fields (synced with first child)
+            child_name: primaryChild.name,
+            child_name_kana: primaryChild.name_kana,
+            child_age_years: primaryChild.age_years,
+            child_age_months: primaryChild.age_months,
+            
+            // New children array
+            children: formData.children,
+            
             phone: formData.phone,
             email: formData.email,
             line_url: formData.line_url,
@@ -418,7 +477,7 @@ export function ReservationModal({
 
   const getPaymentStatusDisplay = (status: string) => {
     switch (status) {
-      case 'paid': return { text: '💰 支払済', class: 'bg-green-100 text-green-700' };
+      case 'paid': return { text: '💰 支払��', class: 'bg-green-100 text-green-700' };
       case 'unpaid': return { text: '未払い', class: 'bg-slate-100 text-slate-700' };
       default: return { text: status, class: 'bg-slate-100 text-slate-700' };
     }
@@ -552,7 +611,11 @@ export function ReservationModal({
                             <div className="flex items-center justify-between">
                               <div>
                                 <div className="text-sm text-slate-900">
-                                  {customer.child_name && <span className="mr-2">{customer.child_name}</span>}
+                                  {customer.children && Array.isArray(customer.children) && customer.children.length > 0 ? (
+                                    <span className="mr-2">{customer.children.map((c: any) => c.name).join('、')}</span>
+                                  ) : (
+                                    customer.child_name && <span className="mr-2">{customer.child_name}</span>
+                                  )}
                                   {customer.parent_name && <span className="text-slate-600">({customer.parent_name})</span>}
                                 </div>
                                 <div className="text-xs text-slate-500 mt-0.5">
@@ -680,67 +743,131 @@ export function ReservationModal({
 
               {/* お子さま情報 */}
               <div className="bg-slate-50 rounded-lg p-3.5 space-y-3">
-                <p className="text-xs text-slate-600">お子さま情報</p>
-              
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">
-                      お子さま名 {!isViewMode && <span className="text-red-500">*</span>}
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.child_name}
-                      onChange={(e) => setFormData({ ...formData, child_name: e.target.value })}
-                      placeholder={isViewMode ? '' : '太郎'}
-                      disabled={isViewMode}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                      required={!isViewMode}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">
-                      お子さま名フリガナ
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.child_name_kana}
-                      onChange={(e) => setFormData({ ...formData, child_name_kana: e.target.value })}
-                      placeholder={isViewMode ? '' : 'タロウ'}
-                      disabled={isViewMode}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                    />
-                  </div>
+                <div className="flex items-center justify-between">
+                   <p className="text-xs text-slate-600">お子さま情報</p>
+                   {!isViewMode && (
+                    <button
+                      type="button"
+                      onClick={handleAddChild}
+                      className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>追加</span>
+                    </button>
+                  )}
                 </div>
+              
+                <div className="space-y-4">
+                  {formData.children.map((child, index) => (
+                    <div key={index} className="relative pt-2 first:pt-0 border-t first:border-0 border-slate-200">
+                      {!isViewMode && formData.children.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveChild(index)}
+                          className="absolute top-2 right-0 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition"
+                          title="削除"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      
+                      {index > 0 && <div className="text-xs text-slate-500 mb-2 font-medium">第{index + 1}子</div>}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">年齢（歳）</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="20"
-                      value={formData.child_age_years}
-                      onChange={(e) => setFormData({ ...formData, child_age_years: e.target.value })}
-                      placeholder={isViewMode ? '' : '0'}
-                      disabled={isViewMode}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                    />
-                  </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                        <div>
+                          <label className="block text-xs text-slate-700 mb-1.5">
+                            お子さま名 {!isViewMode && <span className="text-red-500">*</span>}
+                          </label>
+                          <input
+                            type="text"
+                            value={child.name}
+                            onChange={(e) => handleChildChange(index, 'name', e.target.value)}
+                            placeholder={isViewMode ? '' : '太郎'}
+                            disabled={isViewMode}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                            required={!isViewMode}
+                          />
+                        </div>
 
-                  <div>
-                    <label className="block text-xs text-slate-700 mb-1.5">ヶ月</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="11"
-                      value={formData.child_age_months}
-                      onChange={(e) => setFormData({ ...formData, child_age_months: e.target.value })}
-                      placeholder={isViewMode ? '' : '0'}
-                      disabled={isViewMode}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                    />
-                  </div>
+                        <div>
+                          <label className="block text-xs text-slate-700 mb-1.5">
+                            お子さま名フリガナ
+                          </label>
+                          <input
+                            type="text"
+                            value={child.name_kana || ''}
+                            onChange={(e) => handleChildChange(index, 'name_kana', e.target.value)}
+                            placeholder={isViewMode ? '' : 'タロウ'}
+                            disabled={isViewMode}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-xs text-slate-700 mb-1.5">年齢（歳）</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="20"
+                            value={child.age_years ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? null : parseInt(e.target.value);
+                              handleChildChange(index, 'age_years', val);
+                            }}
+                            placeholder={isViewMode ? '' : '0'}
+                            disabled={isViewMode}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs text-slate-700 mb-1.5">ヶ月</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="11"
+                            value={child.age_months ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? null : parseInt(e.target.value);
+                              handleChildChange(index, 'age_months', val);
+                            }}
+                            placeholder={isViewMode ? '' : '0'}
+                            disabled={isViewMode}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-60 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                           <label className="block text-xs text-slate-700 mb-1.5">性別</label>
+                           <div className="flex gap-2">
+                              {[
+                                { value: 'boy', label: '男の子' },
+                                { value: 'girl', label: '女の子' },
+                                { value: 'other', label: 'その他' }
+                              ].map(option => (
+                                <label key={option.value} className={`flex-1 flex items-center justify-center gap-1 p-1.5 rounded-lg border cursor-pointer transition text-xs ${
+                                   child.gender === option.value 
+                                     ? 'bg-blue-50 border-blue-200 text-blue-700 font-medium' 
+                                     : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                } ${isViewMode ? 'cursor-default opacity-100' : ''}`}>
+                                   <input 
+                                     type="radio" 
+                                     name={`gender-${index}`}
+                                     value={option.value}
+                                     checked={child.gender === option.value}
+                                     onChange={() => !isViewMode && handleChildChange(index, 'gender', option.value as any)}
+                                     className="hidden"
+                                     disabled={isViewMode}
+                                   />
+                                   {option.label}
+                                </label>
+                              ))}
+                           </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 

@@ -25,6 +25,7 @@ const STATUS_CONFIG = {
   '着色': { icon: Palette, color: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200' },
   '額装': { icon: Frame, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200' },
   '完成': { icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200' },
+  '受け取り済み': { icon: CheckCircle2, color: 'text-gray-600', bg: 'bg-gray-100', border: 'border-gray-200' },
 };
 
 function WorkOrderCard({ workOrder, index, moveCard, onEdit, customers, reservations }: WorkOrderCardProps) {
@@ -92,7 +93,13 @@ function WorkOrderCard({ workOrder, index, moveCard, onEdit, customers, reservat
         <div className="flex-1 min-w-0">
           <div className="flex justify-between items-start mb-1">
              <h3 className="text-[#2C2C2C] font-medium font-serif truncate text-lg">
-               {customer?.child_name || '未登録顧客'}
+               {(() => {
+                 if (!customer) return '未登録顧客';
+                 if (customer.children && Array.isArray(customer.children) && customer.children.length > 0) {
+                   return customer.children.map((c: any) => c.name).join('、');
+                 }
+                 return customer.child_name || customer.parent_name;
+               })()}
                <span className="text-xs text-gray-400 ml-2 font-sans">{customer?.external_customer_number}</span>
              </h3>
              <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${statusConfig.bg} ${statusConfig.color}`}>
@@ -463,6 +470,7 @@ export function WorkOrdersPage() {
             workOrder={editingWorkOrder}
             reservations={reservations}
             customers={customers}
+            menuItems={menuItems}
             mode={modalMode}
             onSave={handleSave}
             onClose={() => {

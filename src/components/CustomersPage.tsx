@@ -241,6 +241,20 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
   };
 
   const getAgeDisplay = (customer: any) => {
+    // If children array exists and has items, use that
+    if (customer.children && Array.isArray(customer.children) && customer.children.length > 0) {
+      return customer.children.map((child: any) => {
+        const hasMonths = child.age_months !== null && child.age_months !== undefined;
+        const years = child.age_years ?? (hasMonths ? 0 : null);
+        
+        if (years === null || years === undefined) return '';
+        
+        const ageStr = (years === 0 && hasMonths) ? `${child.age_months}ヶ月` : `${years}歳`;
+        return `${child.name} (${ageStr})`;
+      }).filter(Boolean).join('、');
+    }
+
+    // Legacy fallback
     // 月齢が入力されている場合は、歳がnullでも0歳として扱う
     const hasMonths = customer.child_age_months !== null && customer.child_age_months !== undefined;
     const years = customer.child_age_years ?? (hasMonths ? 0 : null);
@@ -351,10 +365,11 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
                         )}
                       </h3>
                       <p className="text-slate-600 text-sm mb-1">
-                        お子さま: {customer.child_name || '-'}
-                        {customer.child_name_kana && (
-                          <span className="text-slate-500"> ({customer.child_name_kana})</span>
-                        )}
+                        お子さま: {
+                          customer.children && customer.children.length > 0
+                            ? customer.children.map((c: any) => c.name + (c.name_kana ? ` (${c.name_kana})` : '')).join('、')
+                            : (customer.child_name || '-') + (customer.child_name_kana ? ` (${customer.child_name_kana})` : '')
+                        }
                       </p>
                       {getAgeDisplay(customer) && (
                         <p className="text-slate-600 text-sm">

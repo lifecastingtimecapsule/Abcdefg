@@ -17,12 +17,23 @@ export interface MeResponse {
   user: User;
 }
 
+export interface Child {
+  name: string;
+  name_kana?: string;
+  age_years?: number | null;
+  age_months?: number | null;
+  gender?: 'boy' | 'girl' | 'other' | null;
+  birth_date?: string;
+  notes?: string;
+}
+
 // 顧客関連
 export interface Customer {
   id: string;
   external_customer_number: string;
   parent_name: string;
   child_name: string;
+  children?: Child[];
   phone: string;
   email?: string;
   address?: string;
@@ -54,13 +65,15 @@ export interface WorkOrder {
   reservation_id?: string;
   product_type: string;
   // New statuses
-  status: '乾燥中' | '成形' | '着色' | '額装' | '完成';
+  status: '乾燥中' | '成形' | '着色' | '額装' | '完成' | '受け取り済み';
   due_date: string;
   delivery_date?: string;
+  pickup_date?: string; // 受け取り可能日
   assigned_staff_id?: string;
   notes?: string;
   // New fields
   nameplate_name?: string;
+  nameplate_font?: '筆記体' | '明朝体' | 'ゴシック体';
   coloring_type?: '金' | '銀';
   frame_color?: '白' | '黒';
   mount_color?: '白' | '黒';

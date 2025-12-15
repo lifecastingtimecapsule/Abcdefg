@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Calendar, Clock, Mail, Phone, MapPin, User, Baby, ChevronLeft, ChevronRight, Heart, Tag } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import logo from 'figma:asset/a8152f31015da512619ad73332adfaa84771e5bc.png';
 
 interface MenuItem {
   menu_item_id: string;
@@ -526,16 +527,15 @@ export function PublicReservationPage() {
           <div className="flex items-center justify-between">
             <div className="flex-1"></div>
             <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center">
-              <h1 
-                style={{ 
-                  fontFamily: "'Noto Serif JP', serif", 
-                  color: '#2C2C2C',
-                  fontSize: '1.75rem',
-                  letterSpacing: '0.15em',
-                  fontWeight: '400'
-                }}
-              >
-                Amorétto
+              <h1>
+                <img 
+                  src={logo} 
+                  alt="Amorétto" 
+                  style={{ 
+                    height: '4rem',
+                    width: 'auto'
+                  }} 
+                />
               </h1>
             </div>
           </div>

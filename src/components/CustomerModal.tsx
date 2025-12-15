@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { X, Edit2, Calendar, MapPin, Package, Clock, AlertCircle } from 'lucide-react';
+import { X, Edit2, Calendar, MapPin, Package, Clock, AlertCircle, Plus, Trash2 } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrderModal } from './WorkOrderModal';
+import { Child } from '../types';
 
 interface CustomerModalProps {
   customer: any | null;
@@ -32,16 +33,13 @@ export function CustomerModal({
     external_customer_number: '',
     parent_name: '',
     parent_name_kana: '',
-    child_name: '',
-    child_name_kana: '',
-    child_age_years: '',
-    child_age_months: '',
     phone: '',
     email: '',
     line_url: '',
     postal_code: '',
     address_text: '',
     notes_internal: '',
+    children: [] as Child[],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -68,19 +66,30 @@ export function CustomerModal({
         external_customer_number: customer.external_customer_number || '',
         parent_name: customer.parent_name || '',
         parent_name_kana: customer.parent_name_kana || '',
-        child_name: customer.child_name || '',
-        child_name_kana: customer.child_name_kana || '',
-        child_age_years: customer.child_age_years?.toString() || '',
-        child_age_months: customer.child_age_months?.toString() || '',
         phone: customer.phone || '',
         email: customer.email || '',
         line_url: customer.line_url || '',
         postal_code: customer.postal_code || '',
         address_text: customer.address_text || '',
         notes_internal: customer.notes_internal || '',
+        children: customer.children && Array.isArray(customer.children) && customer.children.length > 0 
+          ? customer.children 
+          : [{
+              name: customer.child_name || '',
+              name_kana: customer.child_name_kana || '',
+              age_years: customer.child_age_years,
+              age_months: customer.child_age_months,
+              gender: customer.child_gender || null, // customer data might not have gender initially
+            }],
       });
+    } else if (mode === 'edit' && !customer) {
+      // Initialize with one empty child for new customer
+      setFormData(prev => ({
+        ...prev,
+        children: [{ name: '', name_kana: '', age_years: null, age_months: null, gender: null }]
+      }));
     }
-  }, [customer]);
+  }, [customer, mode]);
 
   useEffect(() => {
     loadCustomers();
@@ -131,16 +140,49 @@ export function CustomerModal({
     onSave();
   };
 
+  const handleAddChild = () => {
+    setFormData(prev => ({
+      ...prev,
+      children: [...prev.children, { name: '', name_kana: '', age_years: null, age_months: null, gender: null }]
+    }));
+  };
+
+  const handleRemoveChild = (index: number) => {
+    if (formData.children.length <= 1) {
+      toast.error('少なくとも1人のお子さま情報が必要です');
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      children: prev.children.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleChildChange = (index: number, field: keyof Child, value: any) => {
+    setFormData(prev => {
+      const newChildren = [...prev.children];
+      newChildren[index] = { ...newChildren[index], [field]: value };
+      return { ...prev, children: newChildren };
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    
+    // Validation
+    const invalidChild = formData.children.find(c => !c.name.trim());
+    if (invalidChild) {
+      setError('すべてのお子さまの名前を入力してください');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // 月齢が入力されていて歳が空の場合は0をセット
-      const ageYears = formData.child_age_years ? parseInt(formData.child_age_years) : 
-                      (formData.child_age_months ? 0 : null);
-      
+      // Use the first child as the primary child for backward compatibility
+      const primaryChild = formData.children[0];
+
       await apiRequest('/customers', {
         method: 'POST',
         body: JSON.stringify({
@@ -148,10 +190,16 @@ export function CustomerModal({
           external_customer_number: formData.external_customer_number || null,
           parent_name: formData.parent_name,
           parent_name_kana: formData.parent_name_kana,
-          child_name: formData.child_name,
-          child_name_kana: formData.child_name_kana,
-          child_age_years: ageYears,
-          child_age_months: formData.child_age_months ? parseInt(formData.child_age_months) : null,
+          
+          // Legacy fields (synced with first child)
+          child_name: primaryChild.name,
+          child_name_kana: primaryChild.name_kana,
+          child_age_years: primaryChild.age_years,
+          child_age_months: primaryChild.age_months,
+          
+          // New children array
+          children: formData.children,
+          
           phone: formData.phone,
           email: formData.email,
           line_url: formData.line_url,
@@ -533,62 +581,128 @@ export function CustomerModal({
           </div>
 
           {/* お子さま情報 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-slate-700 mb-2">
-                お子さま名 {!isViewMode && <span className="text-red-500">*</span>}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="block text-slate-700 font-medium">
+                お子さま情報 {!isViewMode && <span className="text-red-500">*</span>}
               </label>
-              <input
-                type="text"
-                value={formData.child_name}
-                onChange={(e) => setFormData({ ...formData, child_name: e.target.value })}
-                placeholder="例: 太郎"
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                required={!isViewMode}
-                disabled={isViewMode}
-              />
+              {!isViewMode && (
+                <button
+                  type="button"
+                  onClick={handleAddChild}
+                  className="text-sm flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>追加</span>
+                </button>
+              )}
             </div>
 
-            <div>
-              <label className="block text-slate-700 mb-2">お子さま名フリガナ</label>
-              <input
-                type="text"
-                value={formData.child_name_kana}
-                onChange={(e) => setFormData({ ...formData, child_name_kana: e.target.value })}
-                placeholder="例: タロウ"
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={isViewMode}
-              />
-            </div>
-          </div>
+            <div className="space-y-4">
+              {formData.children.map((child, index) => (
+                <div key={index} className="p-4 bg-slate-50 border border-slate-200 rounded-xl relative">
+                  {!isViewMode && formData.children.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveChild(index)}
+                      className="absolute top-2 right-2 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                      title="削除"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                  
+                  {index > 0 && <div className="text-xs text-slate-500 mb-2 font-medium">第{index + 1}子</div>}
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">お名前 {!isViewMode && <span className="text-red-500">*</span>}</label>
+                      <input
+                        type="text"
+                        value={child.name}
+                        onChange={(e) => handleChildChange(index, 'name', e.target.value)}
+                        placeholder="例: 太郎"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                        required={!isViewMode}
+                        disabled={isViewMode}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">フリガナ</label>
+                      <input
+                        type="text"
+                        value={child.name_kana || ''}
+                        onChange={(e) => handleChildChange(index, 'name_kana', e.target.value)}
+                        placeholder="例: タロウ"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={isViewMode}
+                      />
+                    </div>
+                  </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-slate-700 mb-2">お子さま年齢（歳）</label>
-              <input
-                type="number"
-                min="0"
-                max="20"
-                value={formData.child_age_years}
-                onChange={(e) => setFormData({ ...formData, child_age_years: e.target.value })}
-                placeholder="0"
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={isViewMode}
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-700 mb-2">0歳場合（ヶ月）</label>
-              <input
-                type="number"
-                min="0"
-                max="11"
-                value={formData.child_age_months}
-                onChange={(e) => setFormData({ ...formData, child_age_months: e.target.value })}
-                placeholder="0"
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={isViewMode}
-              />
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">年齢（歳）</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="20"
+                        value={child.age_years ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value === '' ? null : parseInt(e.target.value);
+                          handleChildChange(index, 'age_years', val);
+                        }}
+                        placeholder="0"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={isViewMode}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">0歳の場合（ヶ月）</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="11"
+                        value={child.age_months ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value === '' ? null : parseInt(e.target.value);
+                          handleChildChange(index, 'age_months', val);
+                        }}
+                        placeholder="0"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={isViewMode}
+                      />
+                    </div>
+                    <div className="col-span-2">
+                       <label className="block text-xs text-slate-600 mb-1">性別</label>
+                       <div className="flex gap-2">
+                          {[
+                            { value: 'boy', label: '男の子' },
+                            { value: 'girl', label: '女の子' },
+                            { value: 'other', label: 'その他' }
+                          ].map(option => (
+                            <label key={option.value} className={`flex-1 flex items-center justify-center gap-1 p-2 rounded-lg border cursor-pointer transition text-sm ${
+                               child.gender === option.value 
+                                 ? 'bg-blue-50 border-blue-200 text-blue-700 font-medium' 
+                                 : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                            } ${isViewMode ? 'cursor-default opacity-100' : ''}`}>
+                               <input 
+                                 type="radio" 
+                                 name={`gender-${index}`}
+                                 value={option.value}
+                                 checked={child.gender === option.value}
+                                 onChange={() => !isViewMode && handleChildChange(index, 'gender', option.value as any)}
+                                 className="hidden"
+                                 disabled={isViewMode}
+                               />
+                               {option.label}
+                            </label>
+                          ))}
+                       </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

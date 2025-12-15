@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { X, Edit2, Calendar, Package, Clock, User, CheckCircle2, Circle } from 'lucide-react';
+import { X, Edit2, Calendar, Package, Clock, User, CheckCircle2, Circle, Trash2 } from 'lucide-react';
 import { WorkOrder } from '../types';
 
 interface WorkOrderModalProps {
@@ -29,27 +29,31 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
     product_type: string;
     status: WorkOrder['status'];
     due_date: string;
+    pickup_date: string;
     delivered_date: string;
     notes_internal: string;
     photo_data_status: 'not_set' | 'available' | 'not_available';
     nameplate_name: string;
+    nameplate_font: '筆記体' | '明朝体' | 'ゴシック体' | undefined;
     coloring_type: '金' | '銀' | undefined;
     frame_color: '白' | '黒' | undefined;
     mount_color: '白' | '黒' | undefined;
     status_comments: Record<string, string>;
   }>({
-    reservation_id: '',
-    product_type: '',
-    status: '乾燥中',
-    due_date: '',
-    delivered_date: '',
-    notes_internal: '',
-    photo_data_status: 'not_set',
-    nameplate_name: '',
-    coloring_type: undefined,
-    frame_color: undefined,
-    mount_color: undefined,
-    status_comments: {},
+    reservation_id: workOrder?.reservation_id || '',
+    product_type: workOrder?.product_type || '',
+    status: workOrder?.status || '乾燥中',
+    due_date: workOrder?.due_date?.slice(0, 10) || '',
+    pickup_date: workOrder?.pickup_date?.slice(0, 10) || '',
+    delivered_date: workOrder?.delivery_date?.slice(0, 10) || '',
+    notes_internal: workOrder?.notes || '',
+    photo_data_status: workOrder?.photo_data_status || 'not_set',
+    nameplate_name: workOrder?.nameplate_name || '',
+    nameplate_font: workOrder?.nameplate_font,
+    coloring_type: workOrder?.coloring_type,
+    frame_color: workOrder?.frame_color,
+    mount_color: workOrder?.mount_color,
+    status_comments: workOrder?.status_comments || {},
   });
 
   const [loading, setLoading] = useState(false);
@@ -65,10 +69,12 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
         product_type: workOrder.product_type || '',
         status: workOrder.status || '乾燥中',
         due_date: workOrder.due_date?.slice(0, 10) || '',
+        pickup_date: workOrder.pickup_date?.slice(0, 10) || '',
         delivered_date: workOrder.delivery_date?.slice(0, 10) || '',
         notes_internal: workOrder.notes || '',
         photo_data_status: workOrder.photo_data_status || 'not_set',
         nameplate_name: workOrder.nameplate_name || '',
+        nameplate_font: workOrder.nameplate_font,
         coloring_type: workOrder.coloring_type,
         frame_color: workOrder.frame_color,
         mount_color: workOrder.mount_color,
@@ -105,29 +111,67 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
     }
   };
 
+  const handleDelete = async () => {
+    if (!workOrder) return;
+    if (!window.confirm('本当にこの制作物を削除しますか？\nこの操作は取り消せません。')) return;
+
+    setLoading(true);
+    try {
+      await apiRequest(`/work-orders/${workOrder.work_order_id}`, {
+        method: 'DELETE',
+      });
+      toast.success('制作物を削除しました');
+      onSave(); // Refresh data
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      toast.error('削除に失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     if (!dateString) return '未設定';
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('ja-JP', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      timeZone: 'Asia/Tokyo',
-    }).format(date);
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return '無効な日付';
+      return new Intl.DateTimeFormat('ja-JP', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'Asia/Tokyo',
+      }).format(date);
+    } catch (e) {
+      return '日付エラー';
+    }
   };
 
   const getCustomerName = (reservationId: string) => {
+    if (!reservations || !Array.isArray(reservations)) return '';
     const reservation = reservations.find(r => r.reservation_id === reservationId);
     if (!reservation) return '';
+    
+    if (!customers || !Array.isArray(customers)) return '';
     const customer = customers.find(c => c.customer_id === reservation.customer_id);
     if (!customer) return '';
-    const name = customer.child_name || customer.parent_name;
+    
+    let name = customer.parent_name;
+    if (customer.children && Array.isArray(customer.children) && customer.children.length > 0) {
+      const childNames = customer.children.map((c: any) => c.name).join('、');
+      name = childNames;
+    } else if (customer.child_name) {
+      name = customer.child_name;
+    }
+    
     const customerNumber = customer.external_customer_number;
     return customerNumber ? `${name} (No. ${customerNumber})` : name;
   };
 
-  const reservation = reservations.find(r => r.reservation_id === formData.reservation_id);
-  const customer = reservation ? customers.find(c => c.customer_id === reservation.customer_id) : null;
+  const safeReservations = Array.isArray(reservations) ? reservations : [];
+  const safeCustomers = Array.isArray(customers) ? customers : [];
+
+  const reservation = safeReservations.find(r => r.reservation_id === formData.reservation_id);
+  const customer = reservation ? safeCustomers.find(c => c.customer_id === reservation.customer_id) : null;
 
   const updateStatusComment = (comment: string) => {
     setFormData(prev => ({
@@ -189,7 +233,11 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[#2C2C2C]">
                   <div>
                     <span className="text-sm text-gray-500 block">お子さま名</span>
-                    <span className="text-lg font-medium">{customer.child_name || '-'}</span>
+                    <span className="text-lg font-medium">
+                      {customer.children && Array.isArray(customer.children) && customer.children.length > 0
+                        ? customer.children.map((c: any) => c.name).join('、')
+                        : (customer.child_name || '-')}
+                    </span>
                   </div>
                   {customer.external_customer_number && (
                     <div>
@@ -215,7 +263,7 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
                     disabled={isViewMode}
                  >
                     <option value="">選択してください</option>
-                    {reservations.map(reservation => (
+                    {safeReservations.map(reservation => (
                       <option key={reservation.reservation_id} value={reservation.reservation_id}>
                         {getCustomerName(reservation.reservation_id)}
                       </option>
@@ -224,15 +272,26 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
               </div>
               <div>
                 <label className={labelClass}>作品タイプ</label>
-                <input
-                  type="text"
-                  value={formData.product_type}
-                  onChange={(e) => setFormData({ ...formData, product_type: e.target.value })}
-                  placeholder="例: 額4面、足型単品"
-                  className={inputClass}
-                  required
-                  readOnly={isViewMode}
-                />
+                <div className="relative">
+                  <select
+                    value={formData.product_type}
+                    onChange={(e) => setFormData({ ...formData, product_type: e.target.value })}
+                    className={inputClass}
+                    required
+                    disabled={isViewMode}
+                  >
+                    <option value="">選択してください</option>
+                    {menuItems.map((item) => (
+                      <option key={item.menu_item_id || item.menu_id} value={item.name}>
+                        {item.name}
+                      </option>
+                    ))}
+                    {/* メニューにない値が入っている場合のフォールバック表示 */}
+                    {formData.product_type && !menuItems.some(m => m.name === formData.product_type) && (
+                      <option value={formData.product_type}>{formData.product_type}</option>
+                    )}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className={labelClass}>納期</label>
@@ -242,6 +301,16 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
                   onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                   className={inputClass}
                   required
+                  readOnly={isViewMode}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>受け取り可能日</label>
+                <input
+                  type="date"
+                  value={formData.pickup_date}
+                  onChange={(e) => setFormData({ ...formData, pickup_date: e.target.value })}
+                  className={inputClass}
                   readOnly={isViewMode}
                 />
               </div>
@@ -308,16 +377,39 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Nameplate */}
-                <div className="col-span-1 md:col-span-2">
-                  <label className={labelClass}>ネームプレートの名前</label>
-                  <input
-                    type="text"
-                    value={formData.nameplate_name}
-                    onChange={(e) => setFormData({ ...formData, nameplate_name: e.target.value })}
-                    placeholder="例: 2024.10.01  Sakura"
-                    className={inputClass}
-                    readOnly={isViewMode}
-                  />
+                <div className="col-span-1 md:col-span-2 space-y-4">
+                  <div>
+                    <label className={labelClass}>ネームプレートの名前</label>
+                    <input
+                      type="text"
+                      value={formData.nameplate_name}
+                      onChange={(e) => setFormData({ ...formData, nameplate_name: e.target.value })}
+                      placeholder="例: 2024.10.01  Sakura"
+                      className={inputClass}
+                      readOnly={isViewMode}
+                    />
+                  </div>
+                  
+                  {/* Nameplate Font */}
+                  <div>
+                    <label className={labelClass}>ネームプレートの書体</label>
+                    <div className="flex gap-4">
+                      {['筆記体', '明朝体', 'ゴシック体'].map((font) => (
+                        <label key={font} className={`${radioLabelClass} flex-1 justify-center ${formData.nameplate_font === font ? radioSelectedClass : ''}`}>
+                          <input
+                            type="radio"
+                            name="nameplate_font"
+                            value={font}
+                            checked={formData.nameplate_font === font}
+                            onChange={() => setFormData({ ...formData, nameplate_font: font as any })}
+                            className="hidden"
+                            disabled={isViewMode}
+                          />
+                          <span>{font}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Coloring */}
@@ -427,6 +519,17 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
             {/* Actions */}
             {!isViewMode && (
               <div className="flex gap-4 pt-6">
+                 {workOrder && (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={loading}
+                    className="px-4 py-3 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors rounded-none"
+                    title="この制作物を削除"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={onClose}

@@ -3,17 +3,21 @@ import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
-import { Reservation, Customer, Location, User, MenuItem } from '../types';
+import { WorkOrderModal } from './WorkOrderModal';
+import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
 
 export function CalendarPage({ userRole }: { userRole: string }) {
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [workOrderModalOpen, setWorkOrderModalOpen] = useState(false);
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
+  const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
   
   // Initialize with Japan's current date
@@ -41,6 +45,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
         apiRequest('/locations'),
         apiRequest('/menu-items'),
         apiRequest('/users'), // スタッフ権限では限定情報のみ、403の可能性あり
+        apiRequest('/work-orders'),
       ]);
 
       let resData: any = { reservations: [] };
@@ -79,6 +84,12 @@ export function CalendarPage({ userRole }: { userRole: string }) {
       } else {
         console.error('Failed to load users:', results[4].reason);
         setUsers([]); // 403エラー時は空配列で継続
+      }
+
+      if (results[5].status === 'fulfilled') {
+        setWorkOrders(results[5].value.work_orders || []);
+      } else {
+        console.error('Failed to load work orders:', results[5].reason);
       }
 
       // Auto-create work orders for past confirmed reservations
@@ -187,7 +198,12 @@ export function CalendarPage({ userRole }: { userRole: string }) {
 
   const getCustomerName = (customerId: string) => {
     const customer = customers.find(c => c.customer_id === customerId);
-    return customer?.child_name || customer?.parent_name || '-';
+    if (!customer) return '-';
+    
+    if (customer.children && Array.isArray(customer.children) && customer.children.length > 0) {
+      return customer.children.map((c: any) => c.name).join('、');
+    }
+    return customer.child_name || customer.parent_name || '-';
   };
 
   const getCustomerCode = (customerId: string) => {
@@ -272,9 +288,19 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     });
   };
 
+  const getWorkOrdersForDate = (date: Date) => {
+    return workOrders.filter(wo => {
+      if (!wo.pickup_date) return false;
+      const pickupDate = toJapanDate(wo.pickup_date);
+      return isSameDay(pickupDate, date);
+    });
+  };
+
   const selectedDateReservations = getReservationsForDate(selectedDate).sort((a, b) => {
     return new Date(a.reservation_date_time).getTime() - new Date(b.reservation_date_time).getTime();
   });
+  
+  const selectedDateWorkOrders = getWorkOrdersForDate(selectedDate);
 
   const previousMonth = () => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
@@ -356,6 +382,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
                 }
 
                 const dayReservations = getReservationsForDate(day);
+                const dayWorkOrders = getWorkOrdersForDate(day);
                 const isToday = isSameDay(day, getJapanToday());
                 const isSelected = isSameDay(day, selectedDate);
                 const dayOfWeek = day.getDay();
@@ -378,15 +405,22 @@ export function CalendarPage({ userRole }: { userRole: string }) {
                   >
                     <div className="flex flex-col h-full items-center">
                       <span className={isSelected ? 'font-bold' : ''}>{day.getDate()}</span>
-                      {dayReservations.length > 0 && (
-                        <div className="flex-1 flex items-end justify-center pb-1">
+                      <div className="flex-1 flex items-end justify-center pb-1 gap-1">
+                        {dayReservations.length > 0 && (
                           <div
                             className={`w-1.5 h-1.5 rounded-full ${
                               isSelected ? 'bg-white' : 'bg-blue-500'
                             }`}
                           />
-                        </div>
-                      )}
+                        )}
+                        {dayWorkOrders.length > 0 && (
+                          <div
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              isSelected ? 'bg-white' : 'bg-emerald-500'
+                            }`}
+                          />
+                        )}
+                      </div>
                     </div>
                   </button>
                 );
@@ -403,85 +437,128 @@ export function CalendarPage({ userRole }: { userRole: string }) {
                 {selectedDate.getMonth() + 1}月{selectedDate.getDate()}日の予約
               </h3>
               <p className="text-sm text-slate-600 mt-1">
-                {selectedDateReservations.length}件の予約
+                予約: {selectedDateReservations.length}件 / 作品受取: {selectedDateWorkOrders.length}件
               </p>
             </div>
 
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
-              {selectedDateReservations.length === 0 ? (
+              {selectedDateReservations.length === 0 && selectedDateWorkOrders.length === 0 ? (
                 <div className="text-center py-8 text-slate-500">
-                  この日の予約はありません
+                  この日の予定はありません
                 </div>
               ) : (
-                selectedDateReservations.map((reservation) => (
-                  <div
-                    key={reservation.reservation_id}
-                    onClick={() => {
-                      setEditingReservation(reservation);
-                      setReservationMode('view');
-                      setModalOpen(true);
-                    }}
-                    className="border border-slate-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition cursor-pointer"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          <span className="text-blue-600">
-                            {formatTime(reservation.reservation_date_time)}
-                          </span>
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded-full text-xs ${
-                              reservation.status === 'confirmed'
-                                ? 'bg-blue-100 text-blue-700 font-medium'
-                                : reservation.status === 'tentative'
-                                ? 'bg-amber-100 text-amber-700'
-                                : reservation.status === 'cancelled'
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}
-                          >
-                            {reservation.status === 'confirmed'
-                              ? '✓ 確定'
-                              : reservation.status === 'tentative'
-                              ? '⏳ スタンバイ'
-                              : reservation.status === 'cancelled'
-                              ? '✕ キャンセル'
-                              : reservation.status}
-                          </span>
-                          {reservation.payment_status === 'paid' && (
-                            <span className="inline-block px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 font-medium">
-                              💰 支払済
+                <>
+                  {/* Reservations */}
+                  {selectedDateReservations.map((reservation) => (
+                    <div
+                      key={reservation.reservation_id}
+                      onClick={() => {
+                        setEditingReservation(reservation);
+                        setReservationMode('view');
+                        setModalOpen(true);
+                      }}
+                      className="border border-slate-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition cursor-pointer"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <span className="text-blue-600">
+                              {formatTime(reservation.reservation_date_time)}
                             </span>
-                          )}
-                        </div>
-                        <div className="text-slate-900 mb-1">
-                          {getCustomerName(reservation.customer_id)}
-                        </div>
-                        {(() => {
-                          const menuInfo = getMenuInfo(reservation.menu_item_id, reservation.additional_units);
-                          return menuInfo ? (
-                            <div className="text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1 mb-2 inline-block">
-                              {menuInfo.name}
-                              {menuInfo.hasAdditional && (
-                                <span className="ml-1 text-indigo-600">
-                                  + 追加{menuInfo.additionalUnits}部位
-                                </span>
-                              )}
-                            </div>
-                          ) : null;
-                        })()}
-                        {reservation.work_required && (
-                          <div className="text-sm text-slate-700 mt-2">
-                            {reservation.work_required}
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-full text-xs ${
+                                reservation.status === 'confirmed'
+                                  ? 'bg-blue-100 text-blue-700 font-medium'
+                                  : reservation.status === 'tentative'
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : reservation.status === 'cancelled'
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {reservation.status === 'confirmed'
+                                ? '✓ 確定'
+                                : reservation.status === 'tentative'
+                                ? '⏳ スタンバイ'
+                                : reservation.status === 'cancelled'
+                                ? '✕ キャンセル'
+                                : reservation.status}
+                            </span>
+                            {reservation.payment_status === 'paid' && (
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 font-medium">
+                                💰 支払済
+                              </span>
+                            )}
                           </div>
-                        )}
-                        <div className="text-sm text-slate-600 mt-1">
-                          {getLocationName(reservation.location_id)}
+                          <div className="text-slate-900 mb-1">
+                            {getCustomerName(reservation.customer_id)}
+                          </div>
+                          {(() => {
+                            const menuInfo = getMenuInfo(reservation.menu_item_id, reservation.additional_units);
+                            return menuInfo ? (
+                              <div className="text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1 mb-2 inline-block">
+                                {menuInfo.name}
+                                {menuInfo.hasAdditional && (
+                                  <span className="ml-1 text-indigo-600">
+                                    + 追加{menuInfo.additionalUnits}部位
+                                  </span>
+                                )}
+                              </div>
+                            ) : null;
+                          })()}
+                          {reservation.work_required && (
+                            <div className="text-sm text-slate-700 mt-2">
+                              {reservation.work_required}
+                            </div>
+                          )}
+                          <div className="text-sm text-slate-600 mt-1">
+                            {getLocationName(reservation.location_id)}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  ))}
+
+                  {/* Work Orders (Pickups) */}
+                  {selectedDateWorkOrders.map((workOrder) => {
+                     const reservation = reservations.find(r => r.reservation_id === workOrder.reservation_id);
+                     const customerId = reservation ? reservation.customer_id : workOrder.customer_id;
+                     return (
+                      <div
+                        key={workOrder.work_order_id}
+                        onClick={() => {
+                          setEditingWorkOrder(workOrder);
+                          setWorkOrderModalOpen(true);
+                        }}
+                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 hover:border-emerald-300 hover:shadow-sm transition cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                               <span className="inline-block px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-medium">
+                                  🎁 作品受取
+                               </span>
+                               <span className="text-sm text-emerald-600 font-medium">
+                                  {workOrder.status}
+                               </span>
+                            </div>
+                            <div className="text-slate-900 mb-1 font-medium">
+                              {customerId ? getCustomerName(customerId) : '顧客不明'}
+                            </div>
+                            <div className="text-sm text-slate-600">
+                              {workOrder.product_type}
+                            </div>
+                            {workOrder.nameplate_name && (
+                              <div className="text-sm text-slate-500 mt-1">
+                                📛 {workOrder.nameplate_name}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                     );
+                  })}
+                </>
               )}
             </div>
           </div>
@@ -500,6 +577,24 @@ export function CalendarPage({ userRole }: { userRole: string }) {
           onClose={() => {
             setModalOpen(false);
             setEditingReservation(null);
+          }}
+        />
+      )}
+
+      {workOrderModalOpen && (
+        <WorkOrderModal
+          workOrder={editingWorkOrder}
+          reservations={reservations}
+          customers={customers}
+          menuItems={menuItems}
+          onSave={() => {
+             setWorkOrderModalOpen(false);
+             setEditingWorkOrder(null);
+             loadData(); // Reload data
+          }}
+          onClose={() => {
+            setWorkOrderModalOpen(false);
+            setEditingWorkOrder(null);
           }}
         />
       )}
