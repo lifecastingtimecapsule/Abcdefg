@@ -8,6 +8,7 @@ interface WorkOrderModalProps {
   workOrder: WorkOrder | null;
   reservations: any[];
   customers: any[];
+  menuItems?: any[];
   onSave: () => void;
   onClose: () => void;
   mode?: 'view' | 'edit';
@@ -19,12 +20,14 @@ const STATUS_STEPS = [
   { id: '着色', label: '着色' },
   { id: '額装', label: '額装' },
   { id: '完成', label: '完成' },
+  { id: '受け取り済み', label: '受取済' },
 ] as const;
 
-export function WorkOrderModal({ workOrder, reservations, customers, onSave, onClose, mode = 'edit' }: WorkOrderModalProps) {
+export function WorkOrderModal({ workOrder, reservations, customers, menuItems = [], onSave, onClose, mode = 'edit' }: WorkOrderModalProps) {
   const [currentMode, setCurrentMode] = useState<'view' | 'edit'>(mode);
   
   const [formData, setFormData] = useState<{
+    customer_id: string;
     reservation_id: string;
     product_type: string;
     status: WorkOrder['status'];
@@ -40,6 +43,7 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
     mount_color: '白' | '黒' | undefined;
     status_comments: Record<string, string>;
   }>({
+    customer_id: workOrder?.customer_id || '',
     reservation_id: workOrder?.reservation_id || '',
     product_type: workOrder?.product_type || '',
     status: workOrder?.status || '乾燥中',
@@ -65,6 +69,7 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
     setCurrentMode(mode);
     if (workOrder) {
       setFormData({
+        customer_id: workOrder.customer_id || '',
         reservation_id: workOrder.reservation_id || '',
         product_type: workOrder.product_type || '',
         status: workOrder.status || '乾燥中',
@@ -100,7 +105,7 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
       });
 
       onSave();
-      toast.success(workOrder ? '制作物情報を更新しました' : '新しい制作物を登録しました');
+      toast.success(workOrder ? '制作物情報を更新しました' : '新��い制作物を登録しました');
     } catch (err: any) {
       console.error('Save error:', err);
       const errorMessage = err.message || '保存に失敗しました';
@@ -146,32 +151,15 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
     }
   };
 
-  const getCustomerName = (reservationId: string) => {
-    if (!reservations || !Array.isArray(reservations)) return '';
-    const reservation = reservations.find(r => r.reservation_id === reservationId);
-    if (!reservation) return '';
-    
-    if (!customers || !Array.isArray(customers)) return '';
-    const customer = customers.find(c => c.customer_id === reservation.customer_id);
-    if (!customer) return '';
-    
-    let name = customer.parent_name;
-    if (customer.children && Array.isArray(customer.children) && customer.children.length > 0) {
-      const childNames = customer.children.map((c: any) => c.name).join('、');
-      name = childNames;
-    } else if (customer.child_name) {
-      name = customer.child_name;
-    }
-    
-    const customerNumber = customer.external_customer_number;
-    return customerNumber ? `${name} (No. ${customerNumber})` : name;
-  };
-
   const safeReservations = Array.isArray(reservations) ? reservations : [];
   const safeCustomers = Array.isArray(customers) ? customers : [];
 
-  const reservation = safeReservations.find(r => r.reservation_id === formData.reservation_id);
-  const customer = reservation ? safeCustomers.find(c => c.customer_id === reservation.customer_id) : null;
+  const customer = safeCustomers.find(c => c.customer_id === formData.customer_id);
+
+  const getCustomerDisplay = (c: any) => {
+      const name = c.parent_name || c.child_name || '名称未設定';
+      return c.external_customer_number ? `${name} (No. ${c.external_customer_number})` : name;
+  };
 
   const updateStatusComment = (comment: string) => {
     setFormData(prev => ({
@@ -232,11 +220,9 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
                </div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[#2C2C2C]">
                   <div>
-                    <span className="text-sm text-gray-500 block">お子さま名</span>
+                    <span className="text-sm text-gray-500 block">保護者名</span>
                     <span className="text-lg font-medium">
-                      {customer.children && Array.isArray(customer.children) && customer.children.length > 0
-                        ? customer.children.map((c: any) => c.name).join('、')
-                        : (customer.child_name || '-')}
+                      {customer.parent_name || customer.child_name || '-'}
                     </span>
                   </div>
                   {customer.external_customer_number && (
@@ -253,21 +239,47 @@ export function WorkOrderModal({ workOrder, reservations, customers, onSave, onC
             
             {/* Main Info */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                 <label className={labelClass}>予約</label>
+              <div className="md:col-span-2">
+                 <label className={labelClass}>顧客</label>
                  <select
-                    value={formData.reservation_id}
-                    onChange={(e) => setFormData({ ...formData, reservation_id: e.target.value })}
+                    value={formData.customer_id}
+                    onChange={(e) => {
+                       setFormData({ 
+                         ...formData, 
+                         customer_id: e.target.value,
+                         reservation_id: '' 
+                       });
+                    }}
                     className={inputClass}
                     required
                     disabled={isViewMode}
                  >
-                    <option value="">選択してください</option>
-                    {safeReservations.map(reservation => (
-                      <option key={reservation.reservation_id} value={reservation.reservation_id}>
-                        {getCustomerName(reservation.reservation_id)}
+                    <option value="">顧客を選択してください</option>
+                    {safeCustomers.map(c => (
+                      <option key={c.customer_id} value={c.customer_id}>
+                        {getCustomerDisplay(c)}
                       </option>
                     ))}
+                 </select>
+              </div>
+
+              <div>
+                 <label className={labelClass}>関連予約 (任意)</label>
+                 <select
+                    value={formData.reservation_id}
+                    onChange={(e) => setFormData({ ...formData, reservation_id: e.target.value })}
+                    className={inputClass}
+                    disabled={isViewMode || !formData.customer_id}
+                 >
+                    <option value="">指定なし</option>
+                    {safeReservations
+                      .filter(r => r.customer_id === formData.customer_id)
+                      .map(r => (
+                        <option key={r.reservation_id} value={r.reservation_id}>
+                           {new Date(r.reservation_date_time).toLocaleDateString('ja-JP')}
+                        </option>
+                      ))
+                    }
                  </select>
               </div>
               <div>

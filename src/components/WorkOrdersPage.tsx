@@ -47,8 +47,10 @@ function WorkOrderCard({ workOrder, index, moveCard, onEdit, customers, reservat
     },
   });
 
-  const reservation = reservations.find(r => r.reservation_id === workOrder.reservation_id);
-  const customer = customers.find(c => c.customer_id === reservation?.customer_id);
+  const customer = customers.find(c => c.customer_id === workOrder.customer_id) || 
+    (workOrder.reservation_id 
+      ? customers.find(c => c.customer_id === reservations.find(r => r.reservation_id === workOrder.reservation_id)?.customer_id)
+      : undefined);
 
   const getJapanToday = () => {
     const now = new Date();
@@ -56,7 +58,8 @@ function WorkOrderCard({ workOrder, index, moveCard, onEdit, customers, reservat
     return new Date(japanDateStr);
   };
 
-  const isOverdue = workOrder.status !== '完成' && new Date(workOrder.due_date) < getJapanToday();
+  const isCompleted = workOrder.status === '完成' || workOrder.status === '受け取り済み';
+  const isOverdue = !isCompleted && new Date(workOrder.due_date) < getJapanToday();
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -95,10 +98,7 @@ function WorkOrderCard({ workOrder, index, moveCard, onEdit, customers, reservat
              <h3 className="text-[#2C2C2C] font-medium font-serif truncate text-lg">
                {(() => {
                  if (!customer) return '未登録顧客';
-                 if (customer.children && Array.isArray(customer.children) && customer.children.length > 0) {
-                   return customer.children.map((c: any) => c.name).join('、');
-                 }
-                 return customer.child_name || customer.parent_name;
+                 return customer.parent_name || customer.child_name || '名称未設定';
                })()}
                <span className="text-xs text-gray-400 ml-2 font-sans">{customer?.external_customer_number}</span>
              </h3>
@@ -111,11 +111,13 @@ function WorkOrderCard({ workOrder, index, moveCard, onEdit, customers, reservat
           <div className="text-sm text-gray-600 mb-2 font-serif">{workOrder.product_type}</div>
           
           <div className="flex items-center gap-4 text-xs text-gray-500">
-             <div className={`flex items-center gap-1 ${isOverdue ? 'text-red-600 font-medium' : ''}`}>
-                <Clock className="w-3.5 h-3.5" />
-                <span>納期: {formatDate(workOrder.due_date)}</span>
-                {isOverdue && <AlertCircle className="w-3.5 h-3.5" />}
-             </div>
+             {!isCompleted && (
+               <div className={`flex items-center gap-1 ${isOverdue ? 'text-red-600 font-medium' : ''}`}>
+                 <Clock className="w-3.5 h-3.5" />
+                 <span>納期: {formatDate(workOrder.due_date)}</span>
+                 {isOverdue && <AlertCircle className="w-3.5 h-3.5" />}
+               </div>
+             )}
              
              {workOrder.nameplate_name && (
                <div className="truncate max-w-[120px] bg-gray-50 px-2 py-0.5 rounded text-gray-600">
@@ -152,7 +154,6 @@ export function WorkOrdersPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [modalMode, setModalMode] = useState<'view' | 'edit'>('edit');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
@@ -336,8 +337,6 @@ export function WorkOrdersPage() {
   };
 
   const filteredWorkOrders = workOrders.filter(wo => {
-    if (filterStatus !== 'all' && wo.status !== filterStatus) return false;
-    
     if (searchTerm) {
        const reservation = reservations.find(r => r.reservation_id === wo.reservation_id);
        const customer = customers.find(c => c.customer_id === reservation?.customer_id);
@@ -410,33 +409,7 @@ export function WorkOrdersPage() {
                </button>
            </div>
 
-           {/* Status Filters */}
-           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
-              <button
-                onClick={() => setFilterStatus('all')}
-                className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm border transition-all ${
-                  filterStatus === 'all' 
-                    ? 'bg-[#2C2C2C] text-white border-[#2C2C2C]' 
-                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-                }`}
-              >
-                すべて
-              </button>
-              {Object.entries(STATUS_CONFIG).map(([status, config]) => (
-                <button
-                  key={status}
-                  onClick={() => setFilterStatus(status)}
-                  className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm border transition-all flex items-center gap-1.5 ${
-                    filterStatus === status
-                      ? `${config.bg} ${config.color} ${config.border}`
-                      : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                   {filterStatus === status && <config.icon className="w-3 h-3" />}
-                   {status}
-                </button>
-              ))}
-           </div>
+
         </div>
 
         {/* Content */}

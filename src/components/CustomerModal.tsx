@@ -117,9 +117,9 @@ export function CustomerModal({
         .filter(r => r.customer_id === customer.customer_id)
         .map(r => r.reservation_id);
       
-      // その予約IDを持つ制作物をフィルタ
+      // その予約IDを持つ制作物をフィルタ、または直接顧客IDで紐づくものをフィルタ
       const customerWorkOrders = result.work_orders.filter(
-        (wo: any) => customerReservationIds.includes(wo.reservation_id)
+        (wo: any) => wo.customer_id === customer.customer_id || customerReservationIds.includes(wo.reservation_id)
       );
       
       setWorkOrders(customerWorkOrders);
@@ -352,7 +352,8 @@ export function CustomerModal({
             ) : (
               <div className="space-y-4 max-h-[500px] overflow-y-auto">
                 {workOrders.map((workOrder) => {
-                  const isOverdue = workOrder.status !== '引渡し済' && new Date(workOrder.due_date) < getJapanToday();
+                  const isCompleted = workOrder.status === '完成' || workOrder.status === '受け取り済み' || workOrder.status === '引渡し済';
+                  const isOverdue = !isCompleted && new Date(workOrder.due_date) < getJapanToday();
                   return (
                     <div
                       key={workOrder.work_order_id}
@@ -390,12 +391,14 @@ export function CustomerModal({
                       </div>
 
                       <div className="space-y-2 text-sm text-slate-600">
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-slate-400" />
-                          <span className={isOverdue ? 'text-red-600' : ''}>
-                            納期: {formatDate(workOrder.due_date)}
-                          </span>
-                        </div>
+                        {!isCompleted && (
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-slate-400" />
+                            <span className={isOverdue ? 'text-red-600' : ''}>
+                              納期: {formatDate(workOrder.due_date)}
+                            </span>
+                          </div>
+                        )}
 
                         {workOrder.assigned_to && (
                           <div className="flex items-start gap-2">

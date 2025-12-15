@@ -1076,6 +1076,7 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
     const body = await c.req.json();
     const {
       work_order_id,
+      customer_id,
       reservation_id,
       product_type,
       status,
@@ -1114,6 +1115,7 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
 
     const workOrderData = {
       work_order_id: workOrderId,
+      customer_id: customer_id || null,
       reservation_id,
       product_type,
       status: status || '乾燥中',
@@ -1964,7 +1966,7 @@ app.get('/make-server-fe84bde0/locations/:location_id/menus', async (c) => {
     const allMenus = await kv.getByPrefix('menu_item:');
     const locationMenus = await kv.getByPrefix(`location_menu:${locationId}:`);
 
-    // メニューと店舗設定をマージ
+    // メニューと店舗設定を��ージ
     const menusWithStatus = allMenus.map((menu: any) => {
       const locationMenu = locationMenus.find((lm: any) => lm.menu_item_id === menu.menu_item_id);
       return {

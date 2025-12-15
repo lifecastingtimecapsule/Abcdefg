@@ -137,6 +137,18 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
     await loadAdditionalData();
   };
 
+  const handleReservationDelete = async (reservationId: string) => {
+    try {
+      await apiRequest(`/reservations/${reservationId}`, { method: 'DELETE' });
+      toast.success('予約を削除しました');
+      await loadDashboard();
+      await loadAdditionalData();
+    } catch (err: any) {
+      console.error('Delete reservation error:', err);
+      toast.error('削除に失敗しました: ' + err.message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -161,6 +173,8 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
     };
     return new Date(dueDate) < getJapanToday();
   };
+
+  const isCompleted = (status: string) => status === '完成' || status === '受け取り済み' || status === '引渡し済';
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -243,7 +257,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                 key={wo.work_order_id}
                 onClick={() => handleWorkOrderClick(wo)}
                 className={`bg-white rounded-2xl p-4 shadow-sm border-2 transition hover:shadow-md cursor-pointer ${
-                  isOverdue(wo.due_date) && wo.status !== '完成'
+                  isOverdue(wo.due_date) && !isCompleted(wo.status)
                     ? 'border-red-300 bg-red-50 hover:border-red-400'
                     : 'border-slate-200 hover:border-blue-300'
                 }`}
@@ -252,12 +266,13 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                   {wo.customer?.external_customer_number && (
                     <div className="text-sm text-slate-600">顧客番号: {wo.customer.external_customer_number}</div>
                   )}
-                  {isOverdue(wo.due_date) && wo.status !== '完成' && (
+                  {isOverdue(wo.due_date) && !isCompleted(wo.status) && (
                     <AlertCircle className="w-5 h-5 text-red-500" />
                   )}
                 </div>
 
                 {/* 納期（大きく表示） */}
+                {!isCompleted(wo.status) && (
                 <div className="mb-3">
                   <div className="flex items-center gap-2 mb-1">
                     <Clock className="w-4 h-4 text-slate-400" />
@@ -272,7 +287,6 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                       dueDate.setHours(0, 0, 0, 0);
                       const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                       
-                      if (wo.status === '完成') return null;
                       if (daysUntilDue < 0) return null; // 期限切れは既存の赤枠で表示
                       if (daysUntilDue <= 7) {
                         return (
@@ -292,8 +306,9 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                     })()}
                   </div>
                 </div>
+                )}
 
-                <h3 className="text-slate-900 mb-2">{wo.customer?.child_name || '未設定'}</h3>
+                <h3 className="text-slate-900 mb-2">{wo.customer?.parent_name || wo.customer?.child_name || '未設定'}</h3>
 
                 <div className="space-y-2 text-sm">
                   <div className="text-slate-700">{wo.product_type}</div>
@@ -346,7 +361,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                         {formatDate(reservation.reservation_date_time)}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="text-slate-900">{reservation.customer?.child_name || '-'}</div>
+                        <div className="text-slate-900">{reservation.customer?.parent_name || reservation.customer?.child_name || '-'}</div>
                         {reservation.customer?.external_customer_number && (
                           <div className="text-sm text-slate-600">顧客番号: {reservation.customer.external_customer_number}</div>
                         )}
@@ -427,7 +442,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="text-slate-900">{reservation.customer?.child_name || '-'}</div>
+                        <div className="text-slate-900">{reservation.customer?.parent_name || reservation.customer?.child_name || '-'}</div>
                         {reservation.customer?.external_customer_number && (
                           <div className="text-sm text-slate-600">顧客番号: {reservation.customer.external_customer_number}</div>
                         )}
@@ -449,6 +464,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
           workOrder={selectedWorkOrder}
           reservations={reservations}
           customers={customers}
+          menuItems={menuItems}
           onSave={handleModalSave}
           onClose={handleModalClose}
         />
@@ -464,6 +480,7 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
           menuItems={menuItems}
           onSave={handleReservationModalSave}
           onClose={handleReservationModalClose}
+          onDelete={handleReservationDelete}
         />
       )}
     </div>

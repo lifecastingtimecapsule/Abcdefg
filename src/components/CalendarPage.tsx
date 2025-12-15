@@ -172,7 +172,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
       }
 
       if (createdCount > 0) {
-        console.log(`✅ ${createdCount}件の制作物を自動作成しました`);
+        console.log(`✅ ${createdCount}件の制作���を自動作成しました`);
       }
     } catch (err) {
       console.error('Auto-create work orders error:', err);
@@ -180,13 +180,13 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   };
 
   const handleDelete = async (reservationId: string) => {
-    if (!confirm('この予約を削除してもよろしいですか？')) return;
-
     try {
       await apiRequest(`/reservations/${reservationId}`, { method: 'DELETE' });
+      toast.success('予約を削除しました');
       await loadData();
     } catch (err: any) {
-      alert('削除に失敗しました: ' + err.message);
+      console.error('Delete reservation error:', err);
+      toast.error('削除に失敗しました: ' + err.message);
     }
   };
 
@@ -200,10 +200,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     const customer = customers.find(c => c.customer_id === customerId);
     if (!customer) return '-';
     
-    if (customer.children && Array.isArray(customer.children) && customer.children.length > 0) {
-      return customer.children.map((c: any) => c.name).join('、');
-    }
-    return customer.child_name || customer.parent_name || '-';
+    return customer.parent_name || customer.child_name || '名称未設定';
   };
 
   const getCustomerCode = (customerId: string) => {
@@ -578,6 +575,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
             setModalOpen(false);
             setEditingReservation(null);
           }}
+          onDelete={handleDelete}
         />
       )}
 

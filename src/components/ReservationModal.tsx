@@ -12,6 +12,7 @@ interface ReservationModalProps {
   menuItems?: any[];
   onSave: () => void;
   onClose: () => void;
+  onDelete?: (reservationId: string) => void;
   mode?: 'view' | 'edit';
   hideCustomerInfo?: boolean;
 }
@@ -24,6 +25,7 @@ export function ReservationModal({
   menuItems: propMenuItems,
   onSave, 
   onClose,
+  onDelete,
   mode = 'edit',
   hideCustomerInfo = false
 }: ReservationModalProps) {
@@ -611,12 +613,16 @@ export function ReservationModal({
                             <div className="flex items-center justify-between">
                               <div>
                                 <div className="text-sm text-slate-900">
+                                  <span className="mr-2 font-medium">{customer.parent_name || customer.child_name || '名称未設定'}</span>
                                   {customer.children && Array.isArray(customer.children) && customer.children.length > 0 ? (
-                                    <span className="mr-2">{customer.children.map((c: any) => c.name).join('、')}</span>
-                                  ) : (
-                                    customer.child_name && <span className="mr-2">{customer.child_name}</span>
-                                  )}
-                                  {customer.parent_name && <span className="text-slate-600">({customer.parent_name})</span>}
+                                    <span className="text-slate-500 text-xs">
+                                      (お子様: {customer.children.map((c: any) => c.name).join('、')})
+                                    </span>
+                                  ) : customer.child_name && customer.parent_name ? (
+                                    <span className="text-slate-500 text-xs">
+                                      (お子様: {customer.child_name})
+                                    </span>
+                                  ) : null}
                                 </div>
                                 <div className="text-xs text-slate-500 mt-0.5">
                                   {customer.external_customer_number && <span>顧客番号: {customer.external_customer_number} • </span>}
@@ -1239,6 +1245,21 @@ export function ReservationModal({
 
           {/* Action Buttons */}
           <div className="flex gap-3 p-5 border-t border-slate-200 flex-shrink-0">
+            {reservation && onDelete && !isViewMode && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('この予約を削除してもよろしいですか？')) {
+                    onDelete(reservation.reservation_id);
+                    onClose();
+                  }
+                }}
+                className="px-5 py-2.5 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 hover:border-red-300 transition text-sm flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                削除
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -1332,7 +1353,7 @@ export function ReservationModal({
                 onClick={() => setShowSaveModeDialog(false)}
                 className="w-full px-4 py-2.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition text-sm"
               >
-                キャンセル
+                キャ���セル
               </button>
             </div>
           </div>

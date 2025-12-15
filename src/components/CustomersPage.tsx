@@ -489,6 +489,7 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
           workOrder={selectedWorkOrder}
           reservations={reservations}
           customers={customers}
+          menuItems={menuItems}
           mode="view"
           onSave={async () => {
             setWorkOrderModalOpen(false);
