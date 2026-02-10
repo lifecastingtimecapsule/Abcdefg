@@ -4,6 +4,7 @@ import { StaffManagementPage } from './StaffManagementPageEnhanced';
 import { MenuSettingsPage } from './MenuSettingsPage';
 import { ReservationSettingsPage } from './ReservationSettingsPage';
 import { LocationAvailabilityPage } from './LocationAvailabilityPage';
+import { SystemMaintenancePage } from './SystemMaintenancePage';
 
 interface OperationsPageProps {
   userRole: string;
@@ -19,18 +20,19 @@ export function OperationsPage({ userRole, onReauthRequest }: OperationsPageProp
     { id: 'menu' as const, label: 'メニュー設定' },
     { id: 'reservation-settings' as const, label: '予約受付設定' },
     { id: 'location-availability' as const, label: '店舗別予約可能日' },
+    { id: 'maintenance' as const, label: 'メンテナンス' },
   ];
 
   return (
     <div className="space-y-4">
       {/* Tabs */}
       <div className="border-b border-slate-200 bg-white rounded-t-2xl">
-        <div className="flex gap-1 px-4">
+        <div className="flex gap-1 px-4 overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-3 transition relative ${
+              className={`px-6 py-3 transition relative whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'text-blue-600'
                   : 'text-slate-600 hover:text-slate-900'
@@ -61,6 +63,9 @@ export function OperationsPage({ userRole, onReauthRequest }: OperationsPageProp
         )}
         {activeTab === 'location-availability' && (
           <LocationAvailabilityPage />
+        )}
+        {activeTab === 'maintenance' && (
+          <SystemMaintenancePage />
         )}
       </div>
     </div>

@@ -130,7 +130,14 @@ export interface ApiError {
 }
 
 // API 共通レスポンス型
-export interface ApiResponse<T> {
-  data?: T;
-  error?: string;
+export interface Shift {
+  shift_id: string;
+  staff_id: string;
+  date: string; // YYYY-MM-DD
+  shift_type: 'work' | 'holiday' | 'off' | 'training';
+  start_time?: string; // HH:mm
+  end_time?: string; // HH:mm
+  notes?: string;
+  updated_at: string;
+  updated_by: string;
 }

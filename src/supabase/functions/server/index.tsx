@@ -3,6 +3,7 @@ import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
+import { syncToGoogleCalendar } from './google_calendar.tsx';
 
 const app = new Hono();
 
@@ -302,7 +303,7 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
     
     return c.json({ 
       success: true,
-      message: '初期管理者アカウントが作成されました',
+      message: '初期管理者アカウントが作���されました',
       login_info: {
         login_id: DEFAULT_ADMIN.login_id,
         note: 'パスワードはSETUP.mdを参照してください'
@@ -911,6 +912,33 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       }
     }
 
+    // Sync to Google Calendar
+    try {
+      const customer = await kv.get(`customer:${reservationData.customer_id}`);
+      const menuItem = reservationData.menu_item_id ? await kv.get(`menu_item:${reservationData.menu_item_id}`) : null;
+      const location = await kv.get(`location:${reservationData.location_id}`);
+      
+      const action = reservation_id ? 'update' : 'create';
+      
+      if (reservationData.status !== 'cancelled') {
+        const eventId = await syncToGoogleCalendar(action, reservationData, customer, menuItem, location);
+        if (eventId && eventId !== reservationData.google_event_id) {
+           reservationData.google_event_id = eventId;
+           // Save again with event ID
+           await kv.set(`reservation:${reservationId}`, reservationData);
+        }
+      } else if (action === 'update' && reservationData.status === 'cancelled') {
+         // If cancelled, delete from calendar
+         await syncToGoogleCalendar('delete', reservationData);
+         if (reservationData.google_event_id) {
+             delete reservationData.google_event_id;
+             await kv.set(`reservation:${reservationId}`, reservationData);
+         }
+      }
+    } catch (calError) {
+      console.error('Calendar sync failed:', calError);
+    }
+
     // Audit log
     await kv.set(`audit:${crypto.randomUUID()}`, {
       ref_table: 'reservations',
@@ -943,6 +971,13 @@ app.delete('/make-server-fe84bde0/reservations/:id', async (c) => {
 
     const reservationId = c.req.param('id');
     const reservation = await kv.get(`reservation:${reservationId}`);
+
+    // Sync to Google Calendar
+    try {
+       if (reservation) {
+         await syncToGoogleCalendar('delete', reservation);
+       }
+    } catch (e) { console.error(e); }
 
     await kv.del(`reservation:${reservationId}`);
 
@@ -3274,7 +3309,7 @@ app.delete('/make-server-fe84bde0/customers/:customer_id', async (c) => {
       console.log(`[顧客削除] インセンティブ削除: ${incentive.incentive_id}`);
     }
 
-    // 顧客データを削除
+    // 顧���データを削除
     await kv.del(`customer:${customerId}`);
     console.log(`[顧客削除] 顧客削除完了: ${customer.customer_code}`);
 
@@ -3404,6 +3439,129 @@ app.post('/make-server-fe84bde0/location-availability', async (c) => {
   } catch (error) {
     console.log(`Save location availability error: ${error}`);
     return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ========== Shift Management ==========
+
+// Get shifts by month
+app.get('/make-server-fe84bde0/shifts', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    
+    // year_month format: YYYY-MM
+    const yearMonth = c.req.query('year_month');
+    if (!yearMonth) {
+       return c.json({ error: 'year_month is required' }, 400);
+    }
+
+    // Key format: shift:YYYY-MM-DD:staff_id
+    // Prefix search with 'shift:YYYY-MM' works to get all shifts for that month
+    const shifts = await kv.getByPrefix(`shift:${yearMonth}`);
+    return c.json({ shifts });
+  } catch (error) {
+    console.log(`Get shifts error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Create/Update shift
+app.post('/make-server-fe84bde0/shifts', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const body = await c.req.json();
+    const { staff_id, date, shift_type, start_time, end_time, notes } = body;
+
+    if (!staff_id || !date) {
+      return c.json({ error: 'staff_id and date are required' }, 400);
+    }
+
+    const key = `shift:${date}:${staff_id}`;
+    const shiftData = {
+      shift_id: key, // Use key as ID
+      staff_id,
+      date,
+      shift_type: shift_type || 'work',
+      start_time,
+      end_time,
+      notes,
+      updated_at: new Date().toISOString(),
+      updated_by: user.id
+    };
+
+    await kv.set(key, shiftData);
+    return c.json({ success: true, shift: shiftData });
+  } catch (error) {
+    console.log(`Save shift error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Delete shift
+app.delete('/make-server-fe84bde0/shifts', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+       return c.json({ error: 'Unauthorized' }, 401);
+    }
+    
+    const staffId = c.req.query('staff_id');
+    const date = c.req.query('date');
+    
+    if (!staffId || !date) {
+       return c.json({ error: 'staff_id and date are required' }, 400);
+    }
+    
+    const key = `shift:${date}:${staffId}`;
+    await kv.del(key);
+    
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Delete shift error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ========== Data Integrity ==========
+
+// Check and fix data integrity
+app.post('/make-server-fe84bde0/integrity-check', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const mode = c.req.query('mode') || 'check'; // check or fix
+    const report: any = { issues: [], fixed: [] };
+
+    // 1. Check Reservation <-> Work Order links
+    const reservations = await kv.getByPrefix('reservation:');
+    const workOrders = await kv.getByPrefix('work_order:');
+    
+    // Check for work orders with missing reservations
+    for (const wo of workOrders) {
+      const res = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
+      if (!res) {
+         report.issues.push(`WorkOrder ${wo.work_order_id} (Product: ${wo.product_type}) points to missing Reservation ${wo.reservation_id}`);
+      }
+    }
+    
+    return c.json({ report });
+  } catch (error) {
+     console.log(`Integrity check error: ${error}`);
+     return c.json({ error: String(error) }, 500);
   }
 });
 

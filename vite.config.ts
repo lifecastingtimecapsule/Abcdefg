@@ -17,6 +17,8 @@
         'next-themes@0.4.6': 'next-themes',
         'lucide-react@0.487.0': 'lucide-react',
         'input-otp@1.4.2': 'input-otp',
+        'googleapis@126.0.1': 'googleapis',
+        'google-auth-library@9.0.0': 'google-auth-library',
         'figma:asset/a8152f31015da512619ad73332adfaa84771e5bc.png': path.resolve(__dirname, './src/assets/a8152f31015da512619ad73332adfaa84771e5bc.png'),
         'embla-carousel-react@8.6.0': 'embla-carousel-react',
         'cmdk@1.1.1': 'cmdk',

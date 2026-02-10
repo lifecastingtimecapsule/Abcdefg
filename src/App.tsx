@@ -7,6 +7,7 @@ import { ReauthModal } from './components/ReauthModal';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { CalendarPage } from './components/CalendarPage';
+import { ShiftManagementPage } from './components/ShiftManagementPage';
 import { CustomersPage } from './components/CustomersPage';
 import { WorkOrdersPage } from './components/WorkOrdersPage';
 import { SalesIncentivesPage } from './components/SalesIncentivesPage';
@@ -98,7 +99,7 @@ export default function App() {
       } else {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
         if (errorData.error?.includes('既に初期化')) {
-          console.log('ℹ️ システムは既に初期化されています');
+          console.log('ℹ️ ��ステムは既に初期化されています');
         } else {
           console.error(`初期化エラー (${response.status}):`, errorData.error || errorData);
         }
@@ -220,6 +221,8 @@ export default function App() {
         return <Dashboard onNavigate={setCurrentPage} userRole={currentUser.role} />;
       case 'calendar':
         return <CalendarPage userRole={currentUser.role} />;
+      case 'shifts':
+        return <ShiftManagementPage />;
       case 'customers':
         return <CustomersPage userRole={currentUser.role} />;
       case 'work-orders':

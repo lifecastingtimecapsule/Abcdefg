@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed, TrendingUp, User as UserIcon } from 'lucide-react';
+import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed, TrendingUp, User as UserIcon, CalendarRange } from 'lucide-react';
 import { createClient } from '../utils/supabase/client';
 import { User } from '../types';
 
@@ -32,6 +32,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
       items: [
         { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard, roles: ['admin', 'staff'] },
         { id: 'calendar', label: 'カレンダー', icon: Calendar, roles: ['admin', 'staff'] },
+        { id: 'shifts', label: 'シフト管理', icon: CalendarRange, roles: ['admin', 'staff'] },
         { id: 'customers', label: '顧客管理', icon: Users, roles: ['admin', 'staff'] },
         { id: 'work-orders', label: '作品管理', icon: Package, roles: ['admin', 'staff'] },
         { id: 'sales-incentives', label: '売上・インセンティブ', icon: TrendingUp, roles: ['admin'] },
