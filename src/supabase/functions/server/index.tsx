@@ -999,6 +999,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
 
     // Sync to Google Calendar
     try {
+      console.log('[Reservation] Calendar sync starting', { reservationId, reservation_id: !!reservation_id, status: reservationData.status });
       const customer = await kv.get(`customer:${reservationData.customer_id}`);
       const menuItem = reservationData.menu_item_id ? await kv.get(`menu_item:${reservationData.menu_item_id}`) : null;
       const location = await kv.get(`location:${reservationData.location_id}`);
@@ -1007,6 +1008,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       
       if (reservationData.status !== 'cancelled') {
         const eventId = await syncToGoogleCalendar(action, reservationData, customer, menuItem, location);
+        console.log('[Reservation] Calendar sync result', { eventId, reservationId });
         if (eventId && eventId !== reservationData.google_event_id) {
            reservationData.google_event_id = eventId;
            // Save again with event ID
@@ -1021,7 +1023,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
          }
       }
     } catch (calError) {
-      console.error('Calendar sync failed:', calError);
+      console.error('[Reservation] Calendar sync failed:', calError);
     }
 
     // Audit log
@@ -3085,6 +3087,20 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
     };
 
     await kv.set(`reservation:${reservationId}`, reservationData);
+
+    // Sync to Google Calendar (public reservation)
+    try {
+      console.log('[Public Reservation] Calendar sync starting', { reservationId });
+      const locationForCal = await kv.get(`location:${location_id}`);
+      const eventId = await syncToGoogleCalendar('create', reservationData, customer, menuItem, locationForCal);
+      console.log('[Public Reservation] Calendar sync result', { eventId, reservationId });
+      if (eventId) {
+        reservationData.google_event_id = eventId;
+        await kv.set(`reservation:${reservationId}`, reservationData);
+      }
+    } catch (calError) {
+      console.error('[Public Reservation] Calendar sync failed:', calError);
+    }
 
     // Send confirmation email using Brevo (Sendinblue)
     try {
