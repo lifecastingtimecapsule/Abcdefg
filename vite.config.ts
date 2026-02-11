@@ -1,10 +1,29 @@
-
   import { defineConfig } from 'vite';
   import react from '@vitejs/plugin-react-swc';
   import path from 'path';
 
+  /** バンドル後の CSS から @charset を除去（react-big-calendar 等が途中に出すとエラーになるため） */
+  function removeCharsetFromCss() {
+    return {
+      name: 'remove-charset-from-css',
+      generateBundle(_, bundle) {
+        for (const file of Object.keys(bundle)) {
+          if (file.endsWith('.css')) {
+            const chunk = bundle[file];
+            if (chunk.type === 'asset' && typeof chunk.source === 'string') {
+              (chunk as { source: string }).source = (chunk.source as string).replace(
+                /@charset\s+["']UTF-8["'];\s*\n?/gi,
+                ''
+              );
+            }
+          }
+        }
+      },
+    };
+  }
+
   export default defineConfig({
-    plugins: [react()],
+    plugins: [react(), removeCharsetFromCss()],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
       alias: {
