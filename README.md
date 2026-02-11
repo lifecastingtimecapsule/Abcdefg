@@ -95,11 +95,20 @@
  3. **環境変数（サービスロールキー、Google カレンダー連携など）**
     - `src/supabase/functions/server/kv_store.tsx` などでは
       `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` を利用します。
+    - **ログイン高速化**（Supabase Auth 呼び出し回避）のため、Edge Function のシークレットに
+      **`SUPABASE_JWT_SECRET`** を設定してください。
+      - 値: Supabase ダッシュボード → **Project Settings** → **API** → **JWT Secret** をコピー
+      - 未設定の場合は従来どおりログイン時に Supabase Auth を呼びます。
     - `google_calendar.tsx` では
       - `GOOGLE_CALENDAR_ID`
       - `GOOGLE_SERVICE_ACCOUNT_JSON`
       を利用します。
     - これらは Supabase プロジェクトの「環境変数」画面で設定してください。
+
+ 4. **既存ユーザーでログインできない場合**
+    - ログインは `user_login:ログインID` でユーザーを参照するため、既存データにはこのキーが無い場合があります。
+    - 管理者でログイン後、`POST .../admin/backfill-user-login` を 1 回実行すると全ユーザーに `user_login` が設定されます。
+    - パスワードを一度「管理者が更新」すると、次回からは KV のハッシュで検証するためログインが速くなります。
 
  ---
 

@@ -91,7 +91,53 @@ UI コンポーネントは `src/components/ui` 以下にまとめられてお�
 
 ---
 
-## 6. 開発の基本ルール（提案）
+## 6. ログイン速度の要因分析
+
+ログインが遅い場合、Edge Function のログで **各ステップの所要時間** を確認できる。
+
+### 計測ログの見方
+
+ログイン API 内で以下を計測し、Supabase ダッシュボードの **Edge Functions → 該当関数 → Logs** に出力している。
+
+- **user_lookup** … ユーザー検索（KV: `user_login:` 取得 → `user:` 取得、または getByPrefix）
+- **auth** … Supabase Auth の `signInWithPassword`（メール・パスワード検証）
+- **last_login_write** … 最終ログイン時刻の KV 更新
+
+ログ例:
+```text
+[Login timing] total=1200ms | user_lookup=80ms (7%) | auth=1000ms (83%) | last_login_write=50ms (4%)
+```
+
+### 現在のログイン方式（高速化済み）
+
+- **全件探索なし**: ユーザー検索は `user_login:ログインID` → `user:UUID` の 2 回取得のみ。getByPrefix は使用しない。
+- **Supabase Auth 呼び出しの回避**: `SUPABASE_JWT_SECRET` を Edge Function に設定し、ユーザーに `password_hash` が保存されている場合は、Edge 内で bcrypt 検証＋自前 JWT 発行を行う。この場合ログイン時に Supabase Auth は呼ばれない。
+- **レガシー**: `password_hash` が無いユーザー（既存ユーザーでパスワード未更新）は従来どおり `signInWithPassword` で認証。
+
+### 想定される原因の割合（目安・レガシーログイン時）
+
+| 要因 | 想定割合 | 説明 | 対策例 |
+|------|----------|------|--------|
+| **Supabase Auth** | **60〜85%** | `signInWithPassword` のネットワーク往復。password_hash 利用時は発生しない。 | `SUPABASE_JWT_SECRET` 設定＋パスワード更新で高速ログインに移行。 |
+| **Edge Function コールドスタート** | **10〜30%**（初回のみ） | しばらく呼ばれていないときの起動遅延。 | 定期的な ping でウォームアップ。 |
+| **ユーザー検索（KV）** | **5〜15%** | `user_login:` ＋ `user:` の 2 回取得。 | 全件探索は廃止済み。backfill で既存ユーザーに user_login を付与。 |
+| **last_login 更新（KV）** | **2〜8%** | 1 回の KV 書き込み。 | 必須でなければ非同期化やスキップを検討。 |
+| **クライアント→Edge のネットワーク** | **含まれる** | ブラウザから Supabase までの RTT。計測ログには含まれない。 | CDN/リージョン配置の見直し。 |
+
+**合計が 100% にならない場合**  
+計測は「Edge 内」のみ。クライアント〜Edge 間の往復時間はログに含まれないため、体感では「total ＋ 往復 RTT」程度になる。
+
+### ログの確認手順
+
+1. Supabase ダッシュボード → **Edge Functions** → `make-server-fe84bde0`
+2. **Logs** タブで、ログイン実行時刻前後のログを表示
+3. `[Login timing]` を含む行を探し、`total` / `user_lookup` / `auth` / `last_login_write` の ms と % を確認
+
+ここで **auth の割合が高い** 場合は、主なボトルネックは Supabase Auth 側と判断できる。
+
+---
+
+## 7. 開発の基本ルール（提案）
 
 - 機能追加時は
   - フロント側コンポーネント

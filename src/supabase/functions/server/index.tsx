@@ -2,10 +2,16 @@ import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import bcrypt from 'npm:bcryptjs';
+import * as jose from 'npm:jose';
 import * as kv from './kv_store.tsx';
 import { syncToGoogleCalendar } from './google_calendar.tsx';
 
 const app = new Hono();
+
+const JWT_SECRET = Deno.env.get('SUPABASE_JWT_SECRET') || '';
+const SALT_ROUNDS = 10;
+const JWT_EXPIRY = '7d';
 
 app.use('*', cors());
 app.use('*', logger(console.log));
@@ -24,28 +30,30 @@ const DEFAULT_ADMIN = {
 };
 
 // ========== Auth Helpers ==========
-async function getAuthUser(request: Request) {
+async function getAuthUser(request: Request): Promise<{ id: string } | null> {
   const authHeader = request.headers.get('Authorization');
-  if (!authHeader) {
-    return null;
-  }
-  
+  if (!authHeader) return null;
   const accessToken = authHeader.split(' ')[1];
-  if (!accessToken) {
-    return null;
+  if (!accessToken) return null;
+
+  const supabaseUser = await supabase.auth.getUser(accessToken);
+  if (supabaseUser.data?.user) {
+    return supabaseUser.data.user;
   }
-  
-  const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-  if (error) {
-    // Token expired or invalid - this is normal behavior
-    console.log(`[Auth] Token validation failed: ${error.message}`);
-    return null;
+  if (JWT_SECRET) {
+    try {
+      const { payload } = await jose.jwtVerify(
+        accessToken,
+        new TextEncoder().encode(JWT_SECRET),
+        { algorithms: ['HS256'] }
+      );
+      const sub = payload.sub;
+      if (sub) return { id: sub };
+    } catch (_) {
+      // not our JWT or invalid
+    }
   }
-  if (!user) {
-    return null;
-  }
-  
-  return user;
+  return null;
 }
 
 async function getUserRole(userId: string) {
@@ -55,58 +63,71 @@ async function getUserRole(userId: string) {
 
 // ========== Auth Routes ==========
 
-// Login with login_id（user_login: で直接参照し getByPrefix を避ける）
+// Login with login_id（全件探索なし: user_login のみ。password_hash があれば Edge 内検証＋自前 JWT で Supabase Auth 呼び出しを回避）
 app.post('/make-server-fe84bde0/login', async (c) => {
+  const tStart = Date.now();
   try {
     const body = await c.req.json();
     const { login_id, password } = body;
 
-    let user: any = null;
     const loginRef = await kv.get(`user_login:${login_id}`);
-    if (loginRef?.user_id) {
-      user = await kv.get(`user:${loginRef.user_id}`);
+    if (!loginRef?.user_id) {
+      console.log(`Login failed: no user_login for login_id ${login_id}`);
+      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
+    const user = await kv.get(`user:${loginRef.user_id}`);
+    const tAfterUserLookup = Date.now();
+
     if (!user) {
-      const users = await kv.getByPrefix('user:');
-      user = users.find((u: any) => u.login_id === login_id && u.active_flag !== false);
-      if (user) {
-        await kv.set(`user_login:${login_id}`, { user_id: user.user_id });
-      }
-    }
-    if (!user) {
-      console.log(`Login failed: User with login_id ${login_id} not found`);
+      console.log(`Login failed: user not found for ${loginRef.user_id}`);
       return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
     if (user.active_flag === false) {
       return c.json({ error: 'このアカウントは無効です' }, 403);
     }
 
-    // Authenticate with Supabase using email
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: user.email,
-      password,
-    });
-
-    if (error) {
-      console.log(`Login authentication error: ${error.message}`);
-      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+    let accessToken: string;
+    if (user.password_hash && JWT_SECRET) {
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) {
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+      }
+      const secret = new TextEncoder().encode(JWT_SECRET);
+      accessToken = await new jose.SignJWT({ email: user.email })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setSubject(user.user_id)
+        .setIssuedAt()
+        .setExpirationTime(JWT_EXPIRY)
+        .sign(secret);
+    } else {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password,
+      });
+      if (error) {
+        console.log(`Login authentication error: ${error.message}`);
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+      }
+      accessToken = data.session.access_token;
     }
+    const tAfterAuth = Date.now();
 
-    // Update last login timestamp
     try {
       const updatedUser = {
         ...user,
         last_login_at: new Date().toISOString(),
       };
       await kv.set(`user:${user.user_id}`, updatedUser);
-    } catch (updateError) {
-      console.log(`Failed to update last login time: ${updateError}`);
-      // Don't fail the login if we can't update the timestamp
-    }
+    } catch (_) {}
+    const tEnd = Date.now();
+
+    console.log(
+      `[Login timing] total=${tEnd - tStart}ms | lookup=${tAfterUserLookup - tStart}ms | auth=${tAfterAuth - tAfterUserLookup}ms | write=${tEnd - tAfterAuth}ms`
+    );
 
     return c.json({
       success: true,
-      access_token: data.session.access_token,
+      access_token: accessToken,
       user: {
         user_id: user.user_id,
         name: user.name,
@@ -137,10 +158,7 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
       return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
     }
 
-    // Check if login_id already exists
-    const users = await kv.getByPrefix('user:');
-    const existingUser = users.find((u: any) => u.login_id === login_id);
-    if (existingUser) {
+    if (await kv.get(`user_login:${login_id}`)) {
       return c.json({ error: 'このログインIDは既に使用されています' }, 400);
     }
 
@@ -158,6 +176,7 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
     }
 
     const userId = data.user.id;
+    const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
 
     const userProfile = {
       user_id: userId,
@@ -166,6 +185,7 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
       login_id,
       role: role || 'staff',
       active_flag: true,
+      password_hash,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -252,7 +272,7 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
       userId = data.user.id;
     }
     
-    // Store admin profile in KV store
+    const adminPasswordHash = await bcrypt.hash(DEFAULT_ADMIN.password, SALT_ROUNDS);
     await kv.set(`user:${userId}`, {
       user_id: userId,
       name: DEFAULT_ADMIN.name,
@@ -260,10 +280,11 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
       login_id: DEFAULT_ADMIN.login_id,
       role: 'admin',
       active_flag: true,
+      password_hash: adminPasswordHash,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
-    
+    await kv.set(`user_login:${DEFAULT_ADMIN.login_id}`, { user_id: userId });
     console.log('✅ Default admin account created successfully!');
 
     // Create default location (豊川店)
@@ -326,6 +347,27 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
     
   } catch (error) {
     console.error(`System initialization error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// 既存ユーザーに user_login を一括設定（ログイン全件探索廃止後、初回のみ実行推奨）
+app.post('/make-server-fe84bde0/admin/backfill-user-login', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    if (await getUserRole(user.id) !== 'admin') return c.json({ error: 'Admin access required' }, 403);
+    const users = await kv.getByPrefix('user:');
+    let count = 0;
+    for (const u of users) {
+      if (u.login_id && u.user_id) {
+        await kv.set(`user_login:${u.login_id}`, { user_id: u.user_id });
+        count++;
+      }
+    }
+    return c.json({ success: true, updated: count, total: users.length });
+  } catch (error) {
+    console.log(`Backfill user_login error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -407,7 +449,6 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(`user:${user_id}`, updatedUser);
     if (update_login_id && update_login_id !== userData.login_id) {
       await kv.set(`user_login:${update_login_id}`, { user_id });
       if (userData.login_id) await kv.del(`user_login:${userData.login_id}`);
@@ -415,14 +456,19 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
 
     // Update password if provided
     if (update_password) {
+      if (update_password.length < 6) {
+        return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
+      }
       try {
         await supabase.auth.admin.updateUserById(user_id, { password: update_password });
+        updatedUser.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
       } catch (pwError) {
         console.error(`Failed to update password: ${pwError}`);
         return c.json({ error: 'パスワードの��新に失敗しました' }, 500);
       }
     }
 
+    await kv.set(`user:${user_id}`, updatedUser);
     return c.json({ success: true, user: updatedUser });
   } catch (error) {
     console.log(`Update user error: ${error}`);
@@ -1824,26 +1870,23 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
       userData.login_id = update_login_id;
     }
     
-    // Update password in Supabase Auth if provided
+    // Update password in Supabase Auth and KV password_hash if provided
     if (update_password) {
-      // Validate password length
       if (update_password.length < 6) {
         return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
       }
-      
       const { error: passwordError } = await supabase.auth.admin.updateUserById(
         user_id,
         { password: update_password }
       );
-      
       if (passwordError) {
         console.error(`Failed to update password: ${passwordError.message}`);
         return c.json({ error: `パスワード更新に失敗しました: ${passwordError.message}` }, 500);
       }
+      userData.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
     }
-    
-    userData.updated_at = new Date().toISOString();
 
+    userData.updated_at = new Date().toISOString();
     await kv.set(`user:${user_id}`, userData);
 
     return c.json({ success: true, user: userData });
