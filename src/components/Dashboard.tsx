@@ -44,14 +44,14 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
   const loadDashboard = async () => {
     try {
       setLoading(true);
-      // 1 リクエストでダッシュボード＋一覧データを取得（with_lists=1）
+      const month = new Date().toISOString().slice(0, 7);
       const result = await apiRequest<DashboardData & {
         reservations?: Reservation[];
         customers?: Customer[];
         locations?: any[];
         users?: any[];
         menu_items?: any[];
-      }>('/dashboard?with_lists=1');
+      }>(`/dashboard?with_lists=1&month=${month}`);
       setData(result);
       if (result.reservations != null) setReservations(result.reservations);
       if (result.customers != null) setCustomers(result.customers);

@@ -4,7 +4,7 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { LogIn } from 'lucide-react';
 
 interface LoginPageProps {
-  onLogin: () => void;
+  onLogin: (user?: { user_id: string; name: string; login_id: string; role: string }) => void;
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
@@ -39,7 +39,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       
       if (data.access_token) {
         localStorage.setItem('access_token', data.access_token);
-        onLogin();
+        onLogin(data.user);
       } else {
         throw new Error('アクセストークンが返されませんでした');
       }

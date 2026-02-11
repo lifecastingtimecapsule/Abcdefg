@@ -55,19 +55,30 @@ async function getUserRole(userId: string) {
 
 // ========== Auth Routes ==========
 
-// Login with login_id
+// Login with login_id（user_login: で直接参照し getByPrefix を避ける）
 app.post('/make-server-fe84bde0/login', async (c) => {
   try {
     const body = await c.req.json();
     const { login_id, password } = body;
 
-    // Find user by login_id
-    const users = await kv.getByPrefix('user:');
-    const user = users.find((u: any) => u.login_id === login_id && u.active_flag !== false);
-
+    let user: any = null;
+    const loginRef = await kv.get(`user_login:${login_id}`);
+    if (loginRef?.user_id) {
+      user = await kv.get(`user:${loginRef.user_id}`);
+    }
+    if (!user) {
+      const users = await kv.getByPrefix('user:');
+      user = users.find((u: any) => u.login_id === login_id && u.active_flag !== false);
+      if (user) {
+        await kv.set(`user_login:${login_id}`, { user_id: user.user_id });
+      }
+    }
     if (!user) {
       console.log(`Login failed: User with login_id ${login_id} not found`);
       return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+    }
+    if (user.active_flag === false) {
+      return c.json({ error: 'このアカウントは無効です' }, 403);
     }
 
     // Authenticate with Supabase using email
@@ -101,6 +112,8 @@ app.post('/make-server-fe84bde0/login', async (c) => {
         name: user.name,
         login_id: user.login_id,
         role: user.role,
+        created_at: user.created_at || new Date().toISOString(),
+        updated_at: user.updated_at || new Date().toISOString(),
       },
     });
   } catch (error) {
@@ -146,8 +159,7 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
 
     const userId = data.user.id;
 
-    // Store user profile in KV store
-    await kv.set(`user:${userId}`, {
+    const userProfile = {
       user_id: userId,
       name,
       email,
@@ -156,7 +168,9 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
       active_flag: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    });
+    };
+    await kv.set(`user:${userId}`, userProfile);
+    await kv.set(`user_login:${login_id}`, { user_id: userId });
 
     return c.json({ success: true, user_id: userId });
   } catch (error) {
@@ -394,6 +408,10 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     };
 
     await kv.set(`user:${user_id}`, updatedUser);
+    if (update_login_id && update_login_id !== userData.login_id) {
+      await kv.set(`user_login:${update_login_id}`, { user_id });
+      if (userData.login_id) await kv.del(`user_login:${userData.login_id}`);
+    }
 
     // Update password if provided
     if (update_password) {
@@ -448,6 +466,7 @@ app.delete('/make-server-fe84bde0/users/:user_id', async (c) => {
     };
 
     await kv.set(`user:${userId}`, updatedUser);
+    if (userData.login_id) await kv.del(`user_login:${userData.login_id}`);
 
     return c.json({ success: true });
   } catch (error) {
@@ -784,7 +803,7 @@ app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
 
 // ========== Reservations ==========
 
-// Get all reservations
+// Get reservations（optional: ?month=YYYY-MM or ?start=YYYY-MM-DD&end=YYYY-MM-DD で範囲指定、待機時間削減）
 app.get('/make-server-fe84bde0/reservations', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -792,7 +811,27 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const reservations = await kv.getByPrefix('reservation:');
+    let reservations = await kv.getByPrefix('reservation:');
+    const month = c.req.query('month');
+    const start = c.req.query('start');
+    const end = c.req.query('end');
+    if (month) {
+      const [y, m] = month.split('-').map(Number);
+      const startDate = new Date(y, m - 1, 1);
+      const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+      reservations = reservations.filter((r: any) => {
+        const d = new Date(r.reservation_date_time);
+        return d >= startDate && d <= endDate;
+      });
+    } else if (start && end) {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      endDate.setHours(23, 59, 59, 999);
+      reservations = reservations.filter((r: any) => {
+        const d = new Date(r.reservation_date_time);
+        return d >= startDate && d <= endDate;
+      });
+    }
     return c.json({ reservations });
   } catch (error) {
     console.log(`Get reservations error: ${error}`);
@@ -1084,7 +1123,7 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
 
 // ========== Work Orders ==========
 
-// Get all work orders
+// Get work orders（optional: ?month=YYYY-MM で範囲指定、待機時間削減）
 app.get('/make-server-fe84bde0/work-orders', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -1092,7 +1131,17 @@ app.get('/make-server-fe84bde0/work-orders', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const workOrders = await kv.getByPrefix('work_order:');
+    let workOrders = await kv.getByPrefix('work_order:');
+    const month = c.req.query('month');
+    if (month) {
+      const [y, m] = month.split('-').map(Number);
+      const startDate = new Date(y, m - 1, 1);
+      const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+      workOrders = workOrders.filter((wo: any) => {
+        const d = new Date(wo.due_date || wo.created_at || 0);
+        return d >= startDate && d <= endDate;
+      });
+    }
     return c.json({ work_orders: workOrders });
   } catch (error) {
     console.log(`Get work orders error: ${error}`);
@@ -2265,12 +2314,23 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       overdue_work_orders: overdueWorkOrders,
     };
     if (withLists) {
+      const month = c.req.query('month');
+      let listReservations = reservations;
+      if (month) {
+        const [y, m] = month.split('-').map(Number);
+        const startDate = new Date(y, m - 1, 1);
+        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+        listReservations = reservations.filter((r: any) => {
+          const d = new Date(r.reservation_date_time);
+          return d >= startDate && d <= endDate;
+        });
+      }
       const locations = (results[4] || []).filter((l: any) => l.active_flag !== false);
       const allUsers = (results[5] || []).filter((u: any) => u.active_flag !== false);
       const users = role !== 'admin'
         ? allUsers.map((u: any) => ({ user_id: u.user_id, login_id: u.login_id, name: u.name, role: u.role }))
         : allUsers;
-      payload.reservations = reservations;
+      payload.reservations = listReservations;
       payload.customers = customers;
       payload.locations = locations;
       payload.users = users;
