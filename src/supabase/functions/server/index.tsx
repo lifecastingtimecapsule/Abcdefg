@@ -2055,6 +2055,28 @@ app.post('/make-server-fe84bde0/locations/:location_id/menus/:menu_id/toggle', a
   }
 });
 
+// Get location settings for one menu item (all locations in one call — avoids N+1)
+app.get('/make-server-fe84bde0/menu-items/:menu_item_id/location-settings', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const menuItemId = c.req.param('menu_item_id');
+    const allLocationMenus = await kv.getByPrefix('location_menu:');
+    const settings: Record<string, boolean> = {};
+    for (const lm of allLocationMenus) {
+      if (lm.menu_item_id === menuItemId) {
+        settings[lm.location_id] = lm.enabled ?? false;
+      }
+    }
+    return c.json({ location_settings: settings });
+  } catch (error) {
+    console.log(`Get menu item location settings error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
 // ========== Staff (alias for users, for compatibility) ==========
 
 // Get all staff
@@ -2077,7 +2099,7 @@ app.get('/make-server-fe84bde0/staff', async (c) => {
 
 // ========== Dashboard ==========
 
-// Get dashboard data
+// Get dashboard data (optional ?with_lists=1 returns reservations, customers, locations, users, menu_items in one response)
 app.get('/make-server-fe84bde0/dashboard', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -2085,10 +2107,19 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    // Get work orders
-    const workOrders = await kv.getByPrefix('work_order:');
-    const reservations = await kv.getByPrefix('reservation:');
-    const customers = await kv.getByPrefix('customer:');
+    const withLists = c.req.query('with_lists') === '1';
+    const role = await getUserRole(user.id);
+
+    // KV 取得を並列化（with_lists 時は locations, users も同時取得）
+    const prefixKeys = ['work_order:', 'reservation:', 'customer:', 'menu_item:'];
+    if (withLists) {
+      prefixKeys.push('location:', 'user:');
+    }
+    const results = await Promise.all(prefixKeys.map((p) => kv.getByPrefix(p)));
+    const workOrders = results[0];
+    const reservations = results[1];
+    const customers = results[2];
+    const menuItems = results[3];
 
     // Get current time in JST (Asia/Tokyo)
     const getJapanNow = () => {
@@ -2188,9 +2219,8 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       }).length,
     };
 
-    // Get recent week sales data (last 7 days)
+    // Get recent week sales data (last 7 days) — menuItems already fetched above
     const weekSalesData = [];
-    const menuItems = await kv.getByPrefix('menu_item:');
     
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
@@ -2226,14 +2256,27 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       return dueDate < today;
     }).length;
 
-    return c.json({
+    const payload: any = {
       top_work_orders: topWorkOrders,
       today_reservations: todayReservations,
       tentative_reservations: tentativeReservations,
       stats,
       week_sales: weekSalesData,
       overdue_work_orders: overdueWorkOrders,
-    });
+    };
+    if (withLists) {
+      const locations = (results[4] || []).filter((l: any) => l.active_flag !== false);
+      const allUsers = (results[5] || []).filter((u: any) => u.active_flag !== false);
+      const users = role !== 'admin'
+        ? allUsers.map((u: any) => ({ user_id: u.user_id, login_id: u.login_id, name: u.name, role: u.role }))
+        : allUsers;
+      payload.reservations = reservations;
+      payload.customers = customers;
+      payload.locations = locations;
+      payload.users = users;
+      payload.menu_items = menuItems;
+    }
+    return c.json(payload);
   } catch (error) {
     console.log(`Get dashboard data error: ${error}`);
     return c.json({ error: String(error) }, 500);

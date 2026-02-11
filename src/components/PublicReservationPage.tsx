@@ -100,55 +100,27 @@ export function PublicReservationPage() {
   }, [selectedLocationId]);
 
   const loadPublicData = async () => {
+    const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+    const headers = {
+      'Authorization': `Bearer ${publicAnonKey}`,
+      'Content-Type': 'application/json',
+    };
     try {
-      const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
-      console.log('[公開予約ページ] API URL:', apiUrl);
-      console.log('[公開予約ページ] projectId:', projectId);
-      
-      // Supabase Edge Functionsはanon keyが必要
-      const headers = {
-        'Authorization': `Bearer ${publicAnonKey}`,
-        'Content-Type': 'application/json',
-      };
-      
-      // Health check
-      try {
-        const healthRes = await fetch(`${apiUrl}/public/health`, { headers });
-        console.log('[公開予約ページ] Health check status:', healthRes.status);
-        if (healthRes.ok) {
-          const healthData = await healthRes.json();
-          console.log('[公開予約ページ] Health check:', healthData);
-        }
-      } catch (healthErr) {
-        console.error('[公開予約ページ] Health check failed:', healthErr);
-      }
-      
-      const menuUrl = `${apiUrl}/public/menu-items`;
-      console.log('[公開予約ページ] メニューURL:', menuUrl);
-      
-      const menuRes = await fetch(menuUrl, { headers });
-      console.log('[公開予約ページ] メニューレスポンス status:', menuRes.status);
-      
+      const [menuRes, locRes, settingsRes] = await Promise.all([
+        fetch(`${apiUrl}/public/menu-items`, { headers }),
+        fetch(`${apiUrl}/public/locations`, { headers }),
+        fetch(`${apiUrl}/public/reservation-settings`, { headers }),
+      ]);
       if (menuRes.ok) {
         const menuData = await menuRes.json();
-        console.log('[公開予約ページ] 読み込まれたメニュー:', menuData.menu_items);
         setMenuItems(menuData.menu_items || []);
-      } else {
-        const errorText = await menuRes.text();
-        console.error('[公開予約ページ] メニューの読み込みに失敗:', menuRes.status, errorText);
       }
-
-      const locRes = await fetch(`${apiUrl}/public/locations`, { headers });
       if (locRes.ok) {
         const locData = await locRes.json();
         setLocations(locData.locations || []);
       }
-
-      // Load reservation settings
-      const settingsRes = await fetch(`${apiUrl}/public/reservation-settings`, { headers });
       if (settingsRes.ok) {
         const settingsData = await settingsRes.json();
-        console.log('[公開予約ページ] 予約設定:', settingsData.settings);
         setReservationSettings(settingsData.settings);
       }
     } catch (err) {

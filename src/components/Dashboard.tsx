@@ -39,68 +39,31 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
 
   useEffect(() => {
     loadDashboard();
-    loadAdditionalData();
   }, []);
 
   const loadDashboard = async () => {
     try {
       setLoading(true);
-      const result = await apiRequest<DashboardData>('/dashboard');
+      // 1 リクエストでダッシュボード＋一覧データを取得（with_lists=1）
+      const result = await apiRequest<DashboardData & {
+        reservations?: Reservation[];
+        customers?: Customer[];
+        locations?: any[];
+        users?: any[];
+        menu_items?: any[];
+      }>('/dashboard?with_lists=1');
       setData(result);
+      if (result.reservations != null) setReservations(result.reservations);
+      if (result.customers != null) setCustomers(result.customers);
+      if (result.locations != null) setLocations(result.locations);
+      if (result.users != null) setUsers(result.users);
+      if (result.menu_items != null) setMenuItems(result.menu_items);
     } catch (err: any) {
       console.error('Load dashboard error:', err);
       setError(err.message);
       toast.error('ダッシュボードの読み込みに失敗しました');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadAdditionalData = async () => {
-    try {
-      // すべてのデータを並列取得（Promise.allSettledで個別エラーハンドリング）
-      const results = await Promise.allSettled([
-        apiRequest<{ reservations: Reservation[] }>('/reservations'),
-        apiRequest<{ customers: Customer[] }>('/customers'),
-        apiRequest<{ locations: any[] }>('/locations'),
-        apiRequest<{ users: any[] }>('/users'), // スタッフ権限では限定情報のみ、403の可能性あり
-        apiRequest<{ menu_items: any[] }>('/menu-items'),
-      ]);
-      
-      // 各結果を個別に処理
-      if (results[0].status === 'fulfilled') {
-        setReservations(results[0].value.reservations);
-      } else {
-        console.error('Failed to load reservations:', results[0].reason);
-      }
-      
-      if (results[1].status === 'fulfilled') {
-        setCustomers(results[1].value.customers);
-      } else {
-        console.error('Failed to load customers:', results[1].reason);
-      }
-      
-      if (results[2].status === 'fulfilled') {
-        setLocations(results[2].value.locations);
-      } else {
-        console.error('Failed to load locations:', results[2].reason);
-      }
-      
-      if (results[3].status === 'fulfilled') {
-        setUsers(results[3].value.users);
-      } else {
-        console.error('Failed to load users:', results[3].reason);
-        setUsers([]); // 403エラー時は空配列で継続
-      }
-      
-      if (results[4].status === 'fulfilled') {
-        setMenuItems(results[4].value.menu_items);
-      } else {
-        console.error('Failed to load menu items:', results[4].reason);
-      }
-    } catch (err: any) {
-      console.error('Load additional data error:', err);
-      // エラーは静かに処理（ダッシュボードの主要データではない）
     }
   };
 
@@ -134,7 +97,6 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
     setReservationModalOpen(false);
     setSelectedReservation(null);
     await loadDashboard();
-    await loadAdditionalData();
   };
 
   const handleReservationDelete = async (reservationId: string) => {
@@ -142,7 +104,6 @@ export function Dashboard({ onNavigate, userRole = 'staff' }: DashboardProps) {
       await apiRequest(`/reservations/${reservationId}`, { method: 'DELETE' });
       toast.success('予約を削除しました');
       await loadDashboard();
-      await loadAdditionalData();
     } catch (err: any) {
       console.error('Delete reservation error:', err);
       toast.error('削除に失敗しました: ' + err.message);
