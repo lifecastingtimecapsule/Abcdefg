@@ -11,6 +11,9 @@ export async function syncToGoogleCalendar(
   menuItem?: any,
   location?: any
 ): Promise<string | null> {
+  // #region agent log
+  console.log('[Google Calendar] syncToGoogleCalendar called', { action, reservation_id: reservation?.reservation_id, has_customer: !!customer, has_menuItem: !!menuItem, has_location: !!location, has_CALENDAR_ID: !!CALENDAR_ID, has_SERVICE_ACCOUNT_JSON: !!SERVICE_ACCOUNT_JSON });
+  // #endregion
   if (!CALENDAR_ID) {
     console.log('[Google Calendar] GOOGLE_CALENDAR_ID missing, skipping sync');
     return null;
@@ -87,8 +90,9 @@ export async function syncToGoogleCalendar(
         calendarId: CALENDAR_ID,
         requestBody: event,
       });
-      console.log(`[Google Calendar] Created event ${res.data.id}`);
-      return res.data.id || null;
+      const eventId = res.data.id || null;
+      console.log('[Google Calendar] Created event', { eventId, reservation_id: reservation?.reservation_id });
+      return eventId;
     } else if (action === 'update' && reservation.google_event_id) {
       try {
         const res = await calendar.events.update({
@@ -115,6 +119,7 @@ export async function syncToGoogleCalendar(
     return null;
   } catch (error) {
     console.error('[Google Calendar] Error:', error);
+    console.error('[Google Calendar] Error detail:', String(error), (error as any)?.code, (error as any)?.message);
     // Don't fail the request if calendar sync fails
     return null;
   }

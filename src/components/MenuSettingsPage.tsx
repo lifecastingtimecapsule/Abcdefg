@@ -26,21 +26,32 @@ export function MenuSettingsPage() {
   const [menuLocationSettings, setMenuLocationSettings] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    loadMenuItems();
-    loadLocations();
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [menuRes, locRes] = await Promise.all([
+          apiRequest('/menu-items'),
+          apiRequest('/locations'),
+        ]);
+        setMenuItems(menuRes.menu_items || []);
+        setLocations(locRes.locations || []);
+      } catch (err: any) {
+        console.error('Load error:', err);
+        toast.error('メニュー・店舗の読み込みに失敗しました');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
   }, []);
 
   const loadMenuItems = async () => {
     try {
-      setLoading(true);
       const data = await apiRequest('/menu-items');
-      console.log('[管理画面] 読み込まれたメニュー:', data.menu_items);
       setMenuItems(data.menu_items || []);
     } catch (err: any) {
       console.error('Load menu items error:', err);
       toast.error('メニュー一覧の読み込みに失敗しました');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -103,22 +114,13 @@ export function MenuSettingsPage() {
   
   const loadMenuLocationSettings = async (menuItemId: string) => {
     try {
-      const settings: Record<string, boolean> = {};
-      
-      for (const location of locations) {
-        try {
-          const data = await apiRequest(`/locations/${location.location_id}/menus`);
-          const menuWithStatus = data.menu_items.find((m: any) => m.menu_item_id === menuItemId);
-          settings[location.location_id] = menuWithStatus?.enabled_at_location ?? false;
-        } catch (err) {
-          console.error(`Error loading menu for location ${location.location_id}:`, err);
-          settings[location.location_id] = false;
-        }
-      }
-      
-      setMenuLocationSettings(settings);
+      const data = await apiRequest<{ location_settings: Record<string, boolean> }>(
+        `/menu-items/${menuItemId}/location-settings`
+      );
+      setMenuLocationSettings(data.location_settings || {});
     } catch (err) {
       console.error('Load menu location settings error:', err);
+      setMenuLocationSettings({});
     }
   };
 
@@ -618,47 +620,24 @@ function LocationMenuModal({ menu, locations, onClose }: { menu: any; locations:
 
   useEffect(() => {
     loadLocationSettings();
-  }, []);
+  }, [menu?.menu_item_id]);
 
   const loadLocationSettings = async () => {
+    if (!menu?.menu_item_id) {
+      setLocationSettings({});
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
-      const settings: Record<string, boolean> = {};
-      
-      console.log('[店舗メニュー設定] Loading for menu:', menu);
-      console.log('[店舗メニュー設定] Locations:', locations);
-      
-      if (!locations || locations.length === 0) {
-        console.warn('[店舗メニュー設定] No locations available');
-        setLocationSettings({});
-        setLoading(false);
-        return;
-      }
-      
-      if (!menu || !menu.menu_item_id) {
-        console.error('[店舗メニュー設定] Invalid menu object:', menu);
-        toast.error('メニュー情報が不正です');
-        setLoading(false);
-        return;
-      }
-      
-      for (const location of locations) {
-        try {
-          const data = await apiRequest(`/locations/${location.location_id}/menus`);
-          console.log(`[店舗メニュー設定] Location ${location.location_id} menus:`, data);
-          const menuWithStatus = data.menu_items.find((m: any) => m.menu_item_id === menu.menu_item_id);
-          settings[location.location_id] = menuWithStatus?.enabled_at_location ?? false;
-        } catch (locationErr) {
-          console.error(`[店舗メニュー設定] Error loading menu for location ${location.location_id}:`, locationErr);
-          settings[location.location_id] = false;
-        }
-      }
-      
-      console.log('[店舗メニュー設定] Final settings:', settings);
-      setLocationSettings(settings);
+      const data = await apiRequest<{ location_settings: Record<string, boolean> }>(
+        `/menu-items/${menu.menu_item_id}/location-settings`
+      );
+      setLocationSettings(data.location_settings || {});
     } catch (err) {
       console.error('[店舗メニュー設定] Load location settings error:', err);
-      toast.error('店舗設定の読み込みに失敗しました: ' + String(err));
+      toast.error('店舗設定の読み込みに失敗しました');
+      setLocationSettings({});
     } finally {
       setLoading(false);
     }

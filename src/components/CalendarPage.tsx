@@ -48,21 +48,27 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const [view, setView] = useState<View>(Views.MONTH);
   const [date, setDate] = useState(new Date());
 
+  const monthParam = useMemo(() => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }, [date]);
+
   useEffect(() => {
     loadData();
-  }, []);
+  }, [monthParam]);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      
+      const month = monthParam;
       const results = await Promise.allSettled([
-        apiRequest('/reservations'),
+        apiRequest(`/reservations?month=${month}`),
         apiRequest('/customers'),
         apiRequest('/locations'),
         apiRequest('/menu-items'),
         apiRequest('/users'),
-        apiRequest('/work-orders'),
+        apiRequest(`/work-orders?month=${month}`),
       ]);
 
       let resData: any = { reservations: [] };

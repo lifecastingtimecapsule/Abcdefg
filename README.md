@@ -92,14 +92,38 @@
       `https://<project-id>.supabase.co/functions/v1/make-server-fe84bde0/...`
       にリクエストが飛ぶ想定です。
 
- 3. **環境変数（サービスロールキー、Google カレンダー連携など）**
-    - `src/supabase/functions/server/kv_store.tsx` などでは
-      `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` を利用します。
-    - `google_calendar.tsx` では
-      - `GOOGLE_CALENDAR_ID`
-      - `GOOGLE_SERVICE_ACCOUNT_JSON`
-      を利用します。
-    - これらは Supabase プロジェクトの「環境変数」画面で設定してください。
+ 3. **API のベースURL・パスの確認**
+    - Supabase ダッシュボード → **Project Settings**（左下の歯車）→ **API** を開く。
+    - **Project URL**: `https://<project-id>.supabase.co` が表示されます。`<project-id>` が API で使うプロジェクトIDです。
+    - **Edge Function のベースURL**（このプロジェクトで使用）:
+      ```text
+      https://<project-id>.supabase.co/functions/v1/make-server-fe84bde0
+      ```
+    - 例: プロジェクトID が `abcdefghij` なら
+      - ログイン: `POST https://abcdefghij.supabase.co/functions/v1/make-server-fe84bde0/login`
+      - 予約一覧: `GET https://abcdefghij.supabase.co/functions/v1/make-server-fe84bde0/reservations`
+      - 公開予約作成: `POST https://abcdefghij.supabase.co/functions/v1/make-server-fe84bde0/public/reservations`
+    - フロントの `.env.local` では `VITE_SUPABASE_PROJECT_ID` にこの `<project-id>` を入れます。
+
+ 4. **Edge Function の環境変数（シークレット）の追加方法**
+    - ダッシュボードで追加する場合:
+      1. 左メニュー **Edge Functions** をクリック。
+      2. 上部または関数一覧の横にある **Secrets**（または **Manage secrets**）をクリック。  
+         （表示名は「Secrets」「Environment Variables」などの場合があります。）
+      3. **Add new secret** で「キー」と「値」を入力して保存。
+    - 追加するキーと値の例:
+      | キー | 値の取得元・内容 |
+      |------|------------------|
+      | `SUPABASE_JWT_SECRET` | **Project Settings** → **API** → **JWT Secret** をコピー（ログイン高速化用） |
+      | `GOOGLE_CALENDAR_ID` | Google カレンダー設定で「カレンダーID」（予約を反映したいカレンダー） |
+      | `GOOGLE_SERVICE_ACCOUNT_JSON` | Google Cloud で作成したサービスアカウントの JSON キーを **1行の文字列** で貼り付け |
+    - **注意**: `GOOGLE_SERVICE_ACCOUNT_JSON` は、JSON 全体をそのまま 1 つの文字列として貼り付けます（改行を含めても可。Edge Function 内で `JSON.parse` しています）。
+    - すでに Supabase が注入しているため、通常は追加不要: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`。
+
+ 5. **既存ユーザーでログインできない場合**
+    - ログインは `user_login:ログインID` でユーザーを参照するため、既存データにはこのキーが無い場合があります。
+    - 管理者でログイン後、`POST .../admin/backfill-user-login` を 1 回実行すると全ユーザーに `user_login` が設定されます。
+    - パスワードを一度「管理者が更新」すると、次回からは KV のハッシュで検証するためログインが速くなります。
 
  ---
 

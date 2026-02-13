@@ -111,7 +111,13 @@ export default function App() {
     }
   };
 
-  const handleLogin = async () => {
+  const handleLogin = async (initialUser?: User) => {
+    if (initialUser) {
+      setCurrentUser(initialUser);
+      setIsAuthenticated(true);
+      setLoading(false);
+      return;
+    }
     await checkAuth();
   };
 

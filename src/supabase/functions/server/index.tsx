@@ -2,10 +2,16 @@ import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import bcrypt from 'npm:bcryptjs';
+import * as jose from 'npm:jose';
 import * as db from './db.ts';
 import { syncToGoogleCalendar } from './google_calendar.tsx';
 
 const app = new Hono();
+
+const JWT_SECRET = Deno.env.get('SUPABASE_JWT_SECRET') || '';
+const SALT_ROUNDS = 10;
+const JWT_EXPIRY = '7d';
 
 app.use('*', cors());
 app.use('*', logger(console.log));
@@ -24,28 +30,30 @@ const DEFAULT_ADMIN = {
 };
 
 // ========== Auth Helpers ==========
-async function getAuthUser(request: Request) {
+async function getAuthUser(request: Request): Promise<{ id: string } | null> {
   const authHeader = request.headers.get('Authorization');
-  if (!authHeader) {
-    return null;
-  }
-  
+  if (!authHeader) return null;
   const accessToken = authHeader.split(' ')[1];
-  if (!accessToken) {
-    return null;
+  if (!accessToken) return null;
+
+  const supabaseUser = await supabase.auth.getUser(accessToken);
+  if (supabaseUser.data?.user) {
+    return supabaseUser.data.user;
   }
-  
-  const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-  if (error) {
-    // Token expired or invalid - this is normal behavior
-    console.log(`[Auth] Token validation failed: ${error.message}`);
-    return null;
+  if (JWT_SECRET) {
+    try {
+      const { payload } = await jose.jwtVerify(
+        accessToken,
+        new TextEncoder().encode(JWT_SECRET),
+        { algorithms: ['HS256'] }
+      );
+      const sub = payload.sub;
+      if (sub) return { id: sub };
+    } catch (_) {
+      // not our JWT or invalid
+    }
   }
-  if (!user) {
-    return null;
-  }
-  
-  return user;
+  return null;
 }
 
 async function getUserRole(userId: string) {
@@ -55,32 +63,50 @@ async function getUserRole(userId: string) {
 
 // ========== Auth Routes ==========
 
-// Login with login_id
+// Login with login_id（全件探索なし: user_login のみ。password_hash があれば Edge 内検証＋自前 JWT で Supabase Auth 呼び出しを回避）
 app.post('/make-server-fe84bde0/login', async (c) => {
+  const tStart = Date.now();
   try {
     const body = await c.req.json();
     const { login_id, password } = body;
 
-    // Find user by login_id
+    // Find user by login_id (db)
     const user = await db.getAppUserByLoginId(login_id);
 
     if (!user) {
-      console.log(`Login failed: User with login_id ${login_id} not found`);
+      console.log(`Login failed: user not found for ${login_id}`);
       return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
-
-    // Authenticate with Supabase using email
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: user.email,
-      password,
-    });
-
-    if (error) {
-      console.log(`Login authentication error: ${error.message}`);
-      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+    if (user.active_flag === false) {
+      return c.json({ error: 'このアカウントは無効です' }, 403);
     }
 
-    // Update last login timestamp
+    let accessToken: string;
+    if (user.password_hash && JWT_SECRET) {
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) {
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+      }
+      const secret = new TextEncoder().encode(JWT_SECRET);
+      accessToken = await new jose.SignJWT({ email: user.email })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setSubject(user.user_id)
+        .setIssuedAt()
+        .setExpirationTime(JWT_EXPIRY)
+        .sign(secret);
+    } else {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password,
+      });
+      if (error) {
+        console.log(`Login authentication error: ${error.message}`);
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+      }
+      accessToken = data.session.access_token;
+    }
+    const tAfterAuth = Date.now();
+
     try {
       const updatedUser = {
         ...user,
@@ -89,17 +115,18 @@ app.post('/make-server-fe84bde0/login', async (c) => {
       await db.upsertAppUser(updatedUser);
     } catch (updateError) {
       console.log(`Failed to update last login time: ${updateError}`);
-      // Don't fail the login if we can't update the timestamp
     }
 
     return c.json({
       success: true,
-      access_token: data.session.access_token,
+      access_token: accessToken,
       user: {
         user_id: user.user_id,
         name: user.name,
         login_id: user.login_id,
         role: user.role,
+        created_at: user.created_at || new Date().toISOString(),
+        updated_at: user.updated_at || new Date().toISOString(),
       },
     });
   } catch (error) {
@@ -123,7 +150,6 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
       return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
     }
 
-    // Check if login_id already exists
     const existingByLogin = await db.getAppUserByLoginId(login_id);
     if (existingByLogin) {
       return c.json({ error: 'このログインIDは既に使用されています' }, 400);
@@ -144,7 +170,6 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
 
     const userId = data.user.id;
 
-    // Store user profile
     await db.upsertAppUser({
       user_id: userId,
       name,
@@ -236,7 +261,6 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
       userId = data.user.id;
     }
     
-    // Store admin profile
     await db.upsertAppUser({
       user_id: userId,
       name: DEFAULT_ADMIN.name,
@@ -247,7 +271,6 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
-    
     console.log('✅ Default admin account created successfully!');
 
     // Create default location (豊川店)
@@ -310,6 +333,20 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
     
   } catch (error) {
     console.error(`System initialization error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// 既存ユーザーに user_login を一括設定（ログインは app_users.login_id で行うため、本エンドポイントは互換用）
+app.post('/make-server-fe84bde0/admin/backfill-user-login', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    if (await getUserRole(user.id) !== 'admin') return c.json({ error: 'Admin access required' }, 403);
+    const users = await db.getAppUsers();
+    return c.json({ success: true, updated: 0, total: users.length, note: 'Login is via app_users.login_id' });
+  } catch (error) {
+    console.log(`Backfill user_login error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -395,14 +432,19 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
 
     // Update password if provided
     if (update_password) {
+      if (update_password.length < 6) {
+        return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
+      }
       try {
         await supabase.auth.admin.updateUserById(user_id, { password: update_password });
+        updatedUser.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
       } catch (pwError) {
         console.error(`Failed to update password: ${pwError}`);
         return c.json({ error: 'パスワードの��新に失敗しました' }, 500);
       }
     }
 
+    await db.upsertAppUser(updatedUser);
     return c.json({ success: true, user: updatedUser });
   } catch (error) {
     console.log(`Update user error: ${error}`);
@@ -782,7 +824,7 @@ app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
 
 // ========== Reservations ==========
 
-// Get all reservations
+// Get reservations（optional: ?month=YYYY-MM or ?start=YYYY-MM-DD&end=YYYY-MM-DD で範囲指定、待機時間削減）
 app.get('/make-server-fe84bde0/reservations', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -790,7 +832,27 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const reservations = await db.getReservations();
+    let reservations = await db.getReservations();
+    const month = c.req.query('month');
+    const start = c.req.query('start');
+    const end = c.req.query('end');
+    if (month) {
+      const [y, m] = month.split('-').map(Number);
+      const startDate = new Date(y, m - 1, 1);
+      const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+      reservations = reservations.filter((r: any) => {
+        const d = new Date(r.reservation_date_time);
+        return d >= startDate && d <= endDate;
+      });
+    } else if (start && end) {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      endDate.setHours(23, 59, 59, 999);
+      reservations = reservations.filter((r: any) => {
+        const d = new Date(r.reservation_date_time);
+        return d >= startDate && d <= endDate;
+      });
+    }
     return c.json({ reservations });
   } catch (error) {
     console.log(`Get reservations error: ${error}`);
@@ -919,6 +981,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       
       if (reservationData.status !== 'cancelled') {
         const eventId = await syncToGoogleCalendar(action, reservationData, customer, menuItem, location);
+        console.log('[Reservation] Calendar sync result', { eventId, reservationId });
         if (eventId && eventId !== reservationData.google_event_id) {
            reservationData.google_event_id = eventId;
            // Save again with event ID
@@ -933,7 +996,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
          }
       }
     } catch (calError) {
-      console.error('Calendar sync failed:', calError);
+      console.error('[Reservation] Calendar sync failed:', calError);
     }
 
     // Audit log
@@ -1081,7 +1144,7 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
 
 // ========== Work Orders ==========
 
-// Get all work orders
+// Get work orders（optional: ?month=YYYY-MM で範囲指定、待機時間削減）
 app.get('/make-server-fe84bde0/work-orders', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -1089,7 +1152,17 @@ app.get('/make-server-fe84bde0/work-orders', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const workOrders = await db.getWorkOrders();
+    let workOrders = await db.getWorkOrders();
+    const month = c.req.query('month');
+    if (month) {
+      const [y, m] = month.split('-').map(Number);
+      const startDate = new Date(y, m - 1, 1);
+      const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+      workOrders = workOrders.filter((wo: any) => {
+        const d = new Date(wo.due_date || wo.created_at || 0);
+        return d >= startDate && d <= endDate;
+      });
+    }
     return c.json({ work_orders: workOrders });
   } catch (error) {
     console.log(`Get work orders error: ${error}`);
@@ -1771,26 +1844,23 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
       userData.login_id = update_login_id;
     }
     
-    // Update password in Supabase Auth if provided
+    // Update password in Supabase Auth and KV password_hash if provided
     if (update_password) {
-      // Validate password length
       if (update_password.length < 6) {
         return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
       }
-      
       const { error: passwordError } = await supabase.auth.admin.updateUserById(
         user_id,
         { password: update_password }
       );
-      
       if (passwordError) {
         console.error(`Failed to update password: ${passwordError.message}`);
         return c.json({ error: `パスワード更新に失敗しました: ${passwordError.message}` }, 500);
       }
+      userData.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
     }
-    
-    userData.updated_at = new Date().toISOString();
 
+    userData.updated_at = new Date().toISOString();
     await db.upsertAppUser(userData);
 
     return c.json({ success: true, user: userData });
@@ -2049,6 +2119,26 @@ app.post('/make-server-fe84bde0/locations/:location_id/menus/:menu_id/toggle', a
   }
 });
 
+// Get location settings for one menu item (all locations in one call — avoids N+1)
+app.get('/make-server-fe84bde0/menu-items/:menu_item_id/location-settings', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const menuItemId = c.req.param('menu_item_id');
+    const allLocationMenus = await db.getLocationMenusByMenuItemId(menuItemId);
+    const settings: Record<string, boolean> = {};
+    for (const lm of allLocationMenus) {
+      settings[(lm as any).location_id] = (lm as any).enabled ?? false;
+    }
+    return c.json({ location_settings: settings });
+  } catch (error) {
+    console.log(`Get menu item location settings error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
 // ========== Staff (alias for users, for compatibility) ==========
 
 // Get all staff
@@ -2071,7 +2161,7 @@ app.get('/make-server-fe84bde0/staff', async (c) => {
 
 // ========== Dashboard ==========
 
-// Get dashboard data
+// Get dashboard data (optional ?with_lists=1 returns reservations, customers, locations, users, menu_items in one response)
 app.get('/make-server-fe84bde0/dashboard', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
@@ -2079,10 +2169,15 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    // Get work orders
-    const workOrders = await db.getWorkOrders();
-    const reservations = await db.getReservations();
-    const customers = await db.getCustomers({ activeOnly: false });
+    const withLists = c.req.query('with_lists') === '1';
+    const role = await getUserRole(user.id);
+
+    const [workOrders, reservations, customers, menuItems] = await Promise.all([
+      db.getWorkOrders(),
+      db.getReservations(),
+      db.getCustomers({ activeOnly: false }),
+      db.getMenuItems(),
+    ]);
 
     // Get current time in JST (Asia/Tokyo)
     const getJapanNow = () => {
@@ -2182,9 +2277,8 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       }).length,
     };
 
-    // Get recent week sales data (last 7 days)
+    // Get recent week sales data (last 7 days) — menuItems already fetched above
     const weekSalesData = [];
-    const menuItems = await db.getMenuItems();
     
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
@@ -2220,14 +2314,39 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
       return dueDate < today;
     }).length;
 
-    return c.json({
+    const payload: any = {
       top_work_orders: topWorkOrders,
       today_reservations: todayReservations,
       tentative_reservations: tentativeReservations,
       stats,
       week_sales: weekSalesData,
       overdue_work_orders: overdueWorkOrders,
-    });
+    };
+    if (withLists) {
+      const month = c.req.query('month');
+      let listReservations = reservations;
+      if (month) {
+        const [y, m] = month.split('-').map(Number);
+        const startDate = new Date(y, m - 1, 1);
+        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+        listReservations = reservations.filter((r: any) => {
+          const d = new Date(r.reservation_date_time);
+          return d >= startDate && d <= endDate;
+        });
+      }
+      const locationsList = await db.getLocations();
+      const locations = locationsList.filter((l: any) => l.active_flag !== false);
+      const allUsers = (await db.getAppUsers()).filter((u: any) => u.active_flag !== false);
+      const users = role !== 'admin'
+        ? allUsers.map((u: any) => ({ user_id: u.user_id, login_id: u.login_id, name: u.name, role: u.role }))
+        : allUsers;
+      payload.reservations = listReservations;
+      payload.customers = customers;
+      payload.locations = locations;
+      payload.users = users;
+      payload.menu_items = menuItems;
+    }
+    return c.json(payload);
   } catch (error) {
     console.log(`Get dashboard data error: ${error}`);
     return c.json({ error: String(error) }, 500);
@@ -2924,6 +3043,20 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
     };
 
     await db.upsertReservation(reservationData);
+
+    // Sync to Google Calendar (public reservation)
+    try {
+      console.log('[Public Reservation] Calendar sync starting', { reservationId });
+      const locationForCal = await db.getLocation(location_id);
+      const eventId = await syncToGoogleCalendar('create', reservationData, customer, menuItem, locationForCal);
+      console.log('[Public Reservation] Calendar sync result', { eventId, reservationId });
+      if (eventId) {
+        reservationData.google_event_id = eventId;
+        await db.upsertReservation(reservationData);
+      }
+    } catch (calError) {
+      console.error('[Public Reservation] Calendar sync failed:', calError);
+    }
 
     // Send confirmation email using Brevo (Sendinblue)
     try {

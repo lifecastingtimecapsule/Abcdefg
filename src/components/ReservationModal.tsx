@@ -89,19 +89,39 @@ export function ReservationModal({
   }, [mode]);
 
   useEffect(() => {
-    if (reservation) {
-      loadWorkOrders();
-    }
-  }, [reservation]);
+    const load = async () => {
+      if (propMenuItems) {
+        setMenuItems(propMenuItems.filter((item: any) => item.is_active) || []);
+      } else {
+        const [menuRes, workOrderRes] = await Promise.all([
+          apiRequest<{ menu_items: any[] }>('/menu-items'),
+          reservation ? apiRequest<{ work_orders: any[] }>('/work-orders') : Promise.resolve(null),
+        ]);
+        setMenuItems((menuRes.menu_items || []).filter((item: any) => item.is_active));
+        if (workOrderRes?.work_orders && reservation) {
+          setWorkOrders(
+            workOrderRes.work_orders.filter((wo: any) => wo.reservation_id === reservation.reservation_id)
+          );
+        }
+      }
+    };
+    load();
+  }, [reservation?.reservation_id, propMenuItems]);
 
   useEffect(() => {
-    loadMenuItems();
-    if (reservation) {
-      const dateTime = reservation.reservation_date_time || '';
-      const [date, time] = dateTime.split('T');
-      
-      // Find customer data
-      const customer = customers.find(c => c.customer_id === reservation.customer_id);
+    if (!reservation) {
+      if (mode === 'edit') {
+        setFormData(prev => ({
+          ...prev,
+          children: [{ name: '', name_kana: '', age_years: null, age_months: null, gender: null }]
+        }));
+      }
+      return;
+    }
+    const dateTime = reservation.reservation_date_time || '';
+    const [date, time] = dateTime.split('T');
+    
+    const customer = customers.find(c => c.customer_id === reservation.customer_id);
       
       // Save initial customer data for comparison
       const customerData = {
@@ -145,13 +165,6 @@ export function ReservationModal({
         // Load customer data for editing
         ...customerData,
       });
-    } else if (mode === 'edit' && !reservation) {
-      // New reservation: initialize with one empty child
-      setFormData(prev => ({
-        ...prev,
-        children: [{ name: '', name_kana: '', age_years: null, age_months: null, gender: null }]
-      }));
-    }
   }, [reservation, customers]);
 
   const loadMenuItems = async () => {

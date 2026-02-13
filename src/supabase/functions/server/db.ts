@@ -226,6 +226,15 @@ export async function getLocationMenu(locationId: string, menuItemId: string): P
   return data as Record<string, unknown> | null;
 }
 
+export async function getLocationMenusByMenuItemId(menuItemId: string): Promise<Record<string, unknown>[]> {
+  const { data, error } = await getClient()
+    .from('location_menus')
+    .select('*')
+    .eq('menu_item_id', menuItemId);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
 // ========== Reservations ==========
 export async function getReservation(reservationId: string): Promise<Record<string, unknown> | null> {
   const { data, error } = await getClient()
