@@ -2,7 +2,7 @@ import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import * as kv from './kv_store.tsx';
+import * as db from './db.ts';
 import { syncToGoogleCalendar } from './google_calendar.tsx';
 
 const app = new Hono();
@@ -49,8 +49,8 @@ async function getAuthUser(request: Request) {
 }
 
 async function getUserRole(userId: string) {
-  const userData = await kv.get(`user:${userId}`);
-  return userData?.role || null;
+  const userData = await db.getAppUser(userId);
+  return (userData?.role as string) || null;
 }
 
 // ========== Auth Routes ==========
@@ -62,8 +62,7 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     const { login_id, password } = body;
 
     // Find user by login_id
-    const users = await kv.getByPrefix('user:');
-    const user = users.find((u: any) => u.login_id === login_id && u.active_flag !== false);
+    const user = await db.getAppUserByLoginId(login_id);
 
     if (!user) {
       console.log(`Login failed: User with login_id ${login_id} not found`);
@@ -87,7 +86,7 @@ app.post('/make-server-fe84bde0/login', async (c) => {
         ...user,
         last_login_at: new Date().toISOString(),
       };
-      await kv.set(`user:${user.user_id}`, updatedUser);
+      await db.upsertAppUser(updatedUser);
     } catch (updateError) {
       console.log(`Failed to update last login time: ${updateError}`);
       // Don't fail the login if we can't update the timestamp
@@ -125,9 +124,8 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
     }
 
     // Check if login_id already exists
-    const users = await kv.getByPrefix('user:');
-    const existingUser = users.find((u: any) => u.login_id === login_id);
-    if (existingUser) {
+    const existingByLogin = await db.getAppUserByLoginId(login_id);
+    if (existingByLogin) {
       return c.json({ error: 'このログインIDは既に使用されています' }, 400);
     }
 
@@ -146,8 +144,8 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
 
     const userId = data.user.id;
 
-    // Store user profile in KV store
-    await kv.set(`user:${userId}`, {
+    // Store user profile
+    await db.upsertAppUser({
       user_id: userId,
       name,
       email,
@@ -173,9 +171,9 @@ app.get('/make-server-fe84bde0/me', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const userData = await kv.get(`user:${user.id}`);
+    const userData = await db.getAppUser(user.id);
     if (!userData) {
-      console.error(`[/me] User data not found in KV store for: ${user.id}`);
+      console.error(`[/me] User data not found for: ${user.id}`);
       return c.json({ error: 'User not found' }, 404);
     }
 
@@ -191,8 +189,8 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
   try {
     console.log('System initialization requested...');
     
-    // Check if any users exist in KV store
-    const users = await kv.getByPrefix('user:');
+    // Check if any users exist
+    const users = await db.getAppUsers();
     if (users.length > 0) {
       return c.json({ 
         error: 'システムは既に初期化されています。ユーザーが存在します。',
@@ -238,8 +236,8 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
       userId = data.user.id;
     }
     
-    // Store admin profile in KV store
-    await kv.set(`user:${userId}`, {
+    // Store admin profile
+    await db.upsertAppUser({
       user_id: userId,
       name: DEFAULT_ADMIN.name,
       email: DEFAULT_ADMIN.email,
@@ -254,7 +252,7 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
 
     // Create default location (豊川店)
     const locationId = crypto.randomUUID();
-    await kv.set(`location:${locationId}`, {
+    await db.upsertLocation({
       location_id: locationId,
       location_name: '豊川店',
       address_text: '',
@@ -292,7 +290,7 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
 
     for (const menuItem of defaultMenuItems) {
       const menuId = crypto.randomUUID();
-      await kv.set(`menu_item:${menuId}`, {
+      await db.upsertMenuItem({
         menu_item_id: menuId,
         ...menuItem,
         created_at: new Date().toISOString(),
@@ -327,8 +325,8 @@ app.get('/make-server-fe84bde0/users', async (c) => {
     }
 
     const role = await getUserRole(user.id);
-    const users = await kv.getByPrefix('user:');
-    const activeUsers = users.filter((u: any) => u.active_flag !== false);
+    const allUsers = await db.getAppUsers();
+    const activeUsers = allUsers.filter((u: any) => u.active_flag !== false);
 
     // スタッフ権限の場合は限定された情報のみを返す
     if (role !== 'admin') {
@@ -369,15 +367,15 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
       return c.json({ error: 'user_id is required' }, 400);
     }
 
-    const userData = await kv.get(`user:${user_id}`);
+    const userData = await db.getAppUser(user_id);
     if (!userData) {
       return c.json({ error: 'User not found' }, 404);
     }
 
     // Check if new login_id is unique (if provided)
     if (update_login_id && update_login_id !== userData.login_id) {
-      const allUsers = await kv.getByPrefix('user:');
-      const existingUser = allUsers.find((u: any) => u.login_id === update_login_id && u.user_id !== user_id);
+      const existingByLogin = await db.getAppUserByLoginId(update_login_id);
+      const existingUser = existingByLogin && (existingByLogin as any).user_id !== user_id ? existingByLogin : null;
       if (existingUser) {
         return c.json({ error: 'このログインIDは既に使用されています' }, 400);
       }
@@ -393,7 +391,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(`user:${user_id}`, updatedUser);
+    await db.upsertAppUser(updatedUser);
 
     // Update password if provided
     if (update_password) {
@@ -435,7 +433,7 @@ app.delete('/make-server-fe84bde0/users/:user_id', async (c) => {
       return c.json({ error: '自分自身を削除することはできません' }, 400);
     }
 
-    const userData = await kv.get(`user:${userId}`);
+    const userData = await db.getAppUser(userId);
     if (!userData) {
       return c.json({ error: 'User not found' }, 404);
     }
@@ -447,7 +445,7 @@ app.delete('/make-server-fe84bde0/users/:user_id', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(`user:${userId}`, updatedUser);
+    await db.upsertAppUser(updatedUser);
 
     return c.json({ success: true });
   } catch (error) {
@@ -466,7 +464,7 @@ app.get('/make-server-fe84bde0/locations', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const locations = await kv.getByPrefix('location:');
+    const locations = await db.getLocations();
     return c.json({ locations: locations.filter((l: any) => l.active_flag !== false) });
   } catch (error) {
     console.log(`Get locations error: ${error}`);
@@ -500,7 +498,7 @@ app.post('/make-server-fe84bde0/locations', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(`location:${locationData.location_id}`, locationData);
+    await db.upsertLocation(locationData);
     return c.json({ success: true, location: locationData });
   } catch (error) {
     console.log(`Create/Update location error: ${error}`);
@@ -525,7 +523,7 @@ app.get('/make-server-fe84bde0/customers', async (c) => {
     const search = c.req.query('search')?.toLowerCase() || '';
 
     // Get all active customers
-    let customers = await kv.getByPrefix('customer:');
+    let customers = await db.getCustomers({ activeOnly: false });
     customers = customers.filter((cust: any) => cust.active_flag !== false);
 
     // Apply search filter if provided
@@ -601,7 +599,7 @@ app.get('/make-server-fe84bde0/customers/search', async (c) => {
     const code = c.req.query('code');
     const name = c.req.query('name');
     
-    const customers = await kv.getByPrefix('customer:');
+    const customers = await db.getCustomers({ activeOnly: false });
     let found = customers.filter((cust: any) => cust.active_flag !== false);
     
     if (phone) {
@@ -663,7 +661,7 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
     if (!customerId) {
       customerId = crypto.randomUUID();
       // Generate customer code (A-1001, A-1002, etc.)
-      const allCustomers = await kv.getByPrefix('customer:');
+      const allCustomers = await db.getCustomers({ activeOnly: false });
       const maxCode = allCustomers.reduce((max: number, c: any) => {
         const match = c.customer_code?.match(/A-(\d+)/);
         if (match) {
@@ -676,7 +674,7 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
       createdAt = new Date().toISOString();
     } else {
       // Updating existing customer - preserve existing code and created_at
-      const existingCustomer = await kv.get(`customer:${customerId}`);
+      const existingCustomer = await db.getCustomer(customerId);
       if (existingCustomer) {
         customerCode = existingCustomer.customer_code;
         createdAt = existingCustomer.created_at;
@@ -712,10 +710,10 @@ app.post('/make-server-fe84bde0/customers', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(`customer:${customerId}`, customerData);
+    await db.upsertCustomer(customerData);
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'customers',
       ref_id: customerId,
       action_type: customer_id ? 'update' : 'create',
@@ -745,7 +743,7 @@ app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
-    const customers = await kv.getByPrefix('customer:');
+    const customers = await db.getCustomers({ activeOnly: false });
     let updatedCount = 0;
     const updatedCustomers = [];
 
@@ -757,7 +755,7 @@ app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
       if (hasMonths && hasNoYears) {
         customer.child_age_years = 0;
         customer.updated_at = new Date().toISOString();
-        await kv.set(`customer:${customer.customer_id}`, customer);
+        await db.upsertCustomer(customer);
         updatedCount++;
         updatedCustomers.push({
           customer_id: customer.customer_id,
@@ -792,7 +790,7 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const reservations = await kv.getByPrefix('reservation:');
+    const reservations = await db.getReservations();
     return c.json({ reservations });
   } catch (error) {
     console.log(`Get reservations error: ${error}`);
@@ -832,8 +830,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
     let reservationNumber = body.reservation_number;
     if (!reservation_id) {
       // Generate a unique 5-character lowercase alphanumeric reservation number
-      const allReservations = await kv.getByPrefix('reservation:');
-      const existingNumbers = new Set(allReservations.map((r: any) => r.reservation_number).filter(Boolean));
+      const existingNumbers = new Set(await db.getReservationNumbers());
       
       let attempts = 0;
       const maxAttempts = 100;
@@ -875,12 +872,12 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
       updated_by_user_id: user.id,
     };
 
-    await kv.set(`reservation:${reservationId}`, reservationData);
+    await db.upsertReservation(reservationData);
 
     // Auto-create work order if status is confirmed and work_required is set
     if (status === 'confirmed' && work_required && work_required.trim() !== '') {
       // Check if work order already exists for this reservation
-      const existingWorkOrders = await kv.getByPrefix('work_order:');
+      const existingWorkOrders = await db.getWorkOrders();
       const existingWorkOrder = existingWorkOrders.find((wo: any) => wo.reservation_id === reservationId);
 
       if (!existingWorkOrder) {
@@ -906,7 +903,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
           updated_by_user_id: user.id,
         };
 
-        await kv.set(`work_order:${workOrderId}`, workOrderData);
+        await db.upsertWorkOrder(workOrderData);
 
         console.log(`Auto-created work order ${workOrderId} for reservation ${reservationId}`);
       }
@@ -914,9 +911,9 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
 
     // Sync to Google Calendar
     try {
-      const customer = await kv.get(`customer:${reservationData.customer_id}`);
-      const menuItem = reservationData.menu_item_id ? await kv.get(`menu_item:${reservationData.menu_item_id}`) : null;
-      const location = await kv.get(`location:${reservationData.location_id}`);
+      const customer = await db.getCustomer(reservationData.customer_id);
+      const menuItem = reservationData.menu_item_id ? await db.getMenuItem(reservationData.menu_item_id) : null;
+      const location = await db.getLocation(reservationData.location_id);
       
       const action = reservation_id ? 'update' : 'create';
       
@@ -925,14 +922,14 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
         if (eventId && eventId !== reservationData.google_event_id) {
            reservationData.google_event_id = eventId;
            // Save again with event ID
-           await kv.set(`reservation:${reservationId}`, reservationData);
+           await db.upsertReservation(reservationData);
         }
       } else if (action === 'update' && reservationData.status === 'cancelled') {
          // If cancelled, delete from calendar
          await syncToGoogleCalendar('delete', reservationData);
          if (reservationData.google_event_id) {
              delete reservationData.google_event_id;
-             await kv.set(`reservation:${reservationId}`, reservationData);
+             await db.upsertReservation(reservationData);
          }
       }
     } catch (calError) {
@@ -940,7 +937,7 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
     }
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'reservations',
       ref_id: reservationId,
       action_type: reservation_id ? 'update' : 'create',
@@ -970,7 +967,7 @@ app.delete('/make-server-fe84bde0/reservations/:id', async (c) => {
     }
 
     const reservationId = c.req.param('id');
-    const reservation = await kv.get(`reservation:${reservationId}`);
+    const reservation = await db.getReservation(reservationId);
 
     // Sync to Google Calendar
     try {
@@ -979,10 +976,10 @@ app.delete('/make-server-fe84bde0/reservations/:id', async (c) => {
        }
     } catch (e) { console.error(e); }
 
-    await kv.del(`reservation:${reservationId}`);
+    await db.deleteReservation(reservationId);
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'reservations',
       ref_id: reservationId,
       action_type: 'delete',
@@ -1011,8 +1008,8 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
       return c.json({ error: 'Admin access required' }, 403);
     }
 
-    const reservations = await kv.getByPrefix('reservation:');
-    const workOrders = await kv.getByPrefix('work_order:');
+    const reservations = await db.getReservations();
+    const workOrders = await db.getWorkOrders();
     
     let createdCount = 0;
     const createdWorkOrders = [];
@@ -1061,7 +1058,7 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
             updated_by_user_id: user.id,
           };
 
-          await kv.set(`work_order:${workOrderId}`, workOrderData);
+          await db.upsertWorkOrder(workOrderData);
           createdCount++;
           createdWorkOrders.push(workOrderData);
 
@@ -1092,7 +1089,7 @@ app.get('/make-server-fe84bde0/work-orders', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const workOrders = await kv.getByPrefix('work_order:');
+    const workOrders = await db.getWorkOrders();
     return c.json({ work_orders: workOrders });
   } catch (error) {
     console.log(`Get work orders error: ${error}`);
@@ -1132,7 +1129,7 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
 
     // Check for duplicate work orders for the same reservation and product type (only for new work orders)
     if (!work_order_id && reservation_id) {
-      const allWorkOrders = await kv.getByPrefix('work_order:');
+      const allWorkOrders = await db.getWorkOrders();
       const duplicateExists = allWorkOrders.some((wo: any) => 
         wo.reservation_id === reservation_id && 
         wo.product_type === product_type &&
@@ -1170,10 +1167,10 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
       updated_by_user_id: user.id,
     };
 
-    await kv.set(`work_order:${workOrderId}`, workOrderData);
+    await db.upsertWorkOrder(workOrderData);
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'work_orders',
       ref_id: workOrderId,
       action_type: work_order_id ? 'update' : 'create',
@@ -1198,16 +1195,16 @@ app.delete('/make-server-fe84bde0/work-orders/:id', async (c) => {
     }
 
     const workOrderId = c.req.param('id');
-    const workOrder = await kv.get(`work_order:${workOrderId}`);
+    const workOrder = await db.getWorkOrder(workOrderId);
 
     if (!workOrder) {
       return c.json({ error: 'Work order not found' }, 404);
     }
 
-    await kv.del(`work_order:${workOrderId}`);
+    await db.deleteWorkOrder(workOrderId);
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'work_orders',
       ref_id: workOrderId,
       action_type: 'delete',
@@ -1235,12 +1232,12 @@ app.post('/make-server-fe84bde0/work-orders/reorder', async (c) => {
     const { orders } = body; // Array of { work_order_id, priority_order }
 
     for (const item of orders) {
-      const workOrder = await kv.get(`work_order:${item.work_order_id}`);
+      const workOrder = await db.getWorkOrder(item.work_order_id);
       if (workOrder) {
         workOrder.priority_order = item.priority_order;
         workOrder.updated_at = new Date().toISOString();
         workOrder.updated_by_user_id = user.id;
-        await kv.set(`work_order:${item.work_order_id}`, workOrder);
+        await db.upsertWorkOrder(workOrder);
       }
     }
 
@@ -1269,9 +1266,9 @@ app.get('/make-server-fe84bde0/incentives/debug', async (c) => {
     const targetDate = c.req.query('date'); // Format: 2024-10-29
     const targetStaffId = c.req.query('staff_id');
 
-    const reservations = await kv.getByPrefix('reservation:');
-    const workOrders = await kv.getByPrefix('work_order:');
-    const users = await kv.getByPrefix('user:');
+    const reservations = await db.getReservations();
+    const workOrders = await db.getWorkOrders();
+    const users = await db.getAppUsers();
 
     // Filter reservations by date and staff
     const filteredReservations = reservations.filter((r: any) => {
@@ -1356,7 +1353,7 @@ app.get('/make-server-fe84bde0/incentives', async (c) => {
     }
 
     // Get all reservations
-    const reservations = await kv.getByPrefix('reservation:');
+    const reservations = await db.getReservations();
 
     // Build incentive data for each staff based on confirmed reservations
     const incentivesMap = new Map();
@@ -1395,7 +1392,7 @@ app.get('/make-server-fe84bde0/incentives', async (c) => {
     }
 
     // Get manual adjustments
-    const adjustments = await kv.getByPrefix(`incentive_monthly:`);
+    const adjustments = await db.getAllIncentiveMonthly();
 
     const results = [];
     for (const [staffId, data] of incentivesMap) {
@@ -1441,26 +1438,25 @@ app.post('/make-server-fe84bde0/incentives/lock', async (c) => {
     const body = await c.req.json();
     const { user_id, year_month, locked_flag, manual_adjust_yen } = body;
 
-    const key = `incentive_monthly:${user_id}:${year_month}`;
-    const existing = await kv.get(key) || {};
+    const existing = await db.getIncentiveMonthly(user_id, year_month) || {};
 
     const incentiveData = {
       ...existing,
       user_id,
       year_month,
       locked_flag,
-      manual_adjust_yen: manual_adjust_yen ?? existing.manual_adjust_yen ?? 0,
-      locked_at: locked_flag ? new Date().toISOString() : existing.locked_at,
+      manual_adjust_yen: manual_adjust_yen ?? (existing as any).manual_adjust_yen ?? 0,
+      locked_at: locked_flag ? new Date().toISOString() : (existing as any).locked_at,
       adjusted_by_user_id: user.id,
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(key, incentiveData);
+    await db.upsertIncentiveMonthly(incentiveData);
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'incentives_monthly',
-      ref_id: key,
+      ref_id: `${user_id}:${year_month}`,
       action_type: 'update',
       after_json: incentiveData,
       acted_by_user_id: user.id,
@@ -1492,9 +1488,9 @@ app.get('/make-server-fe84bde0/incentives/yearly', async (c) => {
     }
 
     // Get all reservations and users
-    const reservations = await kv.getByPrefix('reservation:');
-    const users = await kv.getByPrefix('user:');
-    const adjustments = await kv.getByPrefix('incentive_monthly:');
+    const reservations = await db.getReservations();
+    const users = await db.getAppUsers();
+    const adjustments = await db.getAllIncentiveMonthly();
 
     const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
@@ -1647,8 +1643,8 @@ app.get('/make-server-fe84bde0/incentives/range', async (c) => {
     }
 
     // Get all reservations
-    const reservations = await kv.getByPrefix('reservation:');
-    const adjustments = await kv.getByPrefix('incentive_monthly:');
+    const reservations = await db.getReservations();
+    const adjustments = await db.getAllIncentiveMonthly();
 
     // Build incentive data for each staff across the range
     const incentivesMap = new Map();
@@ -1731,7 +1727,7 @@ app.get('/make-server-fe84bde0/users', async (c) => {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
-    const users = await kv.getByPrefix('user:');
+    const users = await db.getAppUsers();
     return c.json({ users });
   } catch (error) {
     console.log(`Get users error: ${error}`);
@@ -1755,7 +1751,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     const body = await c.req.json();
     const { user_id, name, role: newRole, active_flag, update_login_id, update_password } = body;
 
-    const userData = await kv.get(`user:${user_id}`);
+    const userData = await db.getAppUser(user_id);
     if (!userData) {
       return c.json({ error: 'User not found' }, 404);
     }
@@ -1767,7 +1763,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     // Update login_id if provided
     if (update_login_id) {
       // Check if login_id is already taken by another user
-      const users = await kv.getByPrefix('user:');
+      const users = await db.getAppUsers();
       const existingUser = users.find((u: any) => u.login_id === update_login_id && u.user_id !== user_id);
       if (existingUser) {
         return c.json({ error: 'このログインIDは既に使用されています' }, 400);
@@ -1795,7 +1791,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     
     userData.updated_at = new Date().toISOString();
 
-    await kv.set(`user:${user_id}`, userData);
+    await db.upsertAppUser(userData);
 
     return c.json({ success: true, user: userData });
   } catch (error) {
@@ -1814,7 +1810,7 @@ app.get('/make-server-fe84bde0/menu-items', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const menuItems = await kv.getByPrefix('menu_item:');
+    const menuItems = await db.getMenuItems();
     return c.json({ menu_items: menuItems });
   } catch (error) {
     console.log(`Get menu items error: ${error}`);
@@ -1868,14 +1864,13 @@ app.post('/make-server-fe84bde0/menu-items', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(`menu_item:${menuItemId}`, menuItemData);
+    await db.upsertMenuItem(menuItemData);
 
     // 新規作成時のみ、全店舗にデフォルトで追加
     if (!menu_item_id) {
-      const locations = await kv.getByPrefix('location:');
+      const locations = await db.getLocations();
       for (const location of locations) {
-        const locationMenuKey = `location_menu:${location.location_id}:${menuItemId}`;
-        await kv.set(locationMenuKey, {
+        await db.upsertLocationMenu({
           location_id: location.location_id,
           menu_item_id: menuItemId,
           enabled: true,
@@ -1887,7 +1882,7 @@ app.post('/make-server-fe84bde0/menu-items', async (c) => {
     }
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'menu_items',
       ref_id: menuItemId,
       action_type: menu_item_id ? 'update' : 'create',
@@ -1917,12 +1912,12 @@ app.delete('/make-server-fe84bde0/menu-items/:id', async (c) => {
     }
 
     const menuItemId = c.req.param('id');
-    const menuItem = await kv.get(`menu_item:${menuItemId}`);
+    const menuItem = await db.getMenuItem(menuItemId);
 
-    await kv.del(`menu_item:${menuItemId}`);
+    await db.deleteMenuItem(menuItemId);
 
     // Audit log
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'menu_items',
       ref_id: menuItemId,
       action_type: 'delete',
@@ -1951,8 +1946,8 @@ app.post('/make-server-fe84bde0/menu-items/batch-fix-duration', async (c) => {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
-    const menuItems = await kv.getByPrefix('menu_item:');
-    const reservations = await kv.getByPrefix('reservation:');
+    const menuItems = await db.getMenuItems();
+    const reservations = await db.getReservations();
     let menuUpdatedCount = 0;
     let reservationUpdatedCount = 0;
 
@@ -1960,7 +1955,7 @@ app.post('/make-server-fe84bde0/menu-items/batch-fix-duration', async (c) => {
     for (const item of menuItems) {
       if (!item.duration_minutes) {
         item.duration_minutes = 60; // デフォルトの所要時間
-        await kv.set(`menu_item:${item.menu_item_id}`, item);
+        await db.upsertMenuItem(item);
         menuUpdatedCount++;
       }
     }
@@ -1971,7 +1966,7 @@ app.post('/make-server-fe84bde0/menu-items/batch-fix-duration', async (c) => {
         const menu = menuItems.find((m: any) => m.menu_item_id === reservation.menu_item_id);
         if (menu && menu.duration_minutes) {
           reservation.duration_minutes = menu.duration_minutes;
-          await kv.set(`reservation:${reservation.reservation_id}`, reservation);
+          await db.upsertReservation(reservation);
           reservationUpdatedCount++;
         }
       }
@@ -1998,8 +1993,8 @@ app.get('/make-server-fe84bde0/locations/:location_id/menus', async (c) => {
     }
 
     const locationId = c.req.param('location_id');
-    const allMenus = await kv.getByPrefix('menu_item:');
-    const locationMenus = await kv.getByPrefix(`location_menu:${locationId}:`);
+    const allMenus = await db.getMenuItems();
+    const locationMenus = await db.getLocationMenus(locationId);
 
     // メニューと店舗設定を��ージ
     const menusWithStatus = allMenus.map((menu: any) => {
@@ -2035,18 +2030,17 @@ app.post('/make-server-fe84bde0/locations/:location_id/menus/:menu_id/toggle', a
     const body = await c.req.json();
     const { enabled } = body;
 
-    const locationMenuKey = `location_menu:${locationId}:${menuId}`;
-    const existing = await kv.get(locationMenuKey);
+    const existing = await db.getLocationMenu(locationId, menuId);
 
     const locationMenuData = {
       location_id: locationId,
       menu_item_id: menuId,
       enabled: enabled ?? true,
-      created_at: existing?.created_at || new Date().toISOString(),
+      created_at: (existing as any)?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(locationMenuKey, locationMenuData);
+    await db.upsertLocationMenu(locationMenuData);
 
     return c.json({ success: true, location_menu: locationMenuData });
   } catch (error) {
@@ -2065,7 +2059,7 @@ app.get('/make-server-fe84bde0/staff', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const users = await kv.getByPrefix('user:');
+    const users = await db.getAppUsers();
     // Filter active users only
     const activeUsers = users.filter((u: any) => u.active_flag !== false);
     return c.json({ staff: activeUsers });
@@ -2086,9 +2080,9 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
     }
 
     // Get work orders
-    const workOrders = await kv.getByPrefix('work_order:');
-    const reservations = await kv.getByPrefix('reservation:');
-    const customers = await kv.getByPrefix('customer:');
+    const workOrders = await db.getWorkOrders();
+    const reservations = await db.getReservations();
+    const customers = await db.getCustomers({ activeOnly: false });
 
     // Get current time in JST (Asia/Tokyo)
     const getJapanNow = () => {
@@ -2190,7 +2184,7 @@ app.get('/make-server-fe84bde0/dashboard', async (c) => {
 
     // Get recent week sales data (last 7 days)
     const weekSalesData = [];
-    const menuItems = await kv.getByPrefix('menu_item:');
+    const menuItems = await db.getMenuItems();
     
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
@@ -2255,11 +2249,11 @@ app.get('/make-server-fe84bde0/sales-analytics', async (c) => {
     const viewMode = c.req.query('viewMode') || 'month';
 
     // Get all data
-    const reservations = await kv.getByPrefix('reservation:');
-    const menuItems = await kv.getByPrefix('menu_item:');
-    const locations = await kv.getByPrefix('location:');
-    const users = await kv.getByPrefix('user:');
-    const customers = await kv.getByPrefix('customer:');
+    const reservations = await db.getReservations();
+    const menuItems = await db.getMenuItems();
+    const locations = await db.getLocations();
+    const users = await db.getAppUsers();
+    const customers = await db.getCustomers({ activeOnly: false });
 
     // Filter reservations by date range
     const filteredReservations = reservations.filter((r: any) => {
@@ -2498,7 +2492,7 @@ app.get('/make-server-fe84bde0/reservation-settings', async (c) => {
     }
 
     // Get settings
-    let settings = await kv.get('reservation_settings:default');
+    let settings = await db.getReservationSettings();
     
     // If no settings exist, create default settings
     if (!settings) {
@@ -2515,7 +2509,7 @@ app.get('/make-server-fe84bde0/reservation-settings', async (c) => {
         custom_hours: {}, // 曜日ごとの営業時間
         updated_at: new Date().toISOString(),
       };
-      await kv.set('reservation_settings:default', settings);
+      await db.upsertReservationSettings(settings);
     }
     
     return c.json({ settings });
@@ -2571,7 +2565,7 @@ app.put('/make-server-fe84bde0/reservation-settings', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set('reservation_settings:default', settings);
+    await db.upsertReservationSettings(settings);
     
     console.log(`[予約設定更新] 曜日: [${allowed_days.join(', ')}], 時間: ${business_hours_start}-${business_hours_end}`);
     
@@ -2597,13 +2591,13 @@ app.get('/make-server-fe84bde0/public/health', async (c) => {
 app.get('/make-server-fe84bde0/public/menu-items', async (c) => {
   try {
     const locationId = c.req.query('location_id');
-    const menuItems = await kv.getByPrefix('menu_item:');
+    const menuItems = await db.getMenuItems();
     
     let activeMenuItems = menuItems.filter((m: any) => m.is_active === true);
     
     // 店舗IDが指定されている場合、その店舗で有効なメニューのみを返す
     if (locationId) {
-      const locationMenus = await kv.getByPrefix(`location_menu:${locationId}:`);
+      const locationMenus = await db.getLocationMenus(locationId);
       const enabledMenuIds = locationMenus
         .filter((lm: any) => lm.enabled === true)
         .map((lm: any) => lm.menu_item_id);
@@ -2627,7 +2621,7 @@ app.get('/make-server-fe84bde0/public/menu-items', async (c) => {
 // Get locations (public)
 app.get('/make-server-fe84bde0/public/locations', async (c) => {
   try {
-    const locations = await kv.getByPrefix('location:');
+    const locations = await db.getLocations();
     const activeLocations = locations.filter((l: any) => l.active_flag !== false);
     return c.json({ locations: activeLocations });
   } catch (error) {
@@ -2639,7 +2633,7 @@ app.get('/make-server-fe84bde0/public/locations', async (c) => {
 // Get reservation settings (public)
 app.get('/make-server-fe84bde0/public/reservation-settings', async (c) => {
   try {
-    let settings = await kv.get('reservation_settings:default');
+    let settings = await db.getReservationSettings();
     
     // If no settings exist, return default settings
     if (!settings) {
@@ -2675,17 +2669,8 @@ app.get('/make-server-fe84bde0/public/booked-slots', async (c) => {
       return c.json({ error: '日付が指定されていません' }, 400);
     }
     
-    const reservations = await kv.getByPrefix('reservation:');
-    const menuItems = await kv.getByPrefix('menu_item:');
-    const locations = await kv.getByPrefix('location:');
-    
-    // Filter reservations by date
-    const dateReservations = reservations.filter((r: any) => {
-      if (r.status === 'cancelled') return false;
-      const reservationDate = new Date(r.reservation_date_time);
-      const targetDate = new Date(date);
-      return reservationDate.toDateString() === targetDate.toDateString();
-    });
+    const dateReservations = await db.getReservationsByDate(date, locationId || undefined);
+    const menuItems = await db.getMenuItems();
 
     // Get all location IDs that are booked on this date (always return for all locations)
     const bookedLocationIds = [...new Set(dateReservations.map((r: any) => r.location_id))];
@@ -2753,7 +2738,7 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
     }
 
     // Get reservation settings
-    const settings = await kv.get('reservation_settings:default');
+    const settings = await db.getReservationSettings();
     
     // Check if date is a closed date
     if (settings?.closed_dates) {
@@ -2765,8 +2750,8 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
     }
 
     // Check for time slot conflicts considering duration
-    const reservations = await kv.getByPrefix('reservation:');
-    const menuItems = await kv.getByPrefix('menu_item:');
+    const reservations = await db.getReservations();
+    const menuItems = await db.getMenuItems();
     
     // Get the duration of the new reservation
     const newMenu = menuItems.find((m: any) => m.menu_item_id === menu_item_id);
@@ -2830,7 +2815,7 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
 
     // Check if customer already exists by phone
     let customer = null;
-    const customers = await kv.getByPrefix('customer:');
+    const customers = await db.getCustomers({ activeOnly: false });
     const existingCustomer = customers.find((c: any) => c.phone === phone && c.active_flag !== false);
 
     if (existingCustomer) {
@@ -2848,11 +2833,11 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
         email: email || existingCustomer.email,
         updated_at: new Date().toISOString(),
       };
-      await kv.set(`customer:${customer.customer_id}`, customer);
+      await db.upsertCustomer(customer);
     } else {
       // Create new customer
       const customerId = crypto.randomUUID();
-      const allCustomers = await kv.getByPrefix('customer:');
+      const allCustomers = await db.getCustomers({ activeOnly: false });
       const maxCode = allCustomers.reduce((max: number, c: any) => {
         const match = c.customer_code?.match(/A-(\\d+)/);
         if (match) {
@@ -2890,15 +2875,15 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      await kv.set(`customer:${customerId}`, customer);
+      await db.upsertCustomer(customer);
     }
 
     // Create reservation
     const reservationId = crypto.randomUUID();
-    const menuItem = await kv.get(`menu_item:${menu_item_id}`);
+    const menuItem = await db.getMenuItem(menu_item_id);
     
     // Generate a unique 5-character lowercase alphanumeric reservation number
-    const allReservations = await kv.getByPrefix('reservation:');
+    const allReservations = await db.getReservations();
     const existingNumbers = new Set(allReservations.map((r: any) => r.reservation_number));
     
     let reservationNumber: string;
@@ -2938,7 +2923,7 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
       updated_by_user_id: null, // Public reservation
     };
 
-    await kv.set(`reservation:${reservationId}`, reservationData);
+    await db.upsertReservation(reservationData);
 
     // Send confirmation email using Brevo (Sendinblue)
     try {
@@ -2947,7 +2932,7 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
       console.log('[予約メール送信] 送信先メールアドレス:', email);
       
       if (brevoApiKey) {
-        const location = await kv.get(`location:${location_id}`);
+        const location = await db.getLocation(location_id);
         const reservationDate = new Date(reservation_date_time);
         const dateStr = reservationDate.toLocaleDateString('ja-JP', { 
           year: 'numeric', 
@@ -3219,7 +3204,7 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
     }
 
     // Get location details for response
-    const location = await kv.get(`location:${location_id}`);
+    const location = await db.getLocation(location_id);
     
     return c.json({ 
       success: true, 
@@ -3273,7 +3258,7 @@ app.delete('/make-server-fe84bde0/customers/:customer_id', async (c) => {
       return c.json({ error: 'customer_id is required' }, 400);
     }
 
-    const customer = await kv.get(`customer:${customerId}`);
+    const customer = await db.getCustomer(customerId);
     if (!customer) {
       return c.json({ error: 'Customer not found' }, 404);
     }
@@ -3281,21 +3266,21 @@ app.delete('/make-server-fe84bde0/customers/:customer_id', async (c) => {
     console.log(`[顧客削除] 開始: ${customer.customer_code} (${customer.parent_name})`);
 
     // 関連データを取得
-    const reservations = await kv.getByPrefix('reservation:');
-    const workOrders = await kv.getByPrefix('work_order:');
-    const incentives = await kv.getByPrefix('incentive:');
+    const reservations = await db.getReservations();
+    const workOrders = await db.getWorkOrders();
+    const incentives = await db.getIncentives();
 
     // この顧客に関連する予約を削除
     const customerReservations = reservations.filter((r: any) => r.customer_id === customerId);
     for (const reservation of customerReservations) {
-      await kv.del(`reservation:${reservation.reservation_id}`);
+      await db.deleteReservation(reservation.reservation_id);
       console.log(`[顧客削除] 予約削除: ${reservation.reservation_number || reservation.reservation_id}`);
     }
 
     // この顧客に関連する制作物を削除
     const customerWorkOrders = workOrders.filter((wo: any) => wo.customer_id === customerId);
     for (const workOrder of customerWorkOrders) {
-      await kv.del(`work_order:${workOrder.work_order_id}`);
+      await db.deleteWorkOrder(workOrder.work_order_id);
       console.log(`[顧客削除] 制作物削除: ${workOrder.product_name}`);
     }
 
@@ -3305,16 +3290,16 @@ app.delete('/make-server-fe84bde0/customers/:customer_id', async (c) => {
       reservationIds.includes(inc.reservation_id)
     );
     for (const incentive of customerIncentives) {
-      await kv.del(`incentive:${incentive.incentive_id}`);
+      await db.deleteIncentive(incentive.incentive_id);
       console.log(`[顧客削除] インセンティブ削除: ${incentive.incentive_id}`);
     }
 
     // 顧���データを削除
-    await kv.del(`customer:${customerId}`);
+    await db.deleteCustomer(customerId);
     console.log(`[顧客削除] 顧客削除完了: ${customer.customer_code}`);
 
     // 監査ログを記録
-    await kv.set(`audit:${crypto.randomUUID()}`, {
+    await db.insertAuditLog({
       ref_table: 'customers',
       ref_id: customerId,
       action_type: 'delete',
@@ -3362,7 +3347,7 @@ app.get('/make-server-fe84bde0/location-availability/:location_id', async (c) =>
     }
 
     const location_id = c.req.param('location_id');
-    const availability = await kv.get(`location_availability:${location_id}`);
+    const availability = await db.getLocationAvailability(location_id);
 
     return c.json({ availability: availability || null });
   } catch (error) {
@@ -3375,7 +3360,7 @@ app.get('/make-server-fe84bde0/location-availability/:location_id', async (c) =>
 app.get('/make-server-fe84bde0/public/location-availability/:location_id', async (c) => {
   try {
     const location_id = c.req.param('location_id');
-    const availability = await kv.get(`location_availability:${location_id}`);
+    const availability = await db.getLocationAvailability(location_id);
 
     return c.json({ availability: availability || null });
   } catch (error) {
@@ -3427,7 +3412,7 @@ app.post('/make-server-fe84bde0/location-availability', async (c) => {
       updated_at: new Date().toISOString(),
     };
 
-    await kv.set(`location_availability:${location_id}`, availabilityData);
+    await db.upsertLocationAvailability(availabilityData);
 
     console.log(`[店舗可用性設定] 店舗ID: ${location_id}`);
 
@@ -3460,7 +3445,7 @@ app.get('/make-server-fe84bde0/shifts', async (c) => {
 
     // Key format: shift:YYYY-MM-DD:staff_id
     // Prefix search with 'shift:YYYY-MM' works to get all shifts for that month
-    const shifts = await kv.getByPrefix(`shift:${yearMonth}`);
+    const shifts = await db.getShiftsByYearMonth(yearMonth);
     return c.json({ shifts });
   } catch (error) {
     console.log(`Get shifts error: ${error}`);
@@ -3496,7 +3481,7 @@ app.post('/make-server-fe84bde0/shifts', async (c) => {
       updated_by: user.id
     };
 
-    await kv.set(key, shiftData);
+    await db.upsertShift(shiftData);
     return c.json({ success: true, shift: shiftData });
   } catch (error) {
     console.log(`Save shift error: ${error}`);
@@ -3519,8 +3504,7 @@ app.delete('/make-server-fe84bde0/shifts', async (c) => {
        return c.json({ error: 'staff_id and date are required' }, 400);
     }
     
-    const key = `shift:${date}:${staffId}`;
-    await kv.del(key);
+    await db.deleteShift(staffId, date);
     
     return c.json({ success: true });
   } catch (error) {
@@ -3547,8 +3531,8 @@ app.post('/make-server-fe84bde0/integrity-check', async (c) => {
     const report: any = { issues: [], fixed: [] };
 
     // 1. Check Reservation <-> Work Order links
-    const reservations = await kv.getByPrefix('reservation:');
-    const workOrders = await kv.getByPrefix('work_order:');
+    const reservations = await db.getReservations();
+    const workOrders = await db.getWorkOrders();
     
     // Check for work orders with missing reservations
     for (const wo of workOrders) {
