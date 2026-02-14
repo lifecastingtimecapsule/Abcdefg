@@ -111,14 +111,14 @@ UI コンポーネントは `src/components/ui` 以下にまとめられてお�
 ### 現在のログイン方式（高速化済み）
 
 - **全件探索なし**: ユーザー検索は `user_login:ログインID` → `user:UUID` の 2 回取得のみ。getByPrefix は使用しない。
-- **Supabase Auth 呼び出しの回避**: `SUPABASE_JWT_SECRET` を Edge Function に設定し、ユーザーに `password_hash` が保存されている場合は、Edge 内で bcrypt 検証＋自前 JWT 発行を行う。この場合ログイン時に Supabase Auth は呼ばれない。
+- **Supabase Auth 呼び出しの回避**: `JWT_SECRET` を Edge Function の Secrets に設定し、ユーザーに `password_hash` が保存されている場合は、Edge 内で bcrypt 検証＋自前 JWT 発行を行う。この場合ログイン時に Supabase Auth は呼ばれない。（※ シークレット名は `JWT_SECRET`。`SUPABASE_` で始まる名前は Supabase が予約しているため使えない。）
 - **レガシー**: `password_hash` が無いユーザー（既存ユーザーでパスワード未更新）は従来どおり `signInWithPassword` で認証。
 
 ### 想定される原因の割合（目安・レガシーログイン時）
 
 | 要因 | 想定割合 | 説明 | 対策例 |
 |------|----------|------|--------|
-| **Supabase Auth** | **60〜85%** | `signInWithPassword` のネットワーク往復。password_hash 利用時は発生しない。 | `SUPABASE_JWT_SECRET` 設定＋パスワード更新で高速ログインに移行。 |
+| **Supabase Auth** | **60〜85%** | `signInWithPassword` のネットワーク往復。password_hash 利用時は発生しない。 | `JWT_SECRET` 設定＋パスワード更新で高速ログインに移行。 |
 | **Edge Function コールドスタート** | **10〜30%**（初回のみ） | しばらく呼ばれていないときの起動遅延。 | 定期的な ping でウォームアップ。 |
 | **ユーザー検索（KV）** | **5〜15%** | `user_login:` ＋ `user:` の 2 回取得。 | 全件探索は廃止済み。backfill で既存ユーザーに user_login を付与。 |
 | **last_login 更新（KV）** | **2〜8%** | 1 回の KV 書き込み。 | 必須でなければ非同期化やスキップを検討。 |

@@ -6,21 +6,26 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const projectRoot = resolve(__dirname, '..');
 
 // .env.local を読み込み（VITE_ と SUPABASE_ を利用）
 function loadEnv() {
-  const path = resolve(process.cwd(), '.env.local');
-  if (!existsSync(path)) {
+  const envPath = resolve(projectRoot, '.env.local');
+  if (!existsSync(envPath)) {
     console.warn('.env.local が見つかりません。環境変数で SUPABASE_URL と SUPABASE_SERVICE_ROLE_KEY を設定してください。');
     return;
   }
-  const content = readFileSync(path, 'utf8');
-  content.split('\n').forEach((line) => {
+  let content = readFileSync(envPath, 'utf8');
+  content = content.replace(/^\uFEFF/, ''); // BOM 除去
+  content.split(/\r?\n/).forEach((line) => {
     const m = line.match(/^\s*([^#=]+)=(.*)$/);
     if (m) {
       const key = m[1].trim();
-      let val = m[2].trim();
+      let val = m[2].trim().replace(/\r$/, '');
       if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
         val = val.slice(1, -1);
       process.env[key] = val;
@@ -132,10 +137,11 @@ async function main() {
         user_id,
         name: safeStr(value?.name) ?? '',
         email: safeStr(value?.email) ?? '',
-        login_id: safeStr(value?.login_id) ?? '',
+        login_id: safeStr(value?.login_id) || safeStr(value?.user_login) || safeStr(value?.email)?.split('@')[0] || '',
         role: safeStr(value?.role) || 'staff',
         active_flag: safeBool(value?.active_flag) !== false,
         last_login_at: value?.last_login_at ? safeDate(value.last_login_at) : null,
+        password_hash: safeStr(value?.password_hash) || null,
         created_at: safeDate(value?.created_at) || new Date().toISOString(),
         updated_at: safeDate(value?.updated_at) || new Date().toISOString(),
       },

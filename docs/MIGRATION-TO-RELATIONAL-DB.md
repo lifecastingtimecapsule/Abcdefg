@@ -35,6 +35,13 @@ supabase db push
 - 新規作成時: サインアップ／初期化で `auth.users` にレコードができ、同時に `app_users` に同じ `user_id` で 1 件挿入されます。
 - 移行後: 移行スクリプトで KV の `user:*` から `app_users` に投入されます。`user_id` は Auth のユーザー ID と同じなので、既存ログインはそのまま使えます。
 
+**移行後にログインできない場合**  
+- **login_id が空**: KV で `user_login` で保存していた場合は、**SQL Editor** で `supabase/migrations/20250214000000_backfill_app_users_login_id.sql` を実行して補完してください。  
+- **パスワードが Supabase Auth に無い**: パスワードが KV の `password_hash` にだけ入っている場合は、次を順に実行してください。  
+  1. `supabase/migrations/20250214000001_add_app_users_password_hash.sql` で `app_users` に `password_hash` カラムを追加  
+  2. `supabase/migrations/20250214000002_backfill_app_users_password_hash.sql` で KV の `password_hash` を `app_users` に反映  
+  3. Edge Function の **Secrets** に `JWT_SECRET`（値は Project Settings → API → JWT Secret）を追加する。※ 名前は `JWT_SECRET` にしてください。`SUPABASE_` で始まる名前は Supabase が予約しているため使えません。設定後、ログインは `app_users.password_hash` で bcrypt 検証されます。
+
 ### 3. 動作確認
 
 1. ダッシュボードにログインし、予約・顧客・メニュー・店舗が表示されること。

@@ -9,7 +9,7 @@ import { syncToGoogleCalendar } from './google_calendar.tsx';
 
 const app = new Hono();
 
-const JWT_SECRET = Deno.env.get('SUPABASE_JWT_SECRET') || '';
+const JWT_SECRET = Deno.env.get('JWT_SECRET') || '';
 const SALT_ROUNDS = 10;
 const JWT_EXPIRY = '7d';
 

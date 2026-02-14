@@ -114,7 +114,7 @@
     - 追加するキーと値の例:
       | キー | 値の取得元・内容 |
       |------|------------------|
-      | `SUPABASE_JWT_SECRET` | **Project Settings** → **API** → **JWT Secret** をコピー（ログイン高速化用） |
+      | `JWT_SECRET` | **Project Settings** → **API** → **JWT Secret** をコピー（ログイン高速化・password_hash 検証用）。※ `SUPABASE_`  prefix は使えないため `JWT_SECRET` で登録すること |
       | `GOOGLE_CALENDAR_ID` | Google カレンダー設定で「カレンダーID」（予約を反映したいカレンダー） |
       | `GOOGLE_SERVICE_ACCOUNT_JSON` | Google Cloud で作成したサービスアカウントの JSON キーを **1行の文字列** で貼り付け |
     - **注意**: `GOOGLE_SERVICE_ACCOUNT_JSON` は、JSON 全体をそのまま 1 つの文字列として貼り付けます（改行を含めても可。Edge Function 内で `JSON.parse` しています）。

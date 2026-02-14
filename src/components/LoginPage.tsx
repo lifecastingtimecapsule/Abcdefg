@@ -26,26 +26,41 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           'Authorization': `Bearer ${publicAnonKey}`,
         },
         body: JSON.stringify({
-          login_id: loginId,
+          login_id: loginId.trim(),
           password,
         }),
       });
 
-      const data = await response.json();
+      let data: { error?: string; access_token?: string; user?: unknown } = {};
+      const contentType = response.headers.get('content-type');
+      try {
+        if (contentType?.includes('application/json')) {
+          data = await response.json();
+        } else {
+          const text = await response.text();
+          if (text) setError('サーバーエラーです。しばらく経ってからお試しください。');
+          else setError('ログインに失敗しました。');
+          return;
+        }
+      } catch (_) {
+        setError('サーバーからの応答を読み取れませんでした。しばらく経ってからお試しください。');
+        return;
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || 'ログインに失敗しました');
+        setError(data.error || 'ログインに失敗しました');
+        return;
       }
-      
-      if (data.access_token) {
+
+      if (data.access_token && data.user) {
         localStorage.setItem('access_token', data.access_token);
-        onLogin(data.user);
+        onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
       } else {
-        throw new Error('アクセストークンが返されませんでした');
+        setError(data.error || 'アクセストークンが返されませんでした');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Login error:', err);
-      const errorMessage = err.message || 'ログインに失敗しました';
+      const errorMessage = err instanceof Error ? err.message : 'ログインに失敗しました';
       setError(errorMessage);
     } finally {
       setLoading(false);
