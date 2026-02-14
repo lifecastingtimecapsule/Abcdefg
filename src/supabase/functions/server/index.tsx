@@ -29,6 +29,14 @@ const DEFAULT_ADMIN = {
   name: '管理者',
 };
 
+// 全ユーザーに一括発行する初期パスワード（password_hash が null のユーザー用）。ログイン後は必ず変更させる。
+const INITIAL_PASSWORD = 'InitialPassword1!';
+
+function sanitizeUserForResponse(u: Record<string, unknown>): Record<string, unknown> {
+  const { password_hash, ...rest } = u;
+  return rest;
+}
+
 // ========== Auth Helpers ==========
 async function getAuthUser(request: Request): Promise<{ id: string } | null> {
   const authHeader = request.headers.get('Authorization');
@@ -120,14 +128,11 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     return c.json({
       success: true,
       access_token: accessToken,
-      user: {
-        user_id: user.user_id,
-        name: user.name,
-        login_id: user.login_id,
-        role: user.role,
+      user: sanitizeUserForResponse({
+        ...user,
         created_at: user.created_at || new Date().toISOString(),
         updated_at: user.updated_at || new Date().toISOString(),
-      },
+      }),
     });
   } catch (error) {
     console.log(`Login processing error: ${error}`);
@@ -202,9 +207,85 @@ app.get('/make-server-fe84bde0/me', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    return c.json({ user: userData });
+    return c.json({ user: sanitizeUserForResponse(userData) });
   } catch (error) {
     console.error(`[/me] Error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Change my password（自分用。初期パスワード変更時に使用。成功で must_change_password を false に）
+app.post('/make-server-fe84bde0/me/change-password', async (c) => {
+  try {
+    const authUser = await getAuthUser(c.req.raw);
+    if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+
+    const body = await c.req.json();
+    const { current_password, new_password } = body;
+    if (!current_password || !new_password) {
+      return c.json({ error: '現在のパスワードと新しいパスワードを入力してください' }, 400);
+    }
+    if (new_password.length < 6) {
+      return c.json({ error: '新しいパスワードは6文字以上で設定してください' }, 400);
+    }
+
+    const userData = await db.getAppUser(authUser.id);
+    if (!userData) return c.json({ error: 'User not found' }, 404);
+    if (!userData.password_hash) {
+      return c.json({ error: 'パスワード認証が設定されていません。管理者に連絡してください。' }, 400);
+    }
+
+    const ok = await bcrypt.compare(current_password, userData.password_hash as string);
+    if (!ok) {
+      return c.json({ error: '現在のパスワードが正しくありません' }, 401);
+    }
+
+    const newHash = await bcrypt.hash(new_password, SALT_ROUNDS);
+    const updated = {
+      ...userData,
+      password_hash: newHash,
+      must_change_password: false,
+      updated_at: new Date().toISOString(),
+    };
+    await db.upsertAppUser(updated);
+    return c.json({ success: true, user: sanitizeUserForResponse(updated) });
+  } catch (error) {
+    console.error(`[/me/change-password] Error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Issue initial passwords for all users with null password_hash（管理者のみ。実行後、全員が初期パスワードでログイン可能になり、初回ログイン時に変更を促す）
+app.post('/make-server-fe84bde0/admin/issue-initial-passwords', async (c) => {
+  try {
+    const authUser = await getAuthUser(c.req.raw);
+    if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+    if (await getUserRole(authUser.id) !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const users = await db.getAppUsers();
+    let updated = 0;
+    const hash = await bcrypt.hash(INITIAL_PASSWORD, SALT_ROUNDS);
+    for (const u of users) {
+      if (u.password_hash) continue;
+      await db.upsertAppUser({
+        ...u,
+        password_hash: hash,
+        must_change_password: true,
+        updated_at: new Date().toISOString(),
+      });
+      updated++;
+    }
+    return c.json({
+      success: true,
+      updated,
+      total: users.length,
+      initial_password: INITIAL_PASSWORD,
+      message: `パスワードが未設定だった ${updated} 件のユーザーに初期パスワードを設定しました。ログイン後、必ずパスワードを変更してください。`,
+    });
+  } catch (error) {
+    console.error(`[/admin/issue-initial-passwords] Error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -438,6 +519,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
       try {
         await supabase.auth.admin.updateUserById(user_id, { password: update_password });
         updatedUser.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
+        updatedUser.must_change_password = false;
       } catch (pwError) {
         console.error(`Failed to update password: ${pwError}`);
         return c.json({ error: 'パスワードの��新に失敗しました' }, 500);
@@ -445,7 +527,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     }
 
     await db.upsertAppUser(updatedUser);
-    return c.json({ success: true, user: updatedUser });
+    return c.json({ success: true, user: sanitizeUserForResponse(updatedUser) });
   } catch (error) {
     console.log(`Update user error: ${error}`);
     return c.json({ error: String(error) }, 500);
@@ -1801,7 +1883,7 @@ app.get('/make-server-fe84bde0/users', async (c) => {
     }
 
     const users = await db.getAppUsers();
-    return c.json({ users });
+    return c.json({ users: users.map((u: Record<string, unknown>) => sanitizeUserForResponse(u)) });
   } catch (error) {
     console.log(`Get users error: ${error}`);
     return c.json({ error: String(error) }, 500);
@@ -1858,12 +1940,13 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
         return c.json({ error: `パスワード更新に失敗しました: ${passwordError.message}` }, 500);
       }
       userData.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
+      userData.must_change_password = false;
     }
 
     userData.updated_at = new Date().toISOString();
     await db.upsertAppUser(userData);
 
-    return c.json({ success: true, user: userData });
+    return c.json({ success: true, user: sanitizeUserForResponse(userData) });
   } catch (error) {
     console.log(`Update user error: ${error}`);
     return c.json({ error: String(error) }, 500);

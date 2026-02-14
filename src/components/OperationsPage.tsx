@@ -12,7 +12,7 @@ interface OperationsPageProps {
 }
 
 export function OperationsPage({ userRole, onReauthRequest }: OperationsPageProps) {
-  const [activeTab, setActiveTab] = useState<'locations' | 'staff' | 'menu' | 'reservation-settings' | 'location-availability'>('locations');
+  const [activeTab, setActiveTab] = useState<'locations' | 'staff' | 'menu' | 'reservation-settings' | 'location-availability' | 'maintenance'>('locations');
 
   const tabs = [
     { id: 'locations' as const, label: '拠点管理' },

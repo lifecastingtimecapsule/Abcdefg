@@ -6,6 +6,8 @@ export interface User {
   role: 'admin' | 'staff';
   created_at: string;
   updated_at: string;
+  /** 初期パスワードでログインした初回のみ true。パスワード変更後に false */
+  must_change_password?: boolean;
 }
 
 export interface LoginResponse {

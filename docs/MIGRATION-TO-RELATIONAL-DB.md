@@ -42,6 +42,8 @@ supabase db push
   2. `supabase/migrations/20250214000002_backfill_app_users_password_hash.sql` で KV の `password_hash` を `app_users` に反映  
   3. Edge Function の **Secrets** に `JWT_SECRET`（値は Project Settings → API → JWT Secret）を追加する。※ 名前は `JWT_SECRET` にしてください。`SUPABASE_` で始まる名前は Supabase が予約しているため使えません。設定後、ログインは `app_users.password_hash` で bcrypt 検証されます。
 
+**password_hash が null のままの場合**: もともと KV に `password_hash` が保存されていないことがあります（旧システムが Supabase Auth のみでパスワードを管理していた場合など）。そのときは **スタッフ管理画面で各ユーザーのパスワードを一度「更新」** すると、新しいハッシュが `app_users.password_hash` に保存され、以降そのパスワードでログインできます。KV に本当に `password_hash` があるか確認したい場合は、SQL Editor で `supabase/migrations/20250214000003_check_kv_user_value.sql` を実行し、`value` 内に `password_hash` のキーがあるか確認してください。
+
 ### 3. 動作確認
 
 1. ダッシュボードにログインし、予約・顧客・メニュー・店舗が表示されること。

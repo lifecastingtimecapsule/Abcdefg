@@ -49,6 +49,7 @@ export async function upsertAppUser(row: Record<string, unknown>): Promise<void>
     active_flag: row.active_flag !== false,
     last_login_at: row.last_login_at ?? null,
     password_hash: row.password_hash ?? null,
+    must_change_password: row.must_change_password ?? false,
     created_at: row.created_at ?? new Date().toISOString(),
     updated_at: row.updated_at ?? new Date().toISOString(),
   }, { onConflict: 'user_id' });

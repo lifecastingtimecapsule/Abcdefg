@@ -5,6 +5,7 @@ import { PublicReservationPage } from './components/PublicReservationPage';
 import { ReservationCompletePage } from './components/ReservationCompletePage';
 import { ReauthModal } from './components/ReauthModal';
 import { Layout } from './components/Layout';
+import { MustChangePasswordModal } from './components/MustChangePasswordModal';
 import { Dashboard } from './components/Dashboard';
 import { CalendarPage } from './components/CalendarPage';
 import { ShiftManagementPage } from './components/ShiftManagementPage';
@@ -263,6 +264,13 @@ export default function App() {
         <ReauthModal
           onSuccess={handleReauthSuccess}
           onCancel={handleReauthCancel}
+        />
+      )}
+      {/* 初期パスワードでログインした初回のみ表示。パスワード変更まで操作をブロック */}
+      {currentUser?.must_change_password && (
+        <MustChangePasswordModal
+          currentUser={currentUser}
+          onSuccess={(updatedUser) => setCurrentUser(updatedUser)}
         />
       )}
       <Layout
