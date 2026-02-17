@@ -1,7 +1,7 @@
-import { projectId, publicAnonKey } from './supabase/info';
+import { publicAnonKey, functionsBaseUrl } from './supabase/info';
 import { toast } from 'sonner@2.0.3';
 
-const BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+const BASE_URL = functionsBaseUrl;
 
 // 401エラー時のコールバック（App.tsxから設定）
 let onUnauthorizedCallback: (() => void) | null = null;

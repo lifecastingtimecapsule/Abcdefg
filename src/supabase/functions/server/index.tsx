@@ -77,23 +77,42 @@ app.post('/make-server-fe84bde0/login', async (c) => {
   try {
     const body = await c.req.json();
     const { login_id, password } = body;
+    // #region agent log
+    console.log('[LOGIN] entry', { login_id: String(login_id).slice(0, 20), hasPassword: !!password });
+    // #endregion
 
     // Find user by login_id (db)
     const user = await db.getAppUserByLoginId(login_id);
 
     if (!user) {
-      console.log(`Login failed: user not found for ${login_id}`);
-      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+      console.log(`[LOGIN] USER_NOT_FOUND login_id=${login_id}`);
+      return c.json({ error: 'ログインIDまたはパスワードが正しくありません', debug_code: 'USER_NOT_FOUND' }, 401);
     }
     if (user.active_flag === false) {
-      return c.json({ error: 'このアカウントは無効です' }, 403);
+      console.log('[LOGIN] ACCOUNT_DISABLED', { login_id });
+      return c.json({ error: 'このアカウントは無効です', debug_code: 'ACCOUNT_DISABLED' }, 403);
+    }
+
+    const hasPasswordHash = !!user.password_hash;
+    const hasJwtSecret = !!JWT_SECRET;
+    // #region agent log
+    console.log('[LOGIN] user found', { login_id, hasPasswordHash, hasJwtSecret, hashPrefix: hasPasswordHash ? String(user.password_hash).slice(0, 12) : null });
+    // #endregion
+
+    if (user.password_hash && !JWT_SECRET) {
+      console.log('[LOGIN] JWT_SECRET_MISSING');
+      return c.json({ error: '認証設定エラーです。管理者に連絡してください。', debug_code: 'JWT_SECRET_MISSING' }, 500);
     }
 
     let accessToken: string;
     if (user.password_hash && JWT_SECRET) {
       const ok = await bcrypt.compare(password, user.password_hash);
+      // #region agent log
+      console.log('[LOGIN] bcrypt.compare result', { ok });
+      // #endregion
       if (!ok) {
-        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+        console.log('[LOGIN] PASSWORD_MISMATCH');
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません', debug_code: 'PASSWORD_MISMATCH' }, 401);
       }
       const secret = new TextEncoder().encode(JWT_SECRET);
       accessToken = await new jose.SignJWT({ email: user.email })
@@ -103,13 +122,16 @@ app.post('/make-server-fe84bde0/login', async (c) => {
         .setExpirationTime(JWT_EXPIRY)
         .sign(secret);
     } else {
+      // #region agent log
+      console.log('[LOGIN] fallback to Supabase Auth', { email: user.email });
+      // #endregion
       const { data, error } = await supabase.auth.signInWithPassword({
         email: user.email,
         password,
       });
       if (error) {
-        console.log(`Login authentication error: ${error.message}`);
-        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+        console.log(`[LOGIN] SUPABASE_AUTH_FAILED error=${error.message}`);
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません', debug_code: 'SUPABASE_AUTH_FAILED' }, 401);
       }
       accessToken = data.session.access_token;
     }
@@ -136,7 +158,7 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     });
   } catch (error) {
     console.log(`Login processing error: ${error}`);
-    return c.json({ error: String(error) }, 500);
+    return c.json({ error: String(error), debug_code: 'SERVER_ERROR' }, 500);
   }
 });
 

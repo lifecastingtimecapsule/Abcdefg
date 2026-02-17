@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
 
 interface ReauthModalProps {
   onSuccess: (token: string) => void;
@@ -20,7 +20,7 @@ export function ReauthModal({ onSuccess, onCancel }: ReauthModalProps) {
 
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0/login`,
+        `${functionsBaseUrl}/login`,
         {
           method: 'POST',
           headers: {

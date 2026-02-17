@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createClient } from '../utils/supabase/client';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
 import { LogIn } from 'lucide-react';
 
 interface LoginPageProps {
@@ -18,26 +18,34 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setError('');
     setLoading(true);
 
+    const trimmedLoginId = loginId.trim();
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:handleLogin',message:'login_attempt',data:{login_id:trimmedLoginId,hasPassword:!!password},timestamp:Date.now(),hypothesisId:'H0'})}).catch(()=>{});
+    // #endregion
+
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0/login`, {
+      const response = await fetch(`${functionsBaseUrl}/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${publicAnonKey}`,
         },
         body: JSON.stringify({
-          login_id: loginId.trim(),
+          login_id: trimmedLoginId,
           password,
         }),
       });
 
-      let data: { error?: string; access_token?: string; user?: unknown } = {};
+      let data: { error?: string; access_token?: string; user?: unknown; debug_code?: string } = {};
       const contentType = response.headers.get('content-type');
       try {
         if (contentType?.includes('application/json')) {
           data = await response.json();
         } else {
           const text = await response.text();
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:non_json',message:'login_response',data:{status:response.status,contentType,textLen:text?.length,login_id:trimmedLoginId},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
+          // #endregion
           if (text) setError('サーバーエラーです。しばらく経ってからお試しください。');
           else setError('ログインに失敗しました。');
           return;
@@ -48,6 +56,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       }
 
       if (!response.ok) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:login_fail',message:'login_response',data:{status:response.status,errorMessage:data.error,debug_code:data.debug_code,login_id:trimmedLoginId},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
+        // #endregion
         setError(data.error || 'ログインに失敗しました');
         return;
       }
@@ -59,6 +70,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         setError(data.error || 'アクセストークンが返されませんでした');
       }
     } catch (err: unknown) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:catch',message:'login_exception',data:{errorName:err instanceof Error?err.name:'',errorMessage:err instanceof Error?err.message:String(err),login_id:trimmedLoginId},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
+      // #endregion
       console.error('Login error:', err);
       const errorMessage = err instanceof Error ? err.message : 'ログインに失敗しました';
       setError(errorMessage);
