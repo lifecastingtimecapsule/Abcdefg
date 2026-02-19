@@ -73,46 +73,30 @@ async function getUserRole(userId: string) {
 
 // Login with login_id（全件探索なし: user_login のみ。password_hash があれば Edge 内検証＋自前 JWT で Supabase Auth 呼び出しを回避）
 app.post('/make-server-fe84bde0/login', async (c) => {
-  const tStart = Date.now();
+  const t0 = Date.now();
   try {
     const body = await c.req.json();
     const { login_id, password } = body;
-    // #region agent log
-    console.log('[LOGIN] entry', { login_id: String(login_id).slice(0, 20), hasPassword: !!password });
-    // #endregion
 
     // Find user by login_id (db)
     const user = await db.getAppUserByLoginId(login_id);
+    const tUser = Date.now();
 
     if (!user) {
-      console.log(`[LOGIN] USER_NOT_FOUND login_id=${login_id}`);
-      return c.json({ error: 'ログインIDまたはパスワードが正しくありません', debug_code: 'USER_NOT_FOUND' }, 401);
+      console.log(`[Perf] POST /login userLookupMs=${tUser - t0} totalMs=${Date.now() - t0} result=user_not_found`);
+      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
     if (user.active_flag === false) {
-      console.log('[LOGIN] ACCOUNT_DISABLED', { login_id });
-      return c.json({ error: 'このアカウントは無効です', debug_code: 'ACCOUNT_DISABLED' }, 403);
-    }
-
-    const hasPasswordHash = !!user.password_hash;
-    const hasJwtSecret = !!JWT_SECRET;
-    // #region agent log
-    console.log('[LOGIN] user found', { login_id, hasPasswordHash, hasJwtSecret, hashPrefix: hasPasswordHash ? String(user.password_hash).slice(0, 12) : null });
-    // #endregion
-
-    if (user.password_hash && !JWT_SECRET) {
-      console.log('[LOGIN] JWT_SECRET_MISSING');
-      return c.json({ error: '認証設定エラーです。管理者に連絡してください。', debug_code: 'JWT_SECRET_MISSING' }, 500);
+      console.log(`[Perf] POST /login userLookupMs=${tUser - t0} totalMs=${Date.now() - t0} result=account_disabled`);
+      return c.json({ error: 'このアカウントは無効です' }, 403);
     }
 
     let accessToken: string;
     if (user.password_hash && JWT_SECRET) {
       const ok = await bcrypt.compare(password, user.password_hash);
-      // #region agent log
-      console.log('[LOGIN] bcrypt.compare result', { ok });
-      // #endregion
       if (!ok) {
-        console.log('[LOGIN] PASSWORD_MISMATCH');
-        return c.json({ error: 'ログインIDまたはパスワードが正しくありません', debug_code: 'PASSWORD_MISMATCH' }, 401);
+        console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${Date.now() - tUser} totalMs=${Date.now() - t0} result=wrong_password`);
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
       }
       const secret = new TextEncoder().encode(JWT_SECRET);
       accessToken = await new jose.SignJWT({ email: user.email })
@@ -122,20 +106,18 @@ app.post('/make-server-fe84bde0/login', async (c) => {
         .setExpirationTime(JWT_EXPIRY)
         .sign(secret);
     } else {
-      // #region agent log
-      console.log('[LOGIN] fallback to Supabase Auth', { email: user.email });
-      // #endregion
       const { data, error } = await supabase.auth.signInWithPassword({
         email: user.email,
         password,
       });
       if (error) {
-        console.log(`[LOGIN] SUPABASE_AUTH_FAILED error=${error.message}`);
-        return c.json({ error: 'ログインIDまたはパスワードが正しくありません', debug_code: 'SUPABASE_AUTH_FAILED' }, 401);
+        console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${Date.now() - tUser} totalMs=${Date.now() - t0} result=supabase_auth_fail`);
+        console.log(`Login authentication error: ${error.message}`);
+        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
       }
       accessToken = data.session.access_token;
     }
-    const tAfterAuth = Date.now();
+    const tAuth = Date.now();
 
     try {
       const updatedUser = {
@@ -146,6 +128,8 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     } catch (updateError) {
       console.log(`Failed to update last login time: ${updateError}`);
     }
+    const tEnd = Date.now();
+    console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${tAuth - tUser} updateMs=${tEnd - tAuth} totalMs=${tEnd - t0} result=success`);
 
     return c.json({
       success: true,
@@ -157,8 +141,9 @@ app.post('/make-server-fe84bde0/login', async (c) => {
       }),
     });
   } catch (error) {
+    console.log(`[Perf] POST /login totalMs=${Date.now() - t0} result=error`);
     console.log(`Login processing error: ${error}`);
-    return c.json({ error: String(error), debug_code: 'SERVER_ERROR' }, 500);
+    return c.json({ error: String(error) }, 500);
   }
 });
 
@@ -317,13 +302,15 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
   try {
     console.log('System initialization requested...');
     
-    // Check if any users exist
+    // Check if any users exist（既に初期化済みの場合は 200 で返し、フロントの「失敗」扱いを防ぐ）
     const users = await db.getAppUsers();
     if (users.length > 0) {
       return c.json({ 
-        error: 'システムは既に初期化されています。ユーザーが存在します。',
+        success: true, 
+        already_initialized: true, 
+        message: 'システムは既に初期化されています。',
         existing_users: users.length 
-      }, 400);
+      }, 200);
     }
     
     console.log('Creating default admin account...');
@@ -458,8 +445,10 @@ app.post('/make-server-fe84bde0/admin/backfill-user-login', async (c) => {
 
 // Get all users
 app.get('/make-server-fe84bde0/users', async (c) => {
+  const t0 = Date.now();
   try {
     const user = await getAuthUser(c.req.raw);
+    const tAuth = Date.now();
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
@@ -467,6 +456,8 @@ app.get('/make-server-fe84bde0/users', async (c) => {
     const role = await getUserRole(user.id);
     const allUsers = await db.getAppUsers();
     const activeUsers = allUsers.filter((u: any) => u.active_flag !== false);
+    const tEnd = Date.now();
+    console.log(`[Perf] GET /users authMs=${tAuth - t0} dbMs=${tEnd - tAuth} totalMs=${tEnd - t0} count=${activeUsers.length}`);
 
     // スタッフ権限の場合は限定された情報のみを返す
     if (role !== 'admin') {
@@ -604,13 +595,17 @@ app.delete('/make-server-fe84bde0/users/:user_id', async (c) => {
 
 // Get all locations
 app.get('/make-server-fe84bde0/locations', async (c) => {
+  const t0 = Date.now();
   try {
     const user = await getAuthUser(c.req.raw);
+    const tAuth = Date.now();
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
     const locations = await db.getLocations();
+    const tEnd = Date.now();
+    console.log(`[Perf] GET /locations authMs=${tAuth - t0} dbMs=${tEnd - tAuth} totalMs=${tEnd - t0} count=${locations.length}`);
     return c.json({ locations: locations.filter((l: any) => l.active_flag !== false) });
   } catch (error) {
     console.log(`Get locations error: ${error}`);
@@ -928,38 +923,144 @@ app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
 
 // ========== Reservations ==========
 
-// Get reservations（optional: ?month=YYYY-MM or ?start=YYYY-MM-DD&end=YYYY-MM-DD で範囲指定、待機時間削減）
+/** 指定した予約リストに対して、不足している制作物を自動作成する（GET内で呼び、通信1回で済ませる用） */
+async function ensureWorkOrdersForReservations(
+  reservations: Record<string, unknown>[],
+  user: { id: string }
+): Promise<void> {
+  if (reservations.length === 0) return;
+  const workOrders = await db.getWorkOrders();
+  const menuItems = await db.getMenuItems();
+  const menuById = new Map<string, { name?: string }>();
+  for (const m of menuItems as { menu_item_id: string; name?: string }[]) {
+    menuById.set(m.menu_item_id, m);
+  }
+  const getJapanNow = () => {
+    const now = new Date();
+    const jstOffset = 9 * 60;
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    return new Date(utc + (jstOffset * 60000));
+  };
+  const japanNow = getJapanNow();
+
+  for (const reservation of reservations) {
+    if (reservation.status !== 'confirmed') continue;
+    const reservationDate = new Date(reservation.reservation_date_time as string);
+    if (reservationDate >= japanNow) continue;
+    const existingWorkOrder = workOrders.find((wo: any) => wo.reservation_id === reservation.reservation_id);
+    if (existingWorkOrder) continue;
+
+    const workRequired = (reservation.work_required as string)?.trim();
+    const productType = workRequired
+      ? workRequired
+      : (menuById.get(reservation.menu_item_id as string)?.name) || 'メニュー不明';
+    const workOrderId = crypto.randomUUID();
+    const dueDate = new Date(reservationDate);
+    dueDate.setDate(dueDate.getDate() + 28);
+    const workOrderData = {
+      work_order_id: workOrderId,
+      reservation_id: reservation.reservation_id,
+      product_type: productType,
+      status: '制作中',
+      due_date: dueDate.toISOString().split('T')[0],
+      delivered_date: null,
+      priority_order: null,
+      notes_internal: '予約確定により自動作成',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      updated_by_user_id: user.id,
+    };
+    await db.upsertWorkOrder(workOrderData);
+    workOrders.push(workOrderData as any);
+  }
+}
+
+// Get reservations（optional: ?month=YYYY-MM or ?start=YYYY-MM-DD&end=YYYY-MM-DD で範囲指定）
+// month/範囲指定時は「必要なら制作物を自動作成してから」顧客名付きで返す（GET 1回で完結、ウォーターフォール解消）
 app.get('/make-server-fe84bde0/reservations', async (c) => {
+  const t0 = Date.now();
+  try {
+    const user = await getAuthUser(c.req.raw);
+    const tAuth = Date.now();
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const month = c.req.query('month');
+    const start = c.req.query('start');
+    const end = c.req.query('end');
+
+    let reservations: Record<string, unknown>[];
+    if (month) {
+      const [y, m] = month.split('-').map(Number);
+      const startDate = new Date(y, m - 1, 1, 0, 0, 0, 0);
+      const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+      reservations = await db.getReservationsByDateRange(startDate, endDate);
+    } else if (start && end) {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      endDate.setHours(23, 59, 59, 999);
+      reservations = await db.getReservationsByDateRange(startDate, endDate);
+    } else {
+      reservations = await db.getReservations();
+    }
+    const tDb = Date.now();
+
+    // 月/範囲指定時: 制作物を自動作成してから返す（フロントの GET→POST→GET を不要に）
+    if (month || (start && end)) {
+      await ensureWorkOrdersForReservations(reservations, user);
+    }
+    const tEnsure = Date.now();
+
+    // 月/範囲指定時は顧客名・顧客番号を付与（カレンダー用）
+    if ((month || (start && end)) && reservations.length > 0) {
+      const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))];
+      const customers = await db.getCustomersByIds(customerIds);
+      const customerMap = Object.fromEntries((customers as any[]).map(c => [c.customer_id, c]));
+      reservations = reservations.map((r: any) => {
+        const cust = customerMap[r.customer_id];
+        const customer_name = cust ? (cust.child_name || cust.parent_name || '名称未設定') : '顧客不明';
+        const external_customer_number = cust?.external_customer_number ?? '';
+        return { ...r, customer_name, external_customer_number };
+      });
+    }
+    const tEnd = Date.now();
+    console.log(`[Perf] GET /reservations authMs=${tAuth - t0} dbMs=${tDb - tAuth} ensureMs=${tEnsure - tDb} enrichMs=${tEnd - tEnsure} totalMs=${tEnd - t0} count=${reservations.length} query=${month || (start && end ? 'range' : 'all')}`);
+
+    return c.json({ reservations });
+  } catch (error) {
+    console.log(`Get reservations error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// 予約1件の詳細取得（モーダル用：顧客・場所・メニュー含む）
+app.get('/make-server-fe84bde0/reservations/:id', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
-
-    let reservations = await db.getReservations();
-    const month = c.req.query('month');
-    const start = c.req.query('start');
-    const end = c.req.query('end');
-    if (month) {
-      const [y, m] = month.split('-').map(Number);
-      const startDate = new Date(y, m - 1, 1);
-      const endDate = new Date(y, m, 0, 23, 59, 59, 999);
-      reservations = reservations.filter((r: any) => {
-        const d = new Date(r.reservation_date_time);
-        return d >= startDate && d <= endDate;
-      });
-    } else if (start && end) {
-      const startDate = new Date(start);
-      const endDate = new Date(end);
-      endDate.setHours(23, 59, 59, 999);
-      reservations = reservations.filter((r: any) => {
-        const d = new Date(r.reservation_date_time);
-        return d >= startDate && d <= endDate;
-      });
+    const reservationId = c.req.param('id');
+    const reservation = await db.getReservation(reservationId);
+    if (!reservation) {
+      return c.json({ error: 'Not found' }, 404);
     }
-    return c.json({ reservations });
+    const [customer, location, menuItem, users] = await Promise.all([
+      (reservation as any).customer_id ? db.getCustomer((reservation as any).customer_id) : null,
+      (reservation as any).location_id ? db.getLocation((reservation as any).location_id) : null,
+      (reservation as any).menu_item_id ? db.getMenuItem((reservation as any).menu_item_id) : null,
+      db.getAppUsers(),
+    ]);
+    return c.json({
+      reservation,
+      customer: customer || null,
+      location: location || null,
+      menu_item: menuItem || null,
+      users: users || [],
+    });
   } catch (error) {
-    console.log(`Get reservations error: ${error}`);
+    console.log(`Get reservation detail error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -1170,68 +1271,61 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const role = await getUserRole(user.id);
-    if (role !== 'admin') {
-      return c.json({ error: 'Admin access required' }, 403);
-    }
-
+    // 管理者・スタッフともにカレンダーからの一括自動作成を許可
     const reservations = await db.getReservations();
     const workOrders = await db.getWorkOrders();
-    
+    const menuItems = await db.getMenuItems();
+
+    const menuById = new Map<string, { name?: string }>();
+    for (const m of menuItems as { menu_item_id: string; name?: string }[]) {
+      menuById.set(m.menu_item_id, m);
+    }
+
     let createdCount = 0;
     const createdWorkOrders = [];
-    
-    // Get current time in JST (Asia/Tokyo)
+
     const getJapanNow = () => {
       const now = new Date();
-      const jstOffset = 9 * 60; // JST is UTC+9
+      const jstOffset = 9 * 60;
       const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
       return new Date(utc + (jstOffset * 60000));
     };
     const japanNow = getJapanNow();
 
     for (const reservation of reservations) {
-      // Check if reservation is confirmed and has work_required
-      if (reservation.status === 'confirmed' && reservation.work_required && reservation.work_required.trim() !== '') {
-        // Check if reservation date has passed (in JST)
-        const reservationDate = new Date(reservation.reservation_date_time);
-        if (reservationDate >= japanNow) {
-          // Skip: reservation date has not passed yet
-          continue;
-        }
-        
-        // Check if work order already exists
-        const existingWorkOrder = workOrders.find((wo: any) => wo.reservation_id === reservation.reservation_id);
-        
-        if (!existingWorkOrder) {
-          // Create work order
-          const workOrderId = crypto.randomUUID();
-          
-          // Calculate due date: 14 days from reservation date
-          const dueDate = new Date(reservationDate);
-          dueDate.setDate(dueDate.getDate() + 14);
+      if (reservation.status !== 'confirmed') continue;
+      const reservationDate = new Date(reservation.reservation_date_time as string);
+      if (reservationDate >= japanNow) continue;
 
-          const workOrderData = {
-            work_order_id: workOrderId,
-            reservation_id: reservation.reservation_id,
-            product_type: reservation.work_required,
-            status: '乾燥中',
-            due_date: dueDate.toISOString().split('T')[0],
-            delivered_date: null,
-            priority_order: null,
-            notes_internal: '一括生成（既存予約の確定済み分）',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            updated_by_user_id: user.id,
-          };
+      const existingWorkOrder = workOrders.find((wo: any) => wo.reservation_id === reservation.reservation_id);
+      if (existingWorkOrder) continue;
 
-          await db.upsertWorkOrder(workOrderData);
-          createdCount++;
-          createdWorkOrders.push(workOrderData);
+      const workRequired = (reservation.work_required as string)?.trim();
+      const productType = workRequired
+        ? workRequired
+        : (menuById.get(reservation.menu_item_id as string)?.name) || 'メニュー不明';
 
-          console.log(`Batch created work order ${workOrderId} for reservation ${reservation.reservation_id}`);
-        }
-      }
+      const workOrderId = crypto.randomUUID();
+      const dueDate = new Date(reservationDate);
+      dueDate.setDate(dueDate.getDate() + 28);
+
+      const workOrderData = {
+        work_order_id: workOrderId,
+        reservation_id: reservation.reservation_id,
+        product_type: productType,
+        status: '制作中',
+        due_date: dueDate.toISOString().split('T')[0],
+        delivered_date: null,
+        priority_order: null,
+        notes_internal: '予約確定により自動作成',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        updated_by_user_id: user.id,
+      };
+
+      await db.upsertWorkOrder(workOrderData);
+      createdCount++;
+      createdWorkOrders.push(workOrderData);
     }
 
     return c.json({ 
@@ -1250,8 +1344,10 @@ app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c
 
 // Get work orders（optional: ?month=YYYY-MM で範囲指定、待機時間削減）
 app.get('/make-server-fe84bde0/work-orders', async (c) => {
+  const t0 = Date.now();
   try {
     const user = await getAuthUser(c.req.raw);
+    const tAuth = Date.now();
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
@@ -1267,6 +1363,8 @@ app.get('/make-server-fe84bde0/work-orders', async (c) => {
         return d >= startDate && d <= endDate;
       });
     }
+    const tEnd = Date.now();
+    console.log(`[Perf] GET /work-orders authMs=${tAuth - t0} dbMs=${tEnd - tAuth} totalMs=${tEnd - t0} count=${workOrders.length}`);
     return c.json({ work_orders: workOrders });
   } catch (error) {
     console.log(`Get work orders error: ${error}`);
@@ -1979,13 +2077,17 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
 
 // Get all menu items
 app.get('/make-server-fe84bde0/menu-items', async (c) => {
+  const t0 = Date.now();
   try {
     const user = await getAuthUser(c.req.raw);
+    const tAuth = Date.now();
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
     const menuItems = await db.getMenuItems();
+    const tEnd = Date.now();
+    console.log(`[Perf] GET /menu-items authMs=${tAuth - t0} dbMs=${tEnd - tAuth} totalMs=${tEnd - t0} count=${menuItems.length}`);
     return c.json({ menu_items: menuItems });
   } catch (error) {
     console.log(`Get menu items error: ${error}`);

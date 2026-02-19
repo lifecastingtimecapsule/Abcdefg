@@ -16,12 +16,27 @@
  - **用途**: 予約管理 / 制作進行管理 / スタッフ勤務・インセンティブ管理
  - **フロントエンド**: Vite + React + TypeScript（`src/` 配下）
  - **バックエンド**: Supabase Edge Functions（`src/supabase/functions/server`）
- - **データベース**: Supabase Postgres + KV Store（`kv_store_fe84bde0` テーブルなど）
+ - **データベース**: Supabase Postgres（`app_users`・`reservations` 等）および KV Store（`kv_store_fe84bde0` 等）
  - **ホスティング**:
    - フロント: Vercel
    - API / DB: Supabase
 
  画面レベルの操作マニュアルは `src/SETUP.md` を参照してください。
+
+ ---
+
+ ## 最近の変更点
+
+ - **カレンダー表示の高速化**
+   - **Phase1**: カレンダー表示に必要な「予約一覧」と「場所」だけを先に取得し、すぐにカレンダーを表示するようにしました。
+   - **Phase2**: メニュー・ユーザー・制作物はバックグラウンドで取得し、詳細モーダル用に保持。詳細を開いたときにまだ無い場合はその時点で取得（足りない分を補完）します。
+ - **制作物自動作成の通信削減**
+   - 以前は「GET 予約 → POST 制作物一括作成 → 再GET 予約」の 3 段階で待たされていました。
+   - 現在は **GET `/reservations?month=YYYY-MM` 1 回**で、バックエンド側で「必要なら制作物を自動作成してから」最新の予約一覧を返す仕様に変更。通信は 1 回で完結します。
+ - **カレンダー再描画の抑制**
+   - Phase2 で `users` / `menuItems` / `workOrders` が更新されても、カレンダー本体（`react-big-calendar`）は `React.memo` でラップし、`events` と `date` が変わらない限り再描画しないようにしました。重い DOM の再描画によるカクつきを軽減しています。
+ - **1 日あたりの表示件数**
+   - 週/日ビュー向けに `allDayMaxRows` を設定し、残りは「+N 件」で表示するようにして DOM 負荷を抑えています。月ビューでは `popup` により同様に「+N 件」でまとめて表示されます。
 
  ---
 
@@ -43,6 +58,7 @@
 
  - `VITE_SUPABASE_PROJECT_ID` … Supabase プロジェクトの **Reference ID**
  - `VITE_SUPABASE_ANON_KEY` … Supabase の **anon 公開キー**
+ - （任意）`VITE_SUPABASE_URL` … ローカルで Edge Functions を別 URL に向ける場合（例: `http://127.0.0.1:54321`）。未設定時は `https://<project-id>.supabase.co` を使用します。
 
  ```bash
  # .env.local のイメージ
@@ -50,7 +66,7 @@
  VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
  ```
 
- これらは、Vercel 側にも同じキー名で登録します。
+ これらは、Vercel 側にも同じキー名で登録します（VITE_SUPABASE_URL は通常不要）。
 
  ---
 
@@ -73,6 +89,10 @@
 
     ブラウザで `http://localhost:5173` を開きます。
 
+ 4. （任意）ログイン不具合の診断・パスワードリセット  
+    - `npm run diagnose-login` … ログイン周りの診断（要 `.env.local`）
+    - `npm run reset-admin-password` … 管理者パスワードのリセット用スクリプト
+
  ---
 
  ## Supabase 側の準備（概要）
@@ -84,12 +104,13 @@
       を確認します。
 
  2. **Edge Functions のデプロイ**
-    - このリポジトリの `src/supabase/functions/server` は  
-      Figma Make が生成したバックエンド（Hono ベース）のコードです。
-    - Supabase ダッシュボードまたは `supabase` CLI を利用し、  
-      関数名 `make-server-fe84bde0` の Edge Function としてデプロイします。
-    - フロントエンドからは
-      `https://<project-id>.supabase.co/functions/v1/make-server-fe84bde0/...`
+    - バックエンド本体: `src/supabase/functions/server`（Figma Make 生成の Hono ベース）。
+    - Supabase CLI でデプロイする場合のエントリポイント: `supabase/functions/make-server-fe84bde0/index.ts`（上記 server を import）。
+    - プロジェクトルートで次のコマンドを実行します。  
+      `npx supabase functions deploy make-server-fe84bde0`
+    - ダッシュボードからデプロイする場合は、関数名 `make-server-fe84bde0` として登録します。
+    - フロントエンドからは  
+      `https://<project-id>.supabase.co/functions/v1/make-server-fe84bde0/...`  
       にリクエストが飛ぶ想定です。
 
  3. **API のベースURL・パスの確認**
@@ -99,10 +120,10 @@
       ```text
       https://<project-id>.supabase.co/functions/v1/make-server-fe84bde0
       ```
-    - 例: プロジェクトID が `abcdefghij` なら
-      - ログイン: `POST https://abcdefghij.supabase.co/functions/v1/make-server-fe84bde0/login`
-      - 予約一覧: `GET https://abcdefghij.supabase.co/functions/v1/make-server-fe84bde0/reservations`
-      - 公開予約作成: `POST https://abcdefghij.supabase.co/functions/v1/make-server-fe84bde0/public/reservations`
+    - 例: プロジェクトID が `abcdefghij` なら（ベースURL: `https://abcdefghij.supabase.co/functions/v1/make-server-fe84bde0`）
+      - ログイン: `POST <ベースURL>/login`
+      - 予約一覧: `GET <ベースURL>/reservations`（月指定でカレンダー用: `?month=YYYY-MM`）
+      - 公開予約作成: `POST <ベースURL>/public/reservations`
     - フロントの `.env.local` では `VITE_SUPABASE_PROJECT_ID` にこの `<project-id>` を入れます。
 
  4. **Edge Function の環境変数（シークレット）の追加方法**
@@ -121,9 +142,8 @@
     - すでに Supabase が注入しているため、通常は追加不要: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`。
 
  5. **既存ユーザーでログインできない場合**
-    - ログインは `user_login:ログインID` でユーザーを参照するため、既存データにはこのキーが無い場合があります。
-    - 管理者でログイン後、`POST .../admin/backfill-user-login` を 1 回実行すると全ユーザーに `user_login` が設定されます。
-    - パスワードを一度「管理者が更新」すると、次回からは KV のハッシュで検証するためログインが速くなります。
+    - ログインは Postgres の `app_users.login_id` でユーザーを参照します。既存データに `login_id` が無い場合は、管理者でログイン後、`POST .../admin/backfill-user-login` を 1 回実行すると全ユーザーにログイン用キーが設定されます。
+    - パスワードは `app_users` または KV で検証されます。詳細は `docs/RESET-ALL-PASSWORDS.md` などを参照してください。
 
  ---
 
@@ -151,6 +171,7 @@
 
  - `src/SETUP.md` … 管理画面・予約画面の初回セットアップと利用方法
  - `DEV_NOTES.md` … 開発者向けメモ（アーキテクチャ、今後の拡張方針など）
+ - `docs/` … データ移行（`DATA-MIGRATION-NEXT-STEPS.md`）、パスワードリセット（`RESET-ALL-PASSWORDS.md`）、パフォーマンス分析（`DATABASE-PERFORMANCE-ANALYSIS.md`）など、追加の手順書があります。
 
  実装・仕様を変更した場合は、上記ドキュメントも合わせて更新してください。
   

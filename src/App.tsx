@@ -24,12 +24,12 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [showReauthModal, setShowReauthModal] = useState(false);
 
-  // URLルーティングの監視
+  // URL???E???????E
   useEffect(() => {
-    console.log('[App] 初期ルート:', window.location.pathname);
+    console.log('[App] ?????E', window.location.pathname);
     
     const handlePopState = () => {
-      console.log('[App] ルート変更:', window.location.pathname);
+      console.log('[App] ?????:', window.location.pathname);
       setCurrentRoute(window.location.pathname);
     };
 
@@ -38,7 +38,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // 401エラー時のコールバックを設定（再認証モーダル表示）
+    // 401?????E???????????E?????????E?E
     setUnauthorizedCallback(() => {
       setShowReauthModal(true);
     });
@@ -51,7 +51,7 @@ export default function App() {
       const token = localStorage.getItem('access_token');
       
       if (!token) {
-        // トークンがない場合、システムの初期化を試みる
+        // ??E?????E???????E??????????E
         await tryInitializeSystem();
         setIsAuthenticated(false);
         setCurrentUser(null);
@@ -63,12 +63,12 @@ export default function App() {
       setCurrentUser(userData.user);
       setIsAuthenticated(true);
     } catch (err: any) {
-      // UNAUTHORIZEDエラーの場合は、再認証モーダルが既に表示されているので何もしない
+      // UNAUTHORIZED???????E??E???????????????E?????????E
       if (err?.message === 'UNAUTHORIZED') {
-        // 再認証モーダルが表示される
+        // ?????????????E
         console.log('[Auth] Re-authentication required');
       } else {
-        // その他のエラーの場合はログアウト
+        // ??E??E???????E?????E
         localStorage.removeItem('access_token');
         setIsAuthenticated(false);
         setCurrentUser(null);
@@ -80,7 +80,7 @@ export default function App() {
 
   const tryInitializeSystem = async () => {
     try {
-      // システムの初期化を試みる（既に初期化済みの場合はエラーが返る）
+      // ???E??????????????????????E???????E?E
       const { projectId, publicAnonKey } = await import('./utils/supabase/info');
       const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0/initialize`;
       
@@ -96,17 +96,17 @@ export default function App() {
       
       if (response.ok) {
         const data = await response.json();
-        console.log('✅ システムが初期化されました', data);
+        if (data.already_initialized) {
+          console.log('????????????????');
+        } else {
+          console.log('?????????????', data);
+        }
       } else {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        if (errorData.error?.includes('既に初期化')) {
-          console.log('ℹ️ ��ステムは既に初期化されています');
-        } else {
-          console.error(`初期化エラー (${response.status}):`, errorData.error || errorData);
-        }
+        console.error(`?????? (${response.status}):`, errorData.error || errorData);
       }
     } catch (err: any) {
-      console.error('初期化エラー (Network/Exception):', err?.message || err);
+      console.error('?????? (Network/Exception):', err?.message || err);
       // Network errors are often not critical for initialization check
       // The system might already be initialized
     }
@@ -132,7 +132,7 @@ export default function App() {
 
   const handleReauthSuccess = async (token: string) => {
     setShowReauthModal(false);
-    // トークンを再取得したので、ユーザー情報を再読み込み
+    // ??E????E?????E???????E????E????
     await checkAuth();
   };
 
@@ -141,7 +141,7 @@ export default function App() {
     handleLogout();
   };
 
-  // 公開ページ（認証不要）
+  // ???E???E?????E??E
   if (currentRoute === '/reservation' || currentRoute === '/yoyaku' || currentRoute === '/public/reservation') {
     return (
       <>
@@ -176,13 +176,6 @@ export default function App() {
 
 
 
-  // デフォルトルートから公開予約ページへリダイレクト
-  if (currentRoute === '/' && !isAuthenticated && !loading) {
-    window.history.pushState({}, '', '/reservation');
-    setCurrentRoute('/reservation');
-    return null;
-  }
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -191,10 +184,10 @@ export default function App() {
     );
   }
 
-  // スタッフ用ログインページ
+  // 未認証時: / または /login または /admin-sys-login ならログイン画面、それ以外は公開予約へ
   if (!isAuthenticated) {
-    // スタッフ用ログインページは /login または /admin-sys-login でアクセス
-    if (currentRoute !== '/login' && currentRoute !== '/admin-sys-login') {
+    const showLogin = currentRoute === '/' || currentRoute === '/login' || currentRoute === '/admin-sys-login';
+    if (!showLogin) {
       window.history.pushState({}, '', '/reservation');
       setCurrentRoute('/reservation');
       return null;
@@ -266,7 +259,7 @@ export default function App() {
           onCancel={handleReauthCancel}
         />
       )}
-      {/* 初期パスワードでログインした初回のみ表示。パスワード変更まで操作をブロック */}
+      {/* ????????????????????????????????????E?? */}
       {currentUser?.must_change_password && (
         <MustChangePasswordModal
           currentUser={currentUser}

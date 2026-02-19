@@ -38,14 +38,9 @@ if (!supabaseUrl || !serviceRoleKey) {
 const supabase = createClient(supabaseUrl, serviceRoleKey);
 const INITIAL_PASSWORD = 'InitialPassword1!';
 
-async function sendLog(data) {
-  try {
-    await fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: 'diagnose-login.mjs', message: 'diagnostic', data, timestamp: Date.now() }),
-    });
-  } catch (_) {}
+// ローカル分析ツール (127.0.0.1:7242) は未使用のため送信しない（接続タイムアウトによる遅延を防ぐ）
+async function sendLog(_data) {
+  // no-op
 }
 
 async function main() {

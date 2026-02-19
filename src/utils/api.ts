@@ -19,7 +19,8 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
   }
   
   const url = `${BASE_URL}${endpoint}`;
-  
+  const t0 = Date.now();
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -31,6 +32,8 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     });
     
     if (!response.ok) {
+      const duration = Date.now() - t0;
+      console.log(`[API] ${endpoint} ${response.status} ${duration}ms`);
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
       
       // 401エラー時は適切なエラーハンドリング
@@ -62,8 +65,12 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     }
 
     const data = await response.json();
+    const duration = Date.now() - t0;
+    console.log(`[API] ${endpoint} ${response.status} ${duration}ms`);
     return data as T;
   } catch (err) {
+    const duration = Date.now() - t0;
+    console.log(`[API] ${endpoint} error ${duration}ms`, err);
     // ネットワークエラーなど
     if (err instanceof TypeError && err.message.includes('fetch')) {
       console.error('Network error:', err);

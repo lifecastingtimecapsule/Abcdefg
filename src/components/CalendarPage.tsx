@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
-import { Calendar, momentLocalizer, Views, View } from 'react-big-calendar';
+import { useEffect, useState, useMemo, useCallback, memo } from 'react';
+import { Calendar, momentLocalizer, Views } from 'react-big-calendar';
 import moment from 'moment';
 import 'moment/locale/ja';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
@@ -30,22 +30,53 @@ const messages = {
   showMore: (total: number) => `+${total}件`,
 };
 
+const calendarStyle = { height: '100%', minHeight: 'max(1200px, calc(100vh - 180px))' as const };
+
+/** Phase2（users/menuItems/workOrders）更新で親が再レンダーしても、events/date が同じならカレンダーは再描画しない */
+const MemoizedCalendar = memo(function MemoizedCalendar_(props: {
+  events: any[];
+  date: Date;
+  onNavigate: (d: Date) => void;
+  eventPropGetter: (event: any) => { style?: React.CSSProperties };
+  onSelectEvent: (event: any) => void;
+}) {
+  return (
+    <Calendar
+      localizer={localizer}
+      events={props.events}
+      startAccessor="start"
+      endAccessor="end"
+      style={calendarStyle}
+      messages={messages}
+      views={[Views.MONTH]}
+      view={Views.MONTH}
+      date={props.date}
+      onNavigate={props.onNavigate}
+      eventPropGetter={props.eventPropGetter}
+      onSelectEvent={props.onSelectEvent}
+      popup
+      selectable
+      allDayMaxRows={5}
+    />
+  );
+});
+
 export function CalendarPage({ userRole }: { userRole: string }) {
-  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [reservations, setReservations] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customersForModal, setCustomersForModal] = useState<Customer[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
-  
+  const [detailLoading, setDetailLoading] = useState(false);
+
   const [modalOpen, setModalOpen] = useState(false);
   const [workOrderModalOpen, setWorkOrderModalOpen] = useState(false);
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
   
-  const [view, setView] = useState<View>(Views.MONTH);
   const [date, setDate] = useState(new Date());
 
   const monthParam = useMemo(() => {
@@ -55,124 +86,55 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   }, [date]);
 
   useEffect(() => {
-    loadData();
+    loadCalendarData();
   }, [monthParam]);
 
-  const loadData = async () => {
+  // 詳細モーダルを開いたときにメニュー一覧がまだ無ければその時点で取得（足りない分を取得）
+  useEffect(() => {
+    if (!modalOpen || menuItems.length > 0) return;
+    apiRequest('/menu-items').then((data: any) => {
+      if (data?.menu_items) setMenuItems(data.menu_items);
+    }).catch(() => {});
+  }, [modalOpen]);
+
+  const loadCalendarData = async () => {
     try {
       setLoading(true);
       const month = monthParam;
-      const results = await Promise.allSettled([
-        apiRequest(`/reservations?month=${month}`),
-        apiRequest('/customers'),
-        apiRequest('/locations'),
-        apiRequest('/menu-items'),
-        apiRequest('/users'),
-        apiRequest(`/work-orders?month=${month}`),
+      // Phase1: 名前と日付用に「予約一覧＋場所」だけ取得して先にカレンダー表示
+      const [resSettled, locSettled] = await Promise.all([
+        apiRequest(`/reservations?month=${month}`).then((v: any) => ({ status: 'fulfilled' as const, value: v })).catch(() => ({ status: 'rejected' as const, reason: null })),
+        apiRequest('/locations').then((v: any) => ({ status: 'fulfilled' as const, value: v })).catch(() => ({ status: 'rejected' as const, reason: null })),
       ]);
+      const resResult = resSettled.status === 'fulfilled' ? resSettled.value : null;
+      const locResult = locSettled.status === 'fulfilled' ? locSettled.value : null;
 
-      let resData: any = { reservations: [] };
-      let menuData: any = { menu_items: [] };
-
-      if (results[0].status === 'fulfilled') {
-        resData = results[0].value;
-        setReservations(resData.reservations);
+      if (resResult) {
+        setReservations((resResult as any).reservations || []);
       } else {
-        console.error('Failed to load reservations:', results[0].reason);
+        console.error('Failed to load reservations');
         toast.error('予���データの読み込みに失敗しました');
       }
 
-      if (results[1].status === 'fulfilled') {
-        setCustomers(results[1].value.customers);
-      }
+      if (locResult) setLocations((locResult as any).locations || []);
 
-      if (results[2].status === 'fulfilled') {
-        setLocations(results[2].value.locations);
-      }
+      setLoading(false);
 
-      if (results[3].status === 'fulfilled') {
-        menuData = results[3].value;
-        setMenuItems(menuData.menu_items || []);
-      }
-
-      if (results[4].status === 'fulfilled') {
-        setUsers(results[4].value.users);
-      } else {
-        setUsers([]);
-      }
-
-      if (results[5].status === 'fulfilled') {
-        setWorkOrders(results[5].value.work_orders || []);
-      }
-
-      await autoCreateWorkOrders(resData.reservations, menuData.menu_items || []);
+      // Phase2: 裏でメニュー・ユーザー・制作物を取得（詳細モーダル用）。制作物自動作成は GET /reservations 内で実施済みのためここでは呼ばない
+      Promise.allSettled([
+        apiRequest('/menu-items'),
+        apiRequest('/users'),
+        apiRequest(`/work-orders?month=${month}`),
+      ]).then(([menu, u, w]) => {
+        if (menu.status === 'fulfilled' && (menu as any).value?.menu_items) setMenuItems((menu as any).value.menu_items);
+        if (u.status === 'fulfilled' && (u as any).value?.users) setUsers((u as any).value.users);
+        else if (u.status === 'rejected') setUsers([]);
+        if (w.status === 'fulfilled' && (w as any).value?.work_orders) setWorkOrders((w as any).value.work_orders);
+      });
     } catch (err: any) {
       console.error('Load data error:', err);
       toast.error('データの読み込みに失敗しました');
-    } finally {
       setLoading(false);
-    }
-  };
-
-  const autoCreateWorkOrders = async (reservationsList: any[], menuItemsList: any[]) => {
-    try {
-      const now = new Date();
-      const japanNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-
-      const pastConfirmedReservations = reservationsList.filter((reservation) => {
-        const reservationDate = new Date(reservation.reservation_date_time);
-        return (
-          reservation.status === 'confirmed' &&
-          reservationDate < japanNow
-        );
-      });
-
-      if (pastConfirmedReservations.length === 0) return;
-
-      const workOrdersData = await apiRequest('/work-orders');
-      const existingWorkOrders = workOrdersData.work_orders || [];
-      const existingReservationIds = new Set(
-        existingWorkOrders.map((wo: any) => wo.reservation_id).filter(Boolean)
-      );
-
-      const reservationsNeedingWorkOrders = pastConfirmedReservations.filter(
-        (reservation) => !existingReservationIds.has(reservation.reservation_id)
-      );
-
-      if (reservationsNeedingWorkOrders.length === 0) return;
-
-      let createdCount = 0;
-      for (const reservation of reservationsNeedingWorkOrders) {
-        try {
-          const reservationDate = new Date(reservation.reservation_date_time);
-          const dueDate = new Date(reservationDate);
-          dueDate.setDate(dueDate.getDate() + 28);
-          const dueDateStr = dueDate.toISOString().split('T')[0];
-
-          const menuItem = menuItemsList.find((m: any) => m.menu_item_id === reservation.menu_item_id);
-          const workType = menuItem ? menuItem.name : 'メニュー不明';
-
-          await apiRequest('/work-orders', {
-            method: 'POST',
-            body: JSON.stringify({
-              reservation_id: reservation.reservation_id,
-              product_type: workType,
-              due_date: dueDateStr,
-              status: '制作中',
-              notes_internal: '予約確定により自動作成',
-            }),
-          });
-          createdCount++;
-        } catch (err) {
-          console.error(`Failed to create work order for reservation ${reservation.reservation_id}:`, err);
-        }
-      }
-
-      if (createdCount > 0) {
-        console.log(`✅ ${createdCount}件の制作物を自動作成しました`);
-      }
-    } catch (err) {
-      console.error('Auto-create work orders error:', err);
     }
   };
 
@@ -180,7 +142,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     try {
       await apiRequest(`/reservations/${reservationId}`, { method: 'DELETE' });
       toast.success('予約を削除しました');
-      await loadData();
+      await loadCalendarData();
     } catch (err: any) {
       console.error('Delete reservation error:', err);
       toast.error('削除に失敗しました: ' + err.message);
@@ -190,24 +152,19 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const handleSave = async () => {
     setModalOpen(false);
     setEditingReservation(null);
-    await loadData();
+    await loadCalendarData();
   };
 
-  // Events for Calendar
+  // Events for Calendar（APIからcustomer_name取得、フォールバックでchild_name/parent_name）
   const events = useMemo(() => {
-    return reservations.map(r => {
-      const customer = customers.find(c => c.customer_id === r.customer_id);
-      const menuItem = menuItems.find(m => m.menu_item_id === r.menu_item_id);
-      const customerName = customer 
-        ? (customer.child_name || customer.parent_name || '名称未設���') 
-        : '顧客不明';
-      
+    return reservations.map((r: any) => {
+      const customerName = r.customer_name ?? r.child_name ?? r.parent_name ?? '名称未設定';
       const start = new Date(r.reservation_date_time);
       const end = new Date(start.getTime() + (r.duration_minutes || 30) * 60000);
 
       return {
         id: r.reservation_id,
-        title: `${customerName} / ${menuItem?.name || 'メニュー不明'}`,
+        title: customerName,
         start,
         end,
         resourceId: r.location_id,
@@ -215,17 +172,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
         status: r.status
       };
     });
-  }, [reservations, customers, menuItems]);
-
-  // Resources for Day View
-  const resources = useMemo(() => {
-    return locations
-        .filter(l => l.active_flag !== false)
-        .map(l => ({
-            id: l.location_id,
-            title: l.location_name
-        }));
-  }, [locations]);
+  }, [reservations]);
 
   const eventPropGetter = useCallback((event: any) => {
     let backgroundColor = '#64748b'; // slate-500
@@ -246,10 +193,25 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     };
   }, []);
 
-  const handleSelectEvent = useCallback((event: any) => {
-    setEditingReservation(event.resource);
-    setReservationMode('view');
-    setModalOpen(true);
+  const handleSelectEvent = useCallback(async (event: any) => {
+    try {
+      setDetailLoading(true);
+      const data = await apiRequest(`/reservations/${event.resource.reservation_id}`) as any;
+      const reservation = data.reservation;
+      const customer = data.customer;
+      const customersForDetail = customer ? [customer] : [];
+      setCustomersForModal(customersForDetail);
+      setEditingReservation(reservation);
+      setReservationMode('view');
+      // 詳細APIで返ってきた users を、まだ裏取得が終わっていなければ補完（足りない分を取得）
+      setUsers(prev => (prev.length > 0 ? prev : (data.users || [])));
+      setModalOpen(true);
+    } catch (err: any) {
+      console.error('Fetch reservation detail error:', err);
+      toast.error('詳細の取得に失敗しました');
+    } finally {
+      setDetailLoading(false);
+    }
   }, []);
 
   if (loading) {
@@ -261,8 +223,8 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   }
 
   return (
-    <div className="h-full flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-4">
+    <div className="h-full flex flex-col gap-4 min-h-0">
+      <div className="flex-shrink-0 flex items-center justify-between flex-wrap gap-4">
          <h1 className="text-2xl font-bold text-slate-900">予約カレンダー</h1>
          <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -273,6 +235,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
             <button
               onClick={() => {
                 setEditingReservation(null);
+                setCustomersForModal([]);
                 setReservationMode('edit');
                 setModalOpen(true);
               }}
@@ -284,38 +247,25 @@ export function CalendarPage({ userRole }: { userRole: string }) {
          </div>
       </div>
 
-      <div className="flex-1 bg-white rounded-2xl shadow-sm p-4 overflow-hidden min-h-[600px]">
-        <Calendar
-          localizer={localizer}
+      <div className="flex-1 min-h-0 bg-white rounded-2xl shadow-sm p-4 overflow-hidden calendar-compact-wrapper relative">
+        {detailLoading && (
+          <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10 rounded-2xl">
+            <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent"></div>
+          </div>
+        )}
+        <MemoizedCalendar
           events={events}
-          startAccessor="start"
-          endAccessor="end"
-          style={{ height: '100%', minHeight: '600px' }}
-          messages={messages}
-          views={[Views.MONTH, Views.WEEK, Views.DAY]}
-          defaultView={Views.MONTH}
-          view={view}
-          onView={setView}
           date={date}
           onNavigate={setDate}
-          resources={view === Views.DAY ? resources : undefined}
-          resourceIdAccessor="id"
-          resourceTitleAccessor="title"
           eventPropGetter={eventPropGetter}
           onSelectEvent={handleSelectEvent}
-          min={new Date(0, 0, 0, 9, 0, 0)}
-          max={new Date(0, 0, 0, 19, 0, 0)}
-          step={15}
-          timeslots={2}
-          popup
-          selectable
         />
       </div>
 
       {modalOpen && (
         <ReservationModal
           reservation={editingReservation}
-          customers={customers}
+          customers={customersForModal}
           locations={locations}
           users={users}
           menuItems={menuItems}
@@ -333,12 +283,12 @@ export function CalendarPage({ userRole }: { userRole: string }) {
         <WorkOrderModal
           workOrder={editingWorkOrder}
           reservations={reservations}
-          customers={customers}
+          customers={customersForModal}
           menuItems={menuItems}
           onSave={() => {
              setWorkOrderModalOpen(false);
              setEditingWorkOrder(null);
-             loadData();
+             loadCalendarData();
           }}
           onClose={() => {
             setWorkOrderModalOpen(false);

@@ -254,6 +254,30 @@ export async function getReservations(): Promise<Record<string, unknown>[]> {
   return (data ?? []) as Record<string, unknown>[];
 }
 
+/** 月別・範囲指定で予約を取得（全件取得を避けDB負荷削減） */
+export async function getReservationsByDateRange(startDate: Date, endDate: Date): Promise<Record<string, unknown>[]> {
+  const { data, error } = await getClient()
+    .from('reservations')
+    .select('*')
+    .gte('reservation_date_time', startDate.toISOString())
+    .lte('reservation_date_time', endDate.toISOString())
+    .order('reservation_date_time', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+/** 指定IDの顧客をまとめて取得（カレンダー表示用。非アクティブ含む） */
+export async function getCustomersByIds(customerIds: string[]): Promise<Record<string, unknown>[]> {
+  if (customerIds.length === 0) return [];
+  const uniqueIds = [...new Set(customerIds.filter(Boolean))];
+  const { data, error } = await getClient()
+    .from('customers')
+    .select('customer_id, child_name, parent_name, external_customer_number, active_flag')
+    .in('customer_id', uniqueIds);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
 /** 日付で絞り込み（公開API用） */
 export async function getReservationsByDate(dateStr: string, locationId?: string): Promise<Record<string, unknown>[]> {
   const targetDate = new Date(dateStr);

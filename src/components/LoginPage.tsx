@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '../utils/supabase/client';
 import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
 import { LogIn } from 'lucide-react';
@@ -13,15 +13,23 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // 犯人B対策: ログイン画面表示時に Edge Function をウォームアップし、コールドスタートを先に消化する
+  useEffect(() => {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 2000);
+    fetch(`${functionsBaseUrl}/public/health`, { signal: ac.signal })
+      .catch(() => {})
+      .finally(() => clearTimeout(t));
+    return () => { ac.abort(); clearTimeout(t); };
+  }, []);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    const t0 = Date.now();
 
     const trimmedLoginId = loginId.trim();
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:handleLogin',message:'login_attempt',data:{login_id:trimmedLoginId,hasPassword:!!password},timestamp:Date.now(),hypothesisId:'H0'})}).catch(()=>{});
-    // #endregion
 
     try {
       const response = await fetch(`${functionsBaseUrl}/login`, {
@@ -35,6 +43,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           password,
         }),
       });
+      const tFetch = Date.now();
 
       let data: { error?: string; access_token?: string; user?: unknown; debug_code?: string } = {};
       const contentType = response.headers.get('content-type');
@@ -43,9 +52,6 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           data = await response.json();
         } else {
           const text = await response.text();
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:non_json',message:'login_response',data:{status:response.status,contentType,textLen:text?.length,login_id:trimmedLoginId},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
-          // #endregion
           if (text) setError('サーバーエラーです。しばらく経ってからお試しください。');
           else setError('ログインに失敗しました。');
           return;
@@ -56,26 +62,25 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       }
 
       if (!response.ok) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:login_fail',message:'login_response',data:{status:response.status,errorMessage:data.error,debug_code:data.debug_code,login_id:trimmedLoginId},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
-        // #endregion
         setError(data.error || 'ログインに失敗しました');
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=fail`);
         return;
       }
 
       if (data.access_token && data.user) {
         localStorage.setItem('access_token', data.access_token);
         onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
+        const totalMs = Date.now() - t0;
+        console.log(`[LoginPerf] login totalMs=${totalMs} fetchMs=${tFetch - t0} status=${response.status} result=success`);
       } else {
         setError(data.error || 'アクセストークンが返されませんでした');
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=no_token`);
       }
     } catch (err: unknown) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2e45f4c9-d02b-4cda-a0a9-5ed9b86dc921',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LoginPage.tsx:catch',message:'login_exception',data:{errorName:err instanceof Error?err.name:'',errorMessage:err instanceof Error?err.message:String(err),login_id:trimmedLoginId},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
-      // #endregion
       console.error('Login error:', err);
       const errorMessage = err instanceof Error ? err.message : 'ログインに失敗しました';
       setError(errorMessage);
+      console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=error`, err);
     } finally {
       setLoading(false);
     }

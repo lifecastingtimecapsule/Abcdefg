@@ -84,7 +84,7 @@ const { data } = await supabase
 | GET /menu-items | `getByPrefix('menu_item:')` | 同上 |
 | POST /reservations | `getByPrefix('reservation:')` + `getByPrefix('work_order:')` | 予約番号生成・重複チェックで都度フルスキャン |
 | POST /work-orders | `getByPrefix('work_order:')` | 重複チェックでフルスキャン |
-| ログイン | `getByPrefix('user:')` | 全ユーザー取得して login_id で検索 |
+| ログイン | リレーショナル `app_users` | `login_id` で 1 件のみ取得（KV 不使用、改善済み） |
 
 **影響:** データ量に比例して、**DB の応答時間と転送量が増える**。特に予約・顧客・作業指示が多いと効きやすい。
 
@@ -129,19 +129,20 @@ const locations = await kv.getByPrefix('location:');
 
 ---
 
-### 2.6 ログイン時の「全ユーザー取得」
+### 2.6 ログイン（login_id で直接取得・改善済み）
 
-**場所:** `index.tsx` の `POST /login`
+**場所:** `index.tsx` の `POST /login`、`src/supabase/functions/server/db.ts` の `getAppUserByLoginId`
 
 ```ts
-const users = await kv.getByPrefix('user:');
-const user = users.find((u: any) => u.login_id === login_id && ...);
+// ログイン時: login_id で 1 件だけ取得
+const user = await db.getAppUserByLoginId(login_id);
+// db.ts: .from('app_users').select('*').eq('login_id', loginId).eq('active_flag', true).maybeSingle()
 ```
 
-- **全ユーザー** を取ってから `login_id` で検索
-- ユーザー数が増えると取得時間・メモリともに増加
+- リレーショナルテーブル **`app_users`** を **`login_id` で 1 行だけ**取得（KV の `getByPrefix('user:')` は使用していない）
+- ユーザー数が増えてもログインの取得コストは一定
 
-**影響:** ユーザー数が多いとログインが遅く感じる。
+**影響:** ログインの遅延要因としては軽微。体感が遅い場合はコールドスタートや認証処理を疑う。
 
 ---
 
@@ -163,7 +164,7 @@ const user = users.find((u: any) => u.login_id === login_id && ...);
 | 中 | 2.1 リクエストごとの認証 | 全 API に認証コストが乗る |
 | 中 | 2.4 公開ページの直列 fetch | 4 本直列でレイテンシが積み上がる |
 | 中 | 2.5 booked-slots の 3 本 getByPrefix | 公開予約の操作のたびに重い |
-| 低〜中 | 2.6 ログインの全ユーザー取得 | ユーザー数次第 |
+| — | 2.6 ログイン | 改善済み（login_id で 1 件取得のため要因としてはほぼなし） |
 | 低 | 2.7 コールドスタート | 初回・長時間放置後の 1 発だけ遅い |
 
 ---
