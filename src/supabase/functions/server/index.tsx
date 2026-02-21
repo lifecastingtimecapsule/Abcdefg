@@ -666,9 +666,8 @@ app.get('/make-server-fe84bde0/customers', async (c) => {
     const pageSize = pageSizeParam ? parseInt(pageSizeParam) : null; // null means no pagination
     const search = c.req.query('search')?.toLowerCase() || '';
 
-    // Get all active customers
-    let customers = await db.getCustomers({ activeOnly: false });
-    customers = customers.filter((cust: any) => cust.active_flag !== false);
+    // アクティブな顧客のみ取得（DB側でフィルタ・created_at 降順）
+    let customers = await db.getCustomers();
 
     // Apply search filter if provided
     if (search) {
@@ -696,13 +695,6 @@ app.get('/make-server-fe84bde0/customers', async (c) => {
         return searchFields.some(field => field.includes(search));
       });
     }
-
-    // Sort by created_at desc (newest first)
-    customers.sort((a: any, b: any) => {
-      const dateA = new Date(a.created_at || 0).getTime();
-      const dateB = new Date(b.created_at || 0).getTime();
-      return dateB - dateA;
-    });
 
     // Get total count before pagination
     const total = customers.length;
@@ -743,8 +735,8 @@ app.get('/make-server-fe84bde0/customers/search', async (c) => {
     const code = c.req.query('code');
     const name = c.req.query('name');
     
-    const customers = await db.getCustomers({ activeOnly: false });
-    let found = customers.filter((cust: any) => cust.active_flag !== false);
+    const customers = await db.getCustomers();
+    let found = [...customers];
     
     if (phone) {
       found = found.filter((cust: any) => cust.phone === phone);
@@ -1018,8 +1010,8 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
     }
     const tEnsure = Date.now();
 
-    // 月/範囲指定時は顧客名・顧客番号を付与（カレンダー用）
-    if ((month || (start && end)) && reservations.length > 0) {
+    // レスポンス形を統一: 常に customer_name / external_customer_number を付与（顧客未紐づきは「顧客不明」・空文字）
+    if (reservations.length > 0) {
       const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))];
       const customers = await db.getCustomersByIds(customerIds);
       const customerMap = Object.fromEntries((customers as any[]).map(c => [c.customer_id, c]));
@@ -3072,8 +3064,8 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
 
     // Check if customer already exists by phone
     let customer = null;
-    const customers = await db.getCustomers({ activeOnly: false });
-    const existingCustomer = customers.find((c: any) => c.phone === phone && c.active_flag !== false);
+    const customers = await db.getCustomers();
+    const existingCustomer = customers.find((c: any) => c.phone === phone);
 
     if (existingCustomer) {
       // Update existing customer

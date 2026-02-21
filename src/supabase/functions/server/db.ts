@@ -1,6 +1,11 @@
 /**
  * リレーショナルテーブル用データアクセス層（KV の代替）
- * マイグレーション適用後に index.tsx からこちらを参照する
+ * マイグレーション適用後に index.tsx からこちらを参照する。
+ *
+ * 並び順のルール:
+ * - 一覧系（getXxxs）: created_at の新しい順（ascending: false）
+ * - 予約・日付範囲: reservation_date_time の古い順（ascending: true）
+ * - ID 指定まとめ取得: 安定した順のため id または created_at でソート
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -271,14 +276,15 @@ export async function getReservationsByDateRange(startDate: Date, endDate: Date,
   return (data ?? []) as Record<string, unknown>[];
 }
 
-/** 指定IDの顧客をまとめて取得（カレンダー表示用。非アクティブ含む） */
+/** 指定IDの顧客をまとめて取得（カレンダー表示用。非アクティブ含む）。表示名でソート。 */
 export async function getCustomersByIds(customerIds: string[]): Promise<Record<string, unknown>[]> {
   if (customerIds.length === 0) return [];
   const uniqueIds = [...new Set(customerIds.filter(Boolean))];
   const { data, error } = await getClient()
     .from('customers')
     .select('customer_id, child_name, parent_name, external_customer_number, active_flag')
-    .in('customer_id', uniqueIds);
+    .in('customer_id', uniqueIds)
+    .order('child_name', { ascending: true, nullsFirst: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as Record<string, unknown>[];
 }
@@ -379,14 +385,15 @@ export async function upsertWorkOrder(row: Record<string, unknown>): Promise<voi
   if (error) throw new Error(error.message);
 }
 
-/** 指定予約IDに紐づく制作物だけ取得（カレンダー用。全件走査を回避） */
+/** 指定予約IDに紐づく制作物だけ取得（カレンダー用。全件走査を回避）。作成日時順。 */
 export async function getWorkOrdersByReservationIds(reservationIds: string[]): Promise<Record<string, unknown>[]> {
   const uniqueIds = [...new Set(reservationIds.filter(Boolean))];
   if (uniqueIds.length === 0) return [];
   const { data, error } = await getClient()
     .from('work_orders')
     .select('*')
-    .in('reservation_id', uniqueIds);
+    .in('reservation_id', uniqueIds)
+    .order('created_at', { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as Record<string, unknown>[];
 }
