@@ -63,24 +63,18 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
       if (!response.ok) {
         setError(data.error || 'ログインに失敗しました');
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=fail`);
         return;
       }
 
       if (data.access_token && data.user) {
         localStorage.setItem('access_token', data.access_token);
         onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
-        const totalMs = Date.now() - t0;
-        console.log(`[LoginPerf] login totalMs=${totalMs} fetchMs=${tFetch - t0} status=${response.status} result=success`);
       } else {
         setError(data.error || 'アクセストークンが返されませんでした');
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=no_token`);
       }
     } catch (err: unknown) {
-      console.error('Login error:', err);
       const errorMessage = err instanceof Error ? err.message : 'ログインに失敗しました';
       setError(errorMessage);
-      console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=error`, err);
     } finally {
       setLoading(false);
     }

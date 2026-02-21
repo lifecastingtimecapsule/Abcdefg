@@ -271,7 +271,7 @@ export function WorkOrdersPage() {
       }
 
       if (createdCount > 0) {
-        console.log(`✅ ${createdCount}件の制作物を自動作成しました`);
+        toast.success(`${createdCount}件の制作物を自動作成しました`);
       }
     } catch (err) {
       console.error('Auto-create work orders error:', err);

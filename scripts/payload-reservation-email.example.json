@@ -1,0 +1,13 @@
+{
+  "email": "customer@example.com",
+  "parent_name": "山田 花子",
+  "parent_name_kana": "ヤマダ ハナコ",
+  "child_name": "山田 太郎",
+  "child_name_kana": "ヤマダ タロウ",
+  "child_age_years": 2,
+  "child_age_months": 3,
+  "reservation_number": "RSV-2026-00001",
+  "reservation_date_time": "2026-03-01T10:00:00",
+  "menu_name": "手形・足形セット",
+  "location_name": "豊川店"
+}

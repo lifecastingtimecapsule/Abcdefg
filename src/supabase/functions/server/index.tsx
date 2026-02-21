@@ -6,12 +6,13 @@ import bcrypt from 'npm:bcryptjs';
 import * as jose from 'npm:jose';
 import * as db from './db.ts';
 import { syncToGoogleCalendar } from './google_calendar.tsx';
+import { sendEmail, buildReservationEmailHtml } from './resend_email.tsx';
 
 const app = new Hono();
 
 const JWT_SECRET = Deno.env.get('JWT_SECRET') || '';
 const SALT_ROUNDS = 10;
-const JWT_EXPIRY = '7d';
+const JWT_EXPIRY = '30d';
 
 app.use('*', cors());
 app.use('*', logger(console.log));
@@ -540,6 +541,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     }
 
     await db.upsertAppUser(updatedUser);
+    invalidateMasterCache('users');
     return c.json({ success: true, user: sanitizeUserForResponse(updatedUser) });
   } catch (error) {
     console.log(`Update user error: ${error}`);
@@ -640,6 +642,7 @@ app.post('/make-server-fe84bde0/locations', async (c) => {
     };
 
     await db.upsertLocation(locationData);
+    invalidateMasterCache('locations');
     return c.json({ success: true, location: locationData });
   } catch (error) {
     console.log(`Create/Update location error: ${error}`);
@@ -923,12 +926,14 @@ app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
 
 // ========== Reservations ==========
 
-/** 指定した予約リストに対して、不足している制作物を自動作成する（GET内で呼び、通信1回で済ませる用） */
+/** 指定した予約リストに対して不足している制作物を自動作成する。GET 内および POST batch-create から利用。 */
 async function ensureWorkOrdersForReservations(
   reservations: Record<string, unknown>[],
   user: { id: string }
-): Promise<void> {
-  if (reservations.length === 0) return;
+): Promise<{ createdCount: number; createdWorkOrders: Record<string, unknown>[] }> {
+  const createdWorkOrders: Record<string, unknown>[] = [];
+  if (reservations.length === 0) return { createdCount: 0, createdWorkOrders };
+
   const workOrders = await db.getWorkOrders();
   const menuItems = await db.getMenuItems();
   const menuById = new Map<string, { name?: string }>();
@@ -972,7 +977,9 @@ async function ensureWorkOrdersForReservations(
     };
     await db.upsertWorkOrder(workOrderData);
     workOrders.push(workOrderData as any);
+    createdWorkOrders.push(workOrderData);
   }
+  return { createdCount: createdWorkOrders.length, createdWorkOrders };
 }
 
 // Get reservations（optional: ?month=YYYY-MM or ?start=YYYY-MM-DD&end=YYYY-MM-DD で範囲指定）
@@ -1006,7 +1013,6 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
     }
     const tDb = Date.now();
 
-    // 月/範囲指定時: 制作物を自動作成してから返す（フロントの GET→POST→GET を不要に）
     if (month || (start && end)) {
       await ensureWorkOrdersForReservations(reservations, user);
     }
@@ -1030,6 +1036,181 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
     return c.json({ reservations });
   } catch (error) {
     console.log(`Get reservations error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// マスターデータのメモリキャッシュ（locations/menus/usersは滅多に変わらない）
+const MASTER_CACHE_TTL = 60_000;
+const masterCache: Record<string, { data: any; ts: number }> = {};
+async function getCachedMaster<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const cached = masterCache[key];
+  if (cached && Date.now() - cached.ts < MASTER_CACHE_TTL) return cached.data as T;
+  const data = await fetcher();
+  masterCache[key] = { data, ts: Date.now() };
+  return data;
+}
+function invalidateMasterCache(key?: string) {
+  if (key) { delete masterCache[key]; } else { for (const k in masterCache) delete masterCache[k]; }
+}
+
+// ========== Location Access Endpoints ==========
+
+// GET /me/locations: ログイン中ユーザーのアクセス可能ロケーション一覧
+// admin → 全ロケーション、staff → user_location_access から取得
+app.get('/make-server-fe84bde0/me/locations', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const role = await getUserRole(user.id);
+    const allLocations = await db.getLocations();
+
+    if (role === 'admin') {
+      return c.json({ locations: allLocations });
+    }
+
+    // staff: アクセス可能な location_id でフィルタ
+    const accessibleIds = await db.getAccessibleLocations(user.id);
+    const accessibleLocations = allLocations.filter(
+      (loc: any) => accessibleIds.includes(loc.location_id)
+    );
+    return c.json({ locations: accessibleLocations });
+  } catch (error) {
+    console.error(`[/me/locations] Error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// GET /admin/user-location-access: 全ユーザー×ロケーションのアクセス状況（admin only）
+app.get('/make-server-fe84bde0/admin/user-location-access', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') return c.json({ error: 'Admin access required' }, 403);
+
+    const access = await db.getAllUserLocationAccess();
+    return c.json({ access });
+  } catch (error) {
+    console.error(`[/admin/user-location-access GET] Error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// POST /admin/user-location-access: 指定ユーザーのロケーションアクセスを上書き（admin only）
+app.post('/make-server-fe84bde0/admin/user-location-access', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const role = await getUserRole(user.id);
+    if (role !== 'admin') return c.json({ error: 'Admin access required' }, 403);
+
+    const body = await c.req.json();
+    const { user_id, location_ids } = body;
+    if (!user_id || !Array.isArray(location_ids)) {
+      return c.json({ error: 'user_id and location_ids[] are required' }, 400);
+    }
+
+    await db.setUserLocationAccess(user_id, location_ids, user.id);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error(`[/admin/user-location-access POST] Error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// カレンダー表示用の統合エンドポイント: 予約+場所+メニュー+ユーザー+制作物を1回で返す
+app.get('/make-server-fe84bde0/calendar-data', async (c) => {
+  const t0 = Date.now();
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const month = c.req.query('month');
+    if (!month) return c.json({ error: 'month parameter is required (YYYY-MM)' }, 400);
+
+    const locationId = c.req.query('location_id') || undefined;
+    const role = await getUserRole(user.id);
+
+    // staff は location_id 必須・アクセス権検証
+    if (role !== 'admin') {
+      if (!locationId) {
+        return c.json({ error: 'location_id is required for staff users' }, 403);
+      }
+      const accessible = await db.getAccessibleLocations(user.id);
+      if (!accessible.includes(locationId)) {
+        return c.json({ error: 'Access denied to this location' }, 403);
+      }
+    }
+
+    const [y, m] = month.split('-').map(Number);
+    const startDate = new Date(y, m - 1, 1, 0, 0, 0, 0);
+    const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+
+    // 予約(月別)は毎回取得、マスターデータはキャッシュから（DBクエリ 4→1 に削減）
+    const [reservationsRaw, locations, menuItems, users] = await Promise.all([
+      db.getReservationsByDateRange(startDate, endDate, locationId),
+      getCachedMaster('locations', db.getLocations),
+      getCachedMaster('menuItems', db.getMenuItems),
+      getCachedMaster('users', db.getAppUsers),
+    ]);
+    const tPhase1 = Date.now();
+
+    // 顧客名解決 + 制作物取得を並列
+    const reservationIds = reservationsRaw.map((r: any) => r.reservation_id);
+    const customerIds = [...new Set(reservationsRaw.map((r: any) => r.customer_id).filter(Boolean))];
+    const [customers, workOrders] = await Promise.all([
+      customerIds.length > 0 ? db.getCustomersByIds(customerIds) : Promise.resolve([]),
+      reservationIds.length > 0 ? db.getWorkOrdersByReservationIds(reservationIds) : Promise.resolve([]),
+    ]);
+    const tPhase2 = Date.now();
+
+    const customerMap = Object.fromEntries((customers as any[]).map(cu => [cu.customer_id, cu]));
+    const reservations = reservationsRaw.map((r: any) => {
+      const cust = customerMap[r.customer_id];
+      return {
+        reservation_id: r.reservation_id,
+        reservation_number: r.reservation_number,
+        reservation_date_time: r.reservation_date_time,
+        duration_minutes: r.duration_minutes,
+        status: r.status,
+        customer_id: r.customer_id,
+        location_id: r.location_id,
+        menu_item_id: r.menu_item_id,
+        staff_id_main: r.staff_id_main,
+        customer_name: cust ? (cust.child_name || cust.parent_name || '名称未設定') : '顧客不明',
+        external_customer_number: cust?.external_customer_number ?? '',
+      };
+    });
+
+    const tEnd = Date.now();
+    console.log(`[Perf] GET /calendar-data phase1=${tPhase1 - t0}ms phase2=${tPhase2 - tPhase1}ms total=${tEnd - t0}ms month=${month} res=${reservations.length}`);
+
+    // 制作物自動作成は表示をブロックせず非同期で実行
+    ensureWorkOrdersForReservations(reservationsRaw, user).catch(e =>
+      console.error('[calendar-data] ensureWorkOrders background error:', e)
+    );
+
+    const slimWorkOrders = (workOrders as any[]).map((wo: any) => ({
+      work_order_id: wo.work_order_id,
+      reservation_id: wo.reservation_id,
+      product_type: wo.product_type,
+      status: wo.status,
+      due_date: wo.due_date,
+    }));
+
+    return c.json({
+      reservations,
+      locations,
+      menu_items: menuItems,
+      users: (users as any[]).map(sanitizeUserForResponse),
+      work_orders: slimWorkOrders,
+    });
+  } catch (error) {
+    console.log(`Get calendar-data error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -1263,76 +1444,18 @@ app.delete('/make-server-fe84bde0/reservations/:id', async (c) => {
   }
 });
 
-// Batch create work orders for existing confirmed reservations (admin only)
+// 制作物一括自動作成（制作物ページ等から手動実行用。GET /reservations ではサーバー内で ensure 済み）
 app.post('/make-server-fe84bde0/reservations/batch-create-work-orders', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw);
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    // 管理者・スタッフともにカレンダーからの一括自動作成を許可
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const reservations = await db.getReservations();
-    const workOrders = await db.getWorkOrders();
-    const menuItems = await db.getMenuItems();
-
-    const menuById = new Map<string, { name?: string }>();
-    for (const m of menuItems as { menu_item_id: string; name?: string }[]) {
-      menuById.set(m.menu_item_id, m);
-    }
-
-    let createdCount = 0;
-    const createdWorkOrders = [];
-
-    const getJapanNow = () => {
-      const now = new Date();
-      const jstOffset = 9 * 60;
-      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      return new Date(utc + (jstOffset * 60000));
-    };
-    const japanNow = getJapanNow();
-
-    for (const reservation of reservations) {
-      if (reservation.status !== 'confirmed') continue;
-      const reservationDate = new Date(reservation.reservation_date_time as string);
-      if (reservationDate >= japanNow) continue;
-
-      const existingWorkOrder = workOrders.find((wo: any) => wo.reservation_id === reservation.reservation_id);
-      if (existingWorkOrder) continue;
-
-      const workRequired = (reservation.work_required as string)?.trim();
-      const productType = workRequired
-        ? workRequired
-        : (menuById.get(reservation.menu_item_id as string)?.name) || 'メニュー不明';
-
-      const workOrderId = crypto.randomUUID();
-      const dueDate = new Date(reservationDate);
-      dueDate.setDate(dueDate.getDate() + 28);
-
-      const workOrderData = {
-        work_order_id: workOrderId,
-        reservation_id: reservation.reservation_id,
-        product_type: productType,
-        status: '制作中',
-        due_date: dueDate.toISOString().split('T')[0],
-        delivered_date: null,
-        priority_order: null,
-        notes_internal: '予約確定により自動作成',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        updated_by_user_id: user.id,
-      };
-
-      await db.upsertWorkOrder(workOrderData);
-      createdCount++;
-      createdWorkOrders.push(workOrderData);
-    }
-
-    return c.json({ 
-      success: true, 
+    const { createdCount, createdWorkOrders } = await ensureWorkOrdersForReservations(reservations, user);
+    return c.json({
+      success: true,
       created_count: createdCount,
       work_orders: createdWorkOrders,
-      message: `${createdCount}件の制作物を生成しました`
+      message: `${createdCount}件の制作物を生成しました`,
     });
   } catch (error) {
     console.log(`Batch create work orders error: ${error}`);
@@ -2142,6 +2265,7 @@ app.post('/make-server-fe84bde0/menu-items', async (c) => {
     };
 
     await db.upsertMenuItem(menuItemData);
+    invalidateMasterCache('menuItems');
 
     // 新規作成時のみ、全店舗にデフォルトで追加
     if (!menu_item_id) {
@@ -2366,199 +2490,6 @@ app.get('/make-server-fe84bde0/staff', async (c) => {
   }
 });
 
-// ========== Dashboard ==========
-
-// Get dashboard data (optional ?with_lists=1 returns reservations, customers, locations, users, menu_items in one response)
-app.get('/make-server-fe84bde0/dashboard', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const withLists = c.req.query('with_lists') === '1';
-    const role = await getUserRole(user.id);
-
-    const [workOrders, reservations, customers, menuItems] = await Promise.all([
-      db.getWorkOrders(),
-      db.getReservations(),
-      db.getCustomers({ activeOnly: false }),
-      db.getMenuItems(),
-    ]);
-
-    // Get current time in JST (Asia/Tokyo)
-    const getJapanNow = () => {
-      const now = new Date();
-      const jstOffset = 9 * 60; // JST is UTC+9
-      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      return new Date(utc + (jstOffset * 60000));
-    };
-    const japanNow = getJapanNow();
-
-    // Filter non-delivered work orders AND only those where reservation date has passed
-    const activeWorkOrders = workOrders.filter((wo: any) => {
-      if (wo.status === '引渡し済') return false;
-      
-      // Check if reservation date has passed (for confirmed reservations)
-      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-      if (!reservation) return true; // Keep if no reservation found
-      
-      // Only filter confirmed reservations
-      if (reservation.status !== 'confirmed') return true;
-      
-      // Check if reservation date has passed
-      const reservationDate = new Date(reservation.reservation_date_time);
-      return reservationDate < japanNow;
-    });
-
-    // Sort by priority
-    const sortedWorkOrders = activeWorkOrders.sort((a: any, b: any) => {
-      // First by priority_order (if set)
-      if (a.priority_order !== null && b.priority_order !== null) {
-        return a.priority_order - b.priority_order;
-      }
-      if (a.priority_order !== null) return -1;
-      if (b.priority_order !== null) return 1;
-
-      // Then by due_date
-      const aDate = new Date(a.due_date);
-      const bDate = new Date(b.due_date);
-      if (aDate < bDate) return -1;
-      if (aDate > bDate) return 1;
-
-      // Then by reservation date
-      const aReservation = reservations.find((r: any) => r.reservation_id === a.reservation_id);
-      const bReservation = reservations.find((r: any) => r.reservation_id === b.reservation_id);
-      if (aReservation && bReservation) {
-        const aResDate = new Date(aReservation.reservation_date_time);
-        const bResDate = new Date(bReservation.reservation_date_time);
-        return aResDate.getTime() - bResDate.getTime();
-      }
-
-      return 0;
-    });
-
-    // Top 5 priority work orders
-    const topWorkOrders = sortedWorkOrders.slice(0, 5).map((wo: any) => {
-      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-      const customer = customers.find((c: any) => c.customer_id === reservation?.customer_id);
-      return {
-        ...wo,
-        reservation,
-        customer,
-      };
-    });
-
-    // Today's reservations (in Japan timezone)
-    const getJapanDateString = (date: Date) => {
-      return new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
-        .toISOString()
-        .slice(0, 10);
-    };
-    
-    const today = getJapanDateString(new Date());
-    const todayReservations = reservations.filter((r: any) => {
-      const resDate = getJapanDateString(new Date(r.reservation_date_time));
-      return resDate === today;
-    }).map((r: any) => {
-      const customer = customers.find((c: any) => c.customer_id === r.customer_id);
-      return { ...r, customer };
-    });
-
-    // Tentative reservations
-    const tentativeReservations = reservations.filter((r: any) => 
-      r.status === 'tentative'
-    ).map((r: any) => {
-      const customer = customers.find((c: any) => c.customer_id === r.customer_id);
-      return { ...r, customer };
-    });
-
-    // Calculate statistics
-    const stats = {
-      total_customers: customers.length,
-      active_work_orders: activeWorkOrders.length,
-      upcoming_reservations: reservations.filter((r: any) => {
-        const resDate = new Date(r.reservation_date_time);
-        const now = new Date();
-        return resDate > now && r.status === 'confirmed';
-      }).length,
-    };
-
-    // Get recent week sales data (last 7 days) — menuItems already fetched above
-    const weekSalesData = [];
-    
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = getJapanDateString(date);
-      
-      const dayReservations = reservations.filter((r: any) => {
-        const resDate = getJapanDateString(new Date(r.reservation_date_time));
-        return resDate === dateStr && r.status !== 'cancelled' && r.status !== 'rescheduled';
-      });
-      
-      let revenue = 0;
-      for (const res of dayReservations) {
-        const menuItem = menuItems.find((m: any) => m.menu_item_id === res.menu_item_id);
-        if (menuItem) {
-          revenue += menuItem.base_price + (res.additional_units || 0) * menuItem.additional_unit_price;
-        }
-      }
-      
-      weekSalesData.push({
-        date: dateStr,
-        revenue,
-        count: dayReservations.length,
-      });
-    }
-
-    // Overdue work orders (from already filtered activeWorkOrders)
-    const overdueWorkOrders = activeWorkOrders.filter((wo: any) => {
-      const dueDate = new Date(wo.due_date);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      dueDate.setHours(0, 0, 0, 0);
-      return dueDate < today;
-    }).length;
-
-    const payload: any = {
-      top_work_orders: topWorkOrders,
-      today_reservations: todayReservations,
-      tentative_reservations: tentativeReservations,
-      stats,
-      week_sales: weekSalesData,
-      overdue_work_orders: overdueWorkOrders,
-    };
-    if (withLists) {
-      const month = c.req.query('month');
-      let listReservations = reservations;
-      if (month) {
-        const [y, m] = month.split('-').map(Number);
-        const startDate = new Date(y, m - 1, 1);
-        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
-        listReservations = reservations.filter((r: any) => {
-          const d = new Date(r.reservation_date_time);
-          return d >= startDate && d <= endDate;
-        });
-      }
-      const locationsList = await db.getLocations();
-      const locations = locationsList.filter((l: any) => l.active_flag !== false);
-      const allUsers = (await db.getAppUsers()).filter((u: any) => u.active_flag !== false);
-      const users = role !== 'admin'
-        ? allUsers.map((u: any) => ({ user_id: u.user_id, login_id: u.login_id, name: u.name, role: u.role }))
-        : allUsers;
-      payload.reservations = listReservations;
-      payload.customers = customers;
-      payload.locations = locations;
-      payload.users = users;
-      payload.menu_items = menuItems;
-    }
-    return c.json(payload);
-  } catch (error) {
-    console.log(`Get dashboard data error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
 
 // ========== Sales Analytics ==========
 
@@ -3265,282 +3196,44 @@ app.post('/make-server-fe84bde0/public/reservations', async (c) => {
       console.error('[Public Reservation] Calendar sync failed:', calError);
     }
 
-    // Send confirmation email using Brevo (Sendinblue)
+    // 予約確認メール送信（Gmail API）
     try {
-      const brevoApiKey = Deno.env.get('BREVO_API_KEY');
-      console.log('[予約メール送信] BREVO_API_KEY存在:', !!brevoApiKey);
-      console.log('[予約メール送信] 送信先メールアドレス:', email);
-      
-      if (brevoApiKey) {
-        const location = await db.getLocation(location_id);
-        const reservationDate = new Date(reservation_date_time);
-        const dateStr = reservationDate.toLocaleDateString('ja-JP', { 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric',
-          weekday: 'short'
-        });
-        const timeStr = reservationDate.toLocaleTimeString('ja-JP', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-        
-        console.log('[予約メール送信] メニュー:', menuItem?.name);
-        console.log('[予約メール送信] 店舗:', location?.location_name);
-
-        const emailHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { 
-      font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
-      line-height: 1.8; 
-      color: #2C2C2C;
-      background-color: #F8F6F3;
-      padding: 20px;
-    }
-    .container { 
-      max-width: 600px; 
-      margin: 0 auto; 
-      background: #FFFFFF;
-      border-radius: 12px;
-      overflow: hidden;
-      box-shadow: 0 4px 20px rgba(196, 169, 98, 0.1);
-    }
-    .header { 
-      background: linear-gradient(135deg, #C4A962 0%, #D4B982 100%);
-      color: white; 
-      padding: 40px 30px; 
-      text-align: center;
-    }
-    .header h1 { 
-      font-family: 'Noto Serif JP', serif;
-      font-size: 32px;
-      margin-bottom: 8px;
-      letter-spacing: 0.05em;
-    }
-    .header p { 
-      font-size: 14px;
-      opacity: 0.95;
-      letter-spacing: 0.1em;
-    }
-    .content { 
-      background: #FFFFFF; 
-      padding: 40px 30px;
-    }
-    .greeting {
-      font-size: 18px;
-      color: #2C2C2C;
-      margin-bottom: 24px;
-      font-family: 'Noto Serif JP', serif;
-    }
-    .message {
-      color: #666666;
-      margin-bottom: 32px;
-      line-height: 1.8;
-    }
-    .info-box { 
-      background: #F8F6F3;
-      padding: 24px; 
-      margin: 28px 0; 
-      border-radius: 8px; 
-      border-left: 4px solid #C4A962;
-    }
-    .info-row { 
-      margin: 14px 0;
-      display: flex;
-      align-items: flex-start;
-    }
-    .label { 
-      font-weight: 600;
-      color: #C4A962;
-      min-width: 100px;
-      flex-shrink: 0;
-    }
-    .value {
-      color: #2C2C2C;
-      flex: 1;
-    }
-    .notice-box { 
-      background: #FFF9E6;
-      border: 1px solid #E5E0D8;
-      border-left: 4px solid #C4A962;
-      padding: 24px; 
-      margin: 28px 0; 
-      border-radius: 8px;
-    }
-    .notice-title {
-      font-weight: 600;
-      color: #2C2C2C;
-      margin-bottom: 12px;
-      font-size: 16px;
-    }
-    .notice-text {
-      color: #666666;
-      margin-bottom: 16px;
-      line-height: 1.8;
-    }
-    .btn { 
-      display: inline-block; 
-      margin-top: 16px; 
-      padding: 16px 36px; 
-      background: #C4A962;
-      color: white; 
-      text-decoration: none; 
-      border-radius: 8px; 
-      font-weight: 600;
-      font-size: 16px;
-      transition: all 0.3s;
-      letter-spacing: 0.05em;
-    }
-    .btn:hover {
-      background: #B39952;
-      box-shadow: 0 4px 12px rgba(196, 169, 98, 0.3);
-    }
-    .closing {
-      color: #666666;
-      margin-top: 32px;
-      line-height: 1.8;
-    }
-    .footer { 
-      text-align: center; 
-      padding: 24px 30px;
-      background: #F8F6F3;
-      color: #999999;
-      font-size: 13px;
-      line-height: 1.6;
-    }
-    .divider {
-      height: 1px;
-      background: #E5E0D8;
-      margin: 24px 0;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Amorétto</h1>
-      <p>ライフキャスティング専門店</p>
-    </div>
-    <div class="content">
-      <div class="greeting">${parent_name} 様</div>
-      
-      <div class="message">
-        この度はAmoréttoにご予約いただき、誠にありがとうございます。<br>
-        以下の内容で仮予約を承りました。
-      </div>
-      
-      <div class="info-box">
-        <div class="info-row">
-          <span class="label">予約番号</span>
-          <span class="value" style="font-family: monospace; font-size: 18px; font-weight: 600; color: #C4A962;">${reservationNumber}</span>
-        </div>
-        <div class="divider"></div>
-        <div class="info-row">
-          <span class="label">予約日時</span>
-          <span class="value">${dateStr} ${timeStr}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">メニュー</span>
-          <span class="value">${menuItem?.name || '-'}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">店舗</span>
-          <span class="value">${location?.location_name || '-'}</span>
-        </div>
-        <div class="divider"></div>
-        <div class="info-row">
-          <span class="label">保護者様</span>
-          <span class="value">${parent_name}${parent_name_kana ? ` （${parent_name_kana}）` : ''}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">お子様</span>
-          <span class="value">${child_name}${child_name_kana ? ` （${child_name_kana}）` : ''}${child_age_years !== null || child_age_months !== null ? ` (${child_age_years || 0}歳${child_age_months ? ` ${child_age_months}ヶ月` : ''})` : ''}</span>
-        </div>
-      </div>
-
-      <div class="notice-box">
-        <div class="notice-title">📋 ご来店前のお願い</div>
-        <div class="notice-text">
-          ・予約時間の10分前までにご来店ください<br>
-          ・遅れる場合は必ずお電話にてご連絡ください<br>
-          ・ご予約の変更・キャンセルをご希望の場合は、お電話・メール・公式LINEにてご連絡ください<br>
-          ・当日キャンセルの場合はキャンセル料が発生する場合がございます
-        </div>
-      </div>
-
-      <div class="notice-box" style="background: linear-gradient(135deg, #E8F8F5 0%, #E1F5FE 100%); border-left: 4px solid #06C755;">
-        <div class="notice-title" style="color: #06C755;">💬 公式LINE</div>
-        <div class="notice-text">
-          変更・キャンセルは公式LINEからも受け付けております<br>
-          <a href="https://lin.ee/LbmijXx" style="color: #06C755; text-decoration: underline;">https://lin.ee/LbmijXx</a>
-        </div>
-      </div>
-
-      <div class="closing">
-        ご不明な点がございましたら、お気軽にお問い合わせください。<br>
-        スタッフ一同、心よりお待ちしております。
-      </div>
-    </div>
-    
-    <div class="footer">
-      Amorétto ライフキャスティング専門店<br>
-      このメールは送信専用です。ご返信いただいてもお答えできませんのでご了承ください。
-    </div>
-  </div>
-</body>
-</html>
-        `;
-
-        console.log('[予約メール送信] Brevo APIを呼び出し中...');
-        
-        // Brevo API endpoint
-        const emailResponse = await fetch('https://api.brevo.com/v3/smtp/email', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'api-key': brevoApiKey,
-          },
-          body: JSON.stringify({
-            sender: {
-              name: 'Amorétto LifeCastingstudio',
-              email: 'lifecasting.timecapsule@gmail.com'
-            },
-            to: [
-              {
-                email: email,
-                name: parent_name
-              }
-            ],
-            subject: `【アマレット】ご予約を承りました（予約番号: ${reservationNumber}）`,
-            htmlContent: emailHtml,
-          }),
-        });
-
-        console.log('[予約メール送信] Brevo APIレスポンスステータス:', emailResponse.status);
-
-        if (!emailResponse.ok) {
-          const errorData = await emailResponse.json();
-          console.error('[予約メール送信] メール送信失敗:', errorData);
-          console.error('[予約メール送信] エラー詳細:', JSON.stringify(errorData));
-        } else {
-          const successData = await emailResponse.json();
-          console.log('[予約メール送信] ✅ メール送信成功:', email);
-          console.log('[予約メール送信] メッセージID:', successData.messageId);
-        }
+      console.log('[予約メール送信] 送信先:', email);
+      const locationForEmail = await db.getLocation(location_id);
+      const reservationDate = new Date(reservation_date_time);
+      const dateStr = reservationDate.toLocaleDateString('ja-JP', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        weekday: 'short',
+      });
+      const timeStr = reservationDate.toLocaleTimeString('ja-JP', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const emailHtml = buildReservationEmailHtml({
+        parent_name,
+        parent_name_kana: parent_name_kana ?? undefined,
+        child_name,
+        child_name_kana: child_name_kana ?? undefined,
+        child_age_years: child_age_years ?? undefined,
+        child_age_months: child_age_months ?? undefined,
+        reservation_number: reservationNumber,
+        dateStr,
+        timeStr,
+        menu_name: menuItem?.name || '-',
+        location_name: locationForEmail?.location_name || '-',
+      });
+      const subject = `【アマレット】ご予約を承りました（予約番号: ${reservationNumber}）`;
+      const result = await sendEmail(email, parent_name, subject, emailHtml);
+      if (result.success) {
+        console.log('[予約メール送信] ✅ Resend送信成功:', email, result.messageId ?? '');
       } else {
-        console.log('[予約メール送信] ⚠️ BREVO_API_KEYが設定されていません。メール送信をスキップします。');
+        console.log('[予約メール送信] ⚠️ Resend送信スキップまたは失敗:', result.error);
       }
     } catch (emailError) {
       console.error('[予約メール送信] ❌ メール送信エラー:', emailError);
-      console.error('[予約メール送信] エラースタック:', emailError.stack);
-      // Don't fail the reservation if email fails
+      // 予約自体は失敗させない
     }
 
     // Get location details for response
@@ -3763,92 +3456,6 @@ app.post('/make-server-fe84bde0/location-availability', async (c) => {
     });
   } catch (error) {
     console.log(`Save location availability error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// ========== Shift Management ==========
-
-// Get shifts by month
-app.get('/make-server-fe84bde0/shifts', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    
-    // year_month format: YYYY-MM
-    const yearMonth = c.req.query('year_month');
-    if (!yearMonth) {
-       return c.json({ error: 'year_month is required' }, 400);
-    }
-
-    // Key format: shift:YYYY-MM-DD:staff_id
-    // Prefix search with 'shift:YYYY-MM' works to get all shifts for that month
-    const shifts = await db.getShiftsByYearMonth(yearMonth);
-    return c.json({ shifts });
-  } catch (error) {
-    console.log(`Get shifts error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Create/Update shift
-app.post('/make-server-fe84bde0/shifts', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const body = await c.req.json();
-    const { staff_id, date, shift_type, start_time, end_time, notes } = body;
-
-    if (!staff_id || !date) {
-      return c.json({ error: 'staff_id and date are required' }, 400);
-    }
-
-    const key = `shift:${date}:${staff_id}`;
-    const shiftData = {
-      shift_id: key, // Use key as ID
-      staff_id,
-      date,
-      shift_type: shift_type || 'work',
-      start_time,
-      end_time,
-      notes,
-      updated_at: new Date().toISOString(),
-      updated_by: user.id
-    };
-
-    await db.upsertShift(shiftData);
-    return c.json({ success: true, shift: shiftData });
-  } catch (error) {
-    console.log(`Save shift error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Delete shift
-app.delete('/make-server-fe84bde0/shifts', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-       return c.json({ error: 'Unauthorized' }, 401);
-    }
-    
-    const staffId = c.req.query('staff_id');
-    const date = c.req.query('date');
-    
-    if (!staffId || !date) {
-       return c.json({ error: 'staff_id and date are required' }, 400);
-    }
-    
-    await db.deleteShift(staffId, date);
-    
-    return c.json({ success: true });
-  } catch (error) {
-    console.log(`Delete shift error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });

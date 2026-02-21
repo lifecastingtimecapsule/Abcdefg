@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Clock, Mail, Phone, MapPin, User, Baby, ChevronLeft, ChevronRight, Heart, Tag } from 'lucide-react';
+import { Calendar, Clock, Mail, Phone, MapPin, User, Baby, ChevronLeft, ChevronRight, Tag } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import logo from 'figma:asset/a8152f31015da512619ad73332adfaa84771e5bc.png';
@@ -28,6 +28,9 @@ interface Location {
 export function PublicReservationPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [menuLoading, setMenuLoading] = useState(false);
+  const [slotsLoading, setSlotsLoading] = useState(false);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [bookedSlots, setBookedSlots] = useState<Array<{time: string, duration: number}>>([]);
@@ -81,6 +84,7 @@ export function PublicReservationPage() {
     if (selectedLocationId) {
       loadLocationAvailability(selectedLocationId);
       loadMenuItemsForLocation(selectedLocationId);
+      setSelectedMenuId('');
       // 店舗変更時に、選択済みの日付が新しい店舗で利用可能かチェックして、不可能ならクリア
       if (selectedDate) {
         // 日付を再検証するためにわずかに遅延
@@ -106,6 +110,7 @@ export function PublicReservationPage() {
       'Content-Type': 'application/json',
     };
     try {
+      setInitialLoading(true);
       const [menuRes, locRes, settingsRes] = await Promise.all([
         fetch(`${apiUrl}/public/menu-items`, { headers }),
         fetch(`${apiUrl}/public/locations`, { headers }),
@@ -125,51 +130,47 @@ export function PublicReservationPage() {
       }
     } catch (err) {
       console.error('Failed to load public data:', err);
+      toast.error('データの読み込みに失敗しました。しばらく経ってからお試しください。');
+    } finally {
+      setInitialLoading(false);
     }
   };
 
-  // Load menu items for specific location
   const loadMenuItemsForLocation = async (locationId: string) => {
+    const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+    const headers = {
+      'Authorization': `Bearer ${publicAnonKey}`,
+      'Content-Type': 'application/json',
+    };
     try {
-      const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
-      const headers = {
-        'Authorization': `Bearer ${publicAnonKey}`,
-        'Content-Type': 'application/json',
-      };
-      
-      const menuUrl = `${apiUrl}/public/menu-items?location_id=${locationId}`;
-      console.log('[公開予約ページ] 店舗別メニューURL:', menuUrl);
-      
-      const menuRes = await fetch(menuUrl, { headers });
+      setMenuLoading(true);
+      const menuRes = await fetch(`${apiUrl}/public/menu-items?location_id=${locationId}`, { headers });
       if (menuRes.ok) {
         const menuData = await menuRes.json();
-        console.log(`[公開予約ページ] 店舗 ${locationId} のメニュー:`, menuData.menu_items);
         setMenuItems(menuData.menu_items || []);
       } else {
-        console.error('[公開予約ページ] 店舗別メニューの読み込みに失敗:', menuRes.status);
+        setMenuItems([]);
       }
     } catch (err) {
       console.error('Failed to load menu items for location:', err);
+      setMenuItems([]);
+    } finally {
+      setMenuLoading(false);
     }
   };
 
-  // Load location availability settings
   const loadLocationAvailability = async (locationId: string) => {
+    const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+    const headers = {
+      'Authorization': `Bearer ${publicAnonKey}`,
+      'Content-Type': 'application/json',
+    };
     try {
-      const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
-      const headers = {
-        'Authorization': `Bearer ${publicAnonKey}`,
-        'Content-Type': 'application/json',
-      };
-      
       const response = await fetch(`${apiUrl}/public/location-availability/${locationId}`, { headers });
-      
       if (response.ok) {
         const data = await response.json();
-        console.log('[店舗可用性取得] データ:', data);
         setLocationAvailability(data.availability || null);
       } else {
-        console.error('[店舗可用性取得] エラー:', response.status);
         setLocationAvailability(null);
       }
     } catch (err) {
@@ -178,39 +179,38 @@ export function PublicReservationPage() {
     }
   };
 
-  // Load booked slots when date or location changes
   const loadBookedSlots = async (date: string, locationId: string) => {
     if (!date) {
       setBookedSlots([]);
       setBookedLocationIds([]);
+      setSlotsLoading(false);
       return;
     }
-
+    const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
+    const headers = {
+      'Authorization': `Bearer ${publicAnonKey}`,
+      'Content-Type': 'application/json',
+    };
+    const url = locationId
+      ? `${apiUrl}/public/booked-slots?date=${date}&location_id=${locationId}`
+      : `${apiUrl}/public/booked-slots?date=${date}`;
     try {
-      const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
-      const headers = {
-        'Authorization': `Bearer ${publicAnonKey}`,
-        'Content-Type': 'application/json',
-      };
-      
-      // 店舗IDがある場合はその店舗のみ、ない場合は全店舗の予約を取得
-      const url = locationId 
-        ? `${apiUrl}/public/booked-slots?date=${date}&location_id=${locationId}`
-        : `${apiUrl}/public/booked-slots?date=${date}`;
-      
-      console.log('[予約スロット取得] URL:', url);
+      setSlotsLoading(true);
       const response = await fetch(url, { headers });
-      
       if (response.ok) {
         const data = await response.json();
-        console.log('[予約スロット取得] データ:', data);
         setBookedSlots(data.booked_slots || []);
         setBookedLocationIds(data.booked_location_ids || []);
       } else {
-        console.error('[予約スロット取得] エラー:', response.status);
+        setBookedSlots([]);
+        setBookedLocationIds([]);
       }
     } catch (err) {
       console.error('Failed to load booked slots:', err);
+      setBookedSlots([]);
+      setBookedLocationIds([]);
+    } finally {
+      setSlotsLoading(false);
     }
   };
 
@@ -220,12 +220,6 @@ export function PublicReservationPage() {
       const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0`;
 
       const reservationDateTime = `${selectedDate}T${selectedTime}`;
-
-      console.log('[予約フォーム送信] データ送信中:', {
-        email,
-        parent_name: parentName,
-        child_name: childName,
-      });
 
       const response = await fetch(`${apiUrl}/public/reservations`, {
         method: 'POST',
@@ -249,8 +243,6 @@ export function PublicReservationPage() {
         }),
       });
 
-      console.log('[予約フォーム送信] レスポンスステータス:', response.status);
-
       if (!response.ok) {
         const errorData = await response.json();
         console.error('[予約フォーム送信] エラー:', errorData);
@@ -265,8 +257,6 @@ export function PublicReservationPage() {
       }
 
       const responseData = await response.json();
-      console.log('[予約フォーム送信] ✅ 予約成功:', responseData);
-
       toast.success('予約を受け付けました！');
       
       // 予約完了ページへ遷移
@@ -514,10 +504,30 @@ export function PublicReservationPage() {
         </div>
       </header>
 
+      {/* 読み込み中は「待てばわかる」ことを伝えるバー */}
+      {(initialLoading || menuLoading || slotsLoading) && (
+        <div className="sticky top-0 z-20 flex items-center justify-center gap-2 py-2.5 text-sm font-medium shadow-sm" style={{ backgroundColor: '#FFF9E6', color: '#2C2C2C', fontFamily: "'Noto Sans JP', sans-serif", borderBottom: '1px solid #E5E0D8' }}>
+          <div className="animate-spin rounded-full h-4 w-4 border-2 border-[#C4A962] border-t-transparent" />
+          <span>読み込み中… しばらくお待ちください</span>
+        </div>
+      )}
+
       {/* メインコンテンツ */}
       <main className="max-w-4xl mx-auto px-6 py-12 md:py-24">
-        {/* ヒーローセクション */}
-        {step === 1 && (
+        {/* 初期読み込み中：待てば表示されることを明示 */}
+        {initialLoading && (
+          <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 text-center px-4">
+            <div className="animate-spin rounded-full h-14 w-14 border-4 border-[#C4A962] border-t-transparent" />
+            <p className="text-lg font-medium" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
+              読み込み中です
+            </p>
+            <p className="text-sm max-w-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666' }}>
+              少々お待ちください。しばらくすると画面が表示されます。
+            </p>
+          </div>
+        )}
+
+        {!initialLoading && step === 1 && (
           <div className="text-center mb-12 md:mb-20">
             <h2 className="mb-4" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', fontSize: '2rem', lineHeight: '1.4' }}>
               大切な想い出を、<br className="md:hidden" />カタチに残す
@@ -531,7 +541,8 @@ export function PublicReservationPage() {
           </div>
         )}
 
-        {/* プログレスバー */}
+        {/* プログレスバー（初期表示後） */}
+        {!initialLoading && (
         <div className="mb-8 md:mb-12">
           <div className="flex items-center justify-center gap-2 md:gap-4 mb-3">
             {[1, 2, 3].map((num) => (
@@ -571,8 +582,10 @@ export function PublicReservationPage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* ステップコンテンツ */}
+        {!initialLoading && (
         <div className="rounded-none md:rounded-sm shadow-sm p-6 md:p-10" style={{ backgroundColor: '#FFFFFF' }}>
           {/* ステップ1: 日時とメニュー選択 */}
           {step === 1 && (
@@ -759,12 +772,24 @@ export function PublicReservationPage() {
                   <div className="mb-8">
                     <label className="block mb-3" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
                       ご希望の時間
-                      {bookedSlots.length > 0 && (
+                      {slotsLoading && (
+                        <span className="ml-3 text-sm font-normal" style={{ color: '#C4A962' }}>
+                          予約可能な時間を確認しています… 少々お待ちください
+                        </span>
+                      )}
+                      {!slotsLoading && bookedSlots.length > 0 && (
                         <span className="ml-3 text-xs" style={{ color: '#999999' }}>
                           （×印は予約不可）
                         </span>
                       )}
                     </label>
+                    {slotsLoading && (
+                      <div className="flex items-center gap-2 py-4 text-[#666666]" style={{ fontFamily: "'Noto Sans JP', sans-serif" }}>
+                        <div className="animate-spin rounded-full h-5 w-5 border-2 border-[#C4A962] border-t-transparent" />
+                        <span className="text-sm">読み込み中…</span>
+                      </div>
+                    )}
+                    {!slotsLoading && (
                     <div className="grid grid-cols-3 md:grid-cols-5 gap-2 md:gap-3">
                       {timeSlots.map((time) => {
                         const isAvailable = isTimeSlotAvailable(time);
@@ -796,6 +821,7 @@ export function PublicReservationPage() {
                         );
                       })}
                     </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -867,6 +893,18 @@ export function PublicReservationPage() {
                     </span>
                   )}
                 </h3>
+                {menuLoading && (
+                  <div className="flex flex-col items-center justify-center py-12 gap-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#C4A962] border-t-transparent" />
+                    <p className="text-base font-medium" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#2C2C2C' }}>
+                      この店舗のメニューを読み込み中です
+                    </p>
+                    <p className="text-sm" style={{ fontFamily: "'Noto Sans JP', sans-serif", color: '#666666' }}>
+                      少々お待ちください。
+                    </p>
+                  </div>
+                )}
+                {!menuLoading && (
                 <div className="grid md:grid-cols-2 gap-4 md:gap-5">
                   {menuItems.length === 0 ? (
                     <div className="md:col-span-2 p-8 text-center rounded-lg" style={{ backgroundColor: '#F8F6F3', color: '#666666', fontFamily: "'Noto Sans JP', sans-serif" }}>
@@ -894,27 +932,30 @@ export function PublicReservationPage() {
 
                       const discountedBasePrice = calculateDiscountedPrice(menu.base_price);
 
+                      const isSelected = selectedMenuId === menu.menu_item_id;
                       return (
                         <button
                           key={menu.menu_item_id}
+                          type="button"
                           onClick={() => setSelectedMenuId(menu.menu_item_id)}
-                          className={`p-4 md:p-5 text-left rounded-lg transition-all duration-300 border ${
-                            selectedMenuId === menu.menu_item_id
-                              ? 'border-[#C4A962] shadow-lg scale-[1.02] ring-2 ring-[#C4A962] ring-opacity-20'
-                              : 'border-[#E5E0D8] hover:border-[#C4A962] hover:shadow-md hover:scale-[1.01]'
+                          className={`p-4 md:p-5 text-left rounded-xl transition-all duration-200 border-2 relative ${
+                            isSelected
+                              ? 'border-[#C4A962] shadow-lg ring-2 ring-[#C4A962] ring-offset-2'
+                              : 'border-[#E5E0D8] hover:border-[#C4A962]/60 hover:shadow-md'
                           }`}
                           style={{
-                            backgroundColor: selectedMenuId === menu.menu_item_id ? '#FAFAF8' : '#FFFFFF',
-                            position: 'relative'
+                            backgroundColor: isSelected ? '#FFF9E6' : '#FFFFFF',
+                            borderColor: isSelected ? '#C4A962' : undefined,
                           }}
                         >
-                          {/* 選択チェックマーク */}
-                          {selectedMenuId === menu.menu_item_id && (
-                            <div 
-                              className="absolute -top-2 -right-2 w-7 h-7 rounded-full flex items-center justify-center shadow-md"
-                              style={{ backgroundColor: '#C4A962', color: '#FFFFFF' }}
+                          {/* 選択中バッジ（視認性を優先） */}
+                          {isSelected && (
+                            <div
+                              className="absolute top-0 right-0 rounded-bl-lg rounded-tr-xl px-3 py-1.5 text-sm font-semibold flex items-center gap-1.5"
+                              style={{ backgroundColor: '#C4A962', color: '#FFFFFF', fontFamily: "'Noto Sans JP', sans-serif" }}
                             >
-                              <Heart className="w-4 h-4" style={{ fill: '#FFFFFF' }} />
+                              <span className="w-2 h-2 rounded-full bg-white" />
+                              選択中
                             </div>
                           )}
                           
@@ -933,10 +974,9 @@ export function PublicReservationPage() {
                               </span>
                             </div>
                           )}
-                          
-                          <div className="space-y-3">
+                          <div className={`space-y-3 ${isSelected ? 'pr-20' : ''}`}>
                             {/* メニュー名 */}
-                            <div style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', fontSize: '1.1rem' }}>
+                            <div className="font-semibold" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', fontSize: '1.125rem' }}>
                               {menu.name}
                             </div>
                             
@@ -987,6 +1027,7 @@ export function PublicReservationPage() {
                     })
                   )}
                 </div>
+                )}
               </div>
 
               <div className="flex justify-end pt-6" style={{ borderTop: '1px solid #E5E0D8' }}>
@@ -998,15 +1039,14 @@ export function PublicReservationPage() {
                     }
                     setStep(2);
                   }}
-                  className="px-10 md:px-12 py-3.5 md:py-4 rounded-md transition-all duration-300 hover:shadow-lg hover:scale-105"
+                  disabled={menuLoading || slotsLoading}
+                  className="px-10 md:px-12 py-3.5 md:py-4 rounded-md transition-all duration-300 hover:shadow-lg hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
                   style={{
                     backgroundColor: '#C4A962',
                     color: '#FFFFFF',
                     fontFamily: "'Noto Sans JP', sans-serif",
                     letterSpacing: '0.1em'
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#B39952'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#C4A962'}
                 >
                   次へ進む
                 </button>
@@ -1437,22 +1477,28 @@ export function PublicReservationPage() {
                 <button
                   onClick={handleSubmit}
                   disabled={loading}
-                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100 text-center"
+                  className="flex-1 py-3.5 md:py-4 rounded-md transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed hover:shadow-lg hover:scale-105 disabled:hover:shadow-none disabled:hover:scale-100 text-center flex items-center justify-center gap-2"
                   style={{
                     backgroundColor: '#C4A962',
                     color: '#FFFFFF',
                     fontFamily: "'Noto Sans JP', sans-serif",
                     letterSpacing: '0.1em'
                   }}
-                  onMouseEnter={(e) => !loading && (e.currentTarget.style.backgroundColor = '#B39952')}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#C4A962')}
                 >
-                  {loading ? '送信中...' : '仮予約を送信する'}
+                  {loading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
+                      <span>送信中… 少々お待ちください</span>
+                    </>
+                  ) : (
+                    '仮予約を送信する'
+                  )}
                 </button>
               </div>
             </div>
           )}
         </div>
+        )}
       </main>
 
       {/* フッター */}

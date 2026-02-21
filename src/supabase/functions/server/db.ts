@@ -4,11 +4,15 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+let _client: ReturnType<typeof createClient> | null = null;
 function getClient() {
-  return createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-  );
+  if (!_client) {
+    _client = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+  }
+  return _client;
 }
 
 // ========== Users (app_users) ==========
@@ -255,13 +259,14 @@ export async function getReservations(): Promise<Record<string, unknown>[]> {
 }
 
 /** 月別・範囲指定で予約を取得（全件取得を避けDB負荷削減） */
-export async function getReservationsByDateRange(startDate: Date, endDate: Date): Promise<Record<string, unknown>[]> {
-  const { data, error } = await getClient()
+export async function getReservationsByDateRange(startDate: Date, endDate: Date, locationId?: string): Promise<Record<string, unknown>[]> {
+  let q = getClient()
     .from('reservations')
     .select('*')
     .gte('reservation_date_time', startDate.toISOString())
-    .lte('reservation_date_time', endDate.toISOString())
-    .order('reservation_date_time', { ascending: true });
+    .lte('reservation_date_time', endDate.toISOString());
+  if (locationId) q = q.eq('location_id', locationId);
+  const { data, error } = await q.order('reservation_date_time', { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as Record<string, unknown>[];
 }
@@ -374,6 +379,18 @@ export async function upsertWorkOrder(row: Record<string, unknown>): Promise<voi
   if (error) throw new Error(error.message);
 }
 
+/** 指定予約IDに紐づく制作物だけ取得（カレンダー用。全件走査を回避） */
+export async function getWorkOrdersByReservationIds(reservationIds: string[]): Promise<Record<string, unknown>[]> {
+  const uniqueIds = [...new Set(reservationIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return [];
+  const { data, error } = await getClient()
+    .from('work_orders')
+    .select('*')
+    .in('reservation_id', uniqueIds);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
 export async function deleteWorkOrder(workOrderId: string): Promise<void> {
   const { error } = await getClient().from('work_orders').delete().eq('work_order_id', workOrderId);
   if (error) throw new Error(error.message);
@@ -476,6 +493,72 @@ export async function deleteIncentive(incentiveId: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// ========== User Location Access ==========
+
+/** 指定ユーザーがアクセス可能な location_id の一覧を返す */
+export async function getAccessibleLocations(userId: string): Promise<string[]> {
+  const { data, error } = await getClient()
+    .from('user_location_access')
+    .select('location_id')
+    .eq('user_id', userId);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { location_id: string }[]).map((r) => r.location_id);
+}
+
+/** 全 user-location 紐付けを返す（管理 UI 用） */
+export async function getAllUserLocationAccess(): Promise<Record<string, unknown>[]> {
+  const { data, error } = await getClient()
+    .from('user_location_access')
+    .select('user_id, location_id, granted_by, granted_at');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+/**
+ * 指定ユーザーのアクセス可能ロケーションを上書きする。
+ * 追加分は INSERT、削除分は DELETE（差分更新）。
+ */
+export async function setUserLocationAccess(
+  userId: string,
+  locationIds: string[],
+  grantedBy: string
+): Promise<void> {
+  const client = getClient();
+
+  // 現在の紐付けを取得
+  const { data: existing, error: fetchError } = await client
+    .from('user_location_access')
+    .select('location_id')
+    .eq('user_id', userId);
+  if (fetchError) throw new Error(fetchError.message);
+
+  const existingIds = new Set(((existing ?? []) as { location_id: string }[]).map((r) => r.location_id));
+  const newIds = new Set(locationIds);
+
+  const toAdd = locationIds.filter((id) => !existingIds.has(id));
+  const toRemove = [...existingIds].filter((id) => !newIds.has(id));
+
+  if (toAdd.length > 0) {
+    const rows = toAdd.map((location_id) => ({
+      user_id: userId,
+      location_id,
+      granted_by: grantedBy,
+      granted_at: new Date().toISOString(),
+    }));
+    const { error } = await client.from('user_location_access').upsert(rows, { onConflict: 'user_id,location_id' });
+    if (error) throw new Error(error.message);
+  }
+
+  if (toRemove.length > 0) {
+    const { error } = await client
+      .from('user_location_access')
+      .delete()
+      .eq('user_id', userId)
+      .in('location_id', toRemove);
+    if (error) throw new Error(error.message);
+  }
+}
+
 // ========== Audit Logs ==========
 export async function insertAuditLog(row: Record<string, unknown>): Promise<void> {
   const { error } = await getClient().from('audit_logs').insert({
@@ -487,39 +570,5 @@ export async function insertAuditLog(row: Record<string, unknown>): Promise<void
     acted_by_user_id: row.acted_by_user_id ?? null,
     acted_at: row.acted_at ?? new Date().toISOString(),
   });
-  if (error) throw new Error(error.message);
-}
-
-// ========== Shifts ==========
-export async function getShiftsByYearMonth(yearMonth: string): Promise<Record<string, unknown>[]> {
-  const [year, month] = yearMonth.split('-').map(Number);
-  const start = new Date(year, month - 1, 1);
-  const end = new Date(year, month, 0, 23, 59, 59, 999);
-  const { data, error } = await getClient()
-    .from('shifts')
-    .select('*')
-    .gte('date', start.toISOString().slice(0, 10))
-    .lte('date', end.toISOString().slice(0, 10));
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as Record<string, unknown>[];
-  return rows.map((r) => ({ ...r, shift_id: `${r.date}:${r.staff_id}` }));
-}
-
-export async function upsertShift(row: Record<string, unknown>): Promise<void> {
-  const { error } = await getClient().from('shifts').upsert({
-    staff_id: row.staff_id,
-    date: row.date,
-    shift_type: row.shift_type ?? 'work',
-    start_time: row.start_time ?? null,
-    end_time: row.end_time ?? null,
-    notes: row.notes ?? null,
-    updated_at: row.updated_at ?? new Date().toISOString(),
-    updated_by: row.updated_by ?? null,
-  }, { onConflict: 'staff_id,date' });
-  if (error) throw new Error(error.message);
-}
-
-export async function deleteShift(staffId: string, date: string): Promise<void> {
-  const { error } = await getClient().from('shifts').delete().eq('staff_id', staffId).eq('date', date);
   if (error) throw new Error(error.message);
 }

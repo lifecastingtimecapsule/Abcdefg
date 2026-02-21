@@ -9,6 +9,12 @@ import { Plus } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
+import {
+  CalendarCacheEntry,
+  getCachedMonth,
+  fetchAndCacheMonth,
+  invalidateAll,
+} from '../utils/calendarCache';
 
 // 日本語ロケール設定
 moment.locale('ja');
@@ -30,6 +36,20 @@ const messages = {
   showMore: (total: number) => `+${total}件`,
 };
 
+const formats = {
+  monthHeaderFormat: (date: Date) =>
+    `${date.getFullYear()}年${date.getMonth() + 1}月`,
+  weekdayFormat: (date: Date) =>
+    ['日', '月', '火', '水', '木', '金', '土'][date.getDay()],
+  dayFormat: (date: Date) =>
+    `${date.getDate()}日（${'日月火水木金土'[date.getDay()]}）`,
+  dayHeaderFormat: (date: Date) =>
+    `${date.getMonth() + 1}月${date.getDate()}日（${'日月火水木金土'[date.getDay()]}）`,
+  dayRangeHeaderFormat: ({ start, end }: { start: Date; end: Date }) =>
+    `${start.getMonth() + 1}月${start.getDate()}日 – ${end.getMonth() + 1}月${end.getDate()}日`,
+  dateFormat: (date: Date) => `${date.getDate()}`,
+};
+
 const calendarStyle = { height: '100%', minHeight: 'max(1200px, calc(100vh - 180px))' as const };
 
 /** Phase2（users/menuItems/workOrders）更新で親が再レンダーしても、events/date が同じならカレンダーは再描画しない */
@@ -48,6 +68,7 @@ const MemoizedCalendar = memo(function MemoizedCalendar_(props: {
       endAccessor="end"
       style={calendarStyle}
       messages={messages}
+      formats={formats}
       views={[Views.MONTH]}
       view={Views.MONTH}
       date={props.date}
@@ -76,8 +97,13 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
-  
+
   const [date, setDate] = useState(new Date());
+
+  // ロケーション選択
+  const [accessibleLocations, setAccessibleLocations] = useState<Location[]>([]);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [locationsLoaded, setLocationsLoaded] = useState(false);
 
   const monthParam = useMemo(() => {
     const y = date.getFullYear();
@@ -85,63 +111,91 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     return `${y}-${m}`;
   }, [date]);
 
-  useEffect(() => {
-    loadCalendarData();
-  }, [monthParam]);
+  const getAdjacentMonths = (month: string) => {
+    const [y, m] = month.split('-').map(Number);
+    const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+    return [prev, next];
+  };
 
-  // 詳細モーダルを開いたときにメニュー一覧がまだ無ければその時点で取得（足りない分を取得）
+  const applyData = useCallback((entry: CalendarCacheEntry) => {
+    setReservations(entry.reservations);
+    setLocations(entry.locations);
+    setMenuItems(entry.menu_items);
+    setUsers(entry.users);
+    setWorkOrders(entry.work_orders);
+  }, []);
+
+  // マウント時: アクセス可能ロケーション取得
   useEffect(() => {
-    if (!modalOpen || menuItems.length > 0) return;
-    apiRequest('/menu-items').then((data: any) => {
-      if (data?.menu_items) setMenuItems(data.menu_items);
-    }).catch(() => {});
-  }, [modalOpen]);
+    (async () => {
+      try {
+        const data = await apiRequest('/me/locations') as any;
+        const locs: Location[] = data.locations ?? [];
+        setAccessibleLocations(locs);
+        if (locs.length > 0) {
+          setSelectedLocationId(locs[0].location_id);
+        }
+      } catch (err: any) {
+        console.error('Failed to fetch accessible locations:', err);
+        toast.error('店舗一覧の取得に失敗しました');
+      } finally {
+        setLocationsLoaded(true);
+      }
+    })();
+  }, []);
+
+  // selectedLocationId または月が変わったらカレンダーデータ再取得
+  useEffect(() => {
+    if (!locationsLoaded) return;
+    if (!selectedLocationId) {
+      // アクセス可能な店舗がない場合
+      setLoading(false);
+      return;
+    }
+    loadCalendarData();
+  }, [monthParam, selectedLocationId, locationsLoaded]);
 
   const loadCalendarData = async () => {
+    if (!selectedLocationId) return;
+    const month = monthParam;
+    const locId = selectedLocationId;
+
+    // グローバルキャッシュヒット → ローディングなしで即表示
+    const cached = getCachedMonth(month, locId);
+    if (cached) {
+      applyData(cached);
+      setLoading(false);
+      // バックグラウンドで最新データに更新（デデュープ済み）
+      fetchAndCacheMonth(month, locId).then(entry => {
+        if (entry) applyData(entry);
+      }).catch(() => {});
+      return;
+    }
+
+    // キャッシュミス → ローディング表示してフェッチ
     try {
       setLoading(true);
-      const month = monthParam;
-      // Phase1: 名前と日付用に「予約一覧＋場所」だけ取得して先にカレンダー表示
-      const [resSettled, locSettled] = await Promise.all([
-        apiRequest(`/reservations?month=${month}`).then((v: any) => ({ status: 'fulfilled' as const, value: v })).catch(() => ({ status: 'rejected' as const, reason: null })),
-        apiRequest('/locations').then((v: any) => ({ status: 'fulfilled' as const, value: v })).catch(() => ({ status: 'rejected' as const, reason: null })),
-      ]);
-      const resResult = resSettled.status === 'fulfilled' ? resSettled.value : null;
-      const locResult = locSettled.status === 'fulfilled' ? locSettled.value : null;
-
-      if (resResult) {
-        setReservations((resResult as any).reservations || []);
-      } else {
-        console.error('Failed to load reservations');
-        toast.error('予���データの読み込みに失敗しました');
-      }
-
-      if (locResult) setLocations((locResult as any).locations || []);
-
-      setLoading(false);
-
-      // Phase2: 裏でメニュー・ユーザー・制作物を取得（詳細モーダル用）。制作物自動作成は GET /reservations 内で実施済みのためここでは呼ばない
-      Promise.allSettled([
-        apiRequest('/menu-items'),
-        apiRequest('/users'),
-        apiRequest(`/work-orders?month=${month}`),
-      ]).then(([menu, u, w]) => {
-        if (menu.status === 'fulfilled' && (menu as any).value?.menu_items) setMenuItems((menu as any).value.menu_items);
-        if (u.status === 'fulfilled' && (u as any).value?.users) setUsers((u as any).value.users);
-        else if (u.status === 'rejected') setUsers([]);
-        if (w.status === 'fulfilled' && (w as any).value?.work_orders) setWorkOrders((w as any).value.work_orders);
-      });
+      const entry = await fetchAndCacheMonth(month, locId);
+      if (entry) applyData(entry);
     } catch (err: any) {
       console.error('Load data error:', err);
       toast.error('データの読み込みに失敗しました');
+    } finally {
       setLoading(false);
     }
+
+    // 前後月をプリフェッチ（ログイン時に既フェッチ済みなら即返る）
+    const [prev, next] = getAdjacentMonths(month);
+    fetchAndCacheMonth(prev, locId).catch(() => {});
+    fetchAndCacheMonth(next, locId).catch(() => {});
   };
 
   const handleDelete = async (reservationId: string) => {
     try {
       await apiRequest(`/reservations/${reservationId}`, { method: 'DELETE' });
       toast.success('予約を削除しました');
+      invalidateAll(); // グローバルキャッシュを全破棄して再フェッチ
       await loadCalendarData();
     } catch (err: any) {
       console.error('Delete reservation error:', err);
@@ -152,6 +206,7 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const handleSave = async () => {
     setModalOpen(false);
     setEditingReservation(null);
+    invalidateAll(); // グローバルキャッシュを全破棄して再フェッチ
     await loadCalendarData();
   };
 
@@ -180,16 +235,16 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     if (event.status === 'tentative') backgroundColor = '#d97706'; // amber-600
     if (event.status === 'cancelled') backgroundColor = '#dc2626'; // red-600
     if (event.status === 'completed') backgroundColor = '#059669'; // emerald-600
-    
-    return { 
-      style: { 
+
+    return {
+      style: {
         backgroundColor,
         borderRadius: '4px',
         opacity: 0.9,
         color: 'white',
         border: 'none',
         display: 'block'
-      } 
+      }
     };
   }, []);
 
@@ -214,6 +269,24 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     }
   }, []);
 
+  // ロケーション読み込み中
+  if (!locationsLoaded) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+      </div>
+    );
+  }
+
+  // アクセス可能な店舗がない（staffで未設定）
+  if (locationsLoaded && accessibleLocations.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-slate-500 text-lg">アクセス可能な店舗がありません。管理者にお問い合わせください。</p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -225,7 +298,25 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   return (
     <div className="h-full flex flex-col gap-4 min-h-0">
       <div className="flex-shrink-0 flex items-center justify-between flex-wrap gap-4">
-         <h1 className="text-2xl font-bold text-slate-900">予約カレンダー</h1>
+         <div className="flex items-center gap-4">
+           <h1 className="text-2xl font-bold text-slate-900">予約カレンダー</h1>
+           {accessibleLocations.length > 1 && (
+             <select
+               value={selectedLocationId ?? ''}
+               onChange={e => setSelectedLocationId(e.target.value)}
+               className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-700 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+             >
+               {accessibleLocations.map(loc => (
+                 <option key={loc.location_id} value={loc.location_id}>
+                   {loc.location_name}
+                 </option>
+               ))}
+             </select>
+           )}
+           {accessibleLocations.length === 1 && (
+             <span className="text-slate-500 text-sm">{accessibleLocations[0].location_name}</span>
+           )}
+         </div>
          <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-sm text-slate-600">
               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-600"></span>確定</span>

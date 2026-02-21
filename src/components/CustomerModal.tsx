@@ -825,10 +825,8 @@ export function CustomerModal({
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    console.log('Edit button clicked, current mode:', currentMode);
                     setCurrentMode('edit');
                     setActiveTab('info');
-                    console.log('Switched to edit mode');
                   }}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition text-center flex items-center justify-center gap-2"
                 >

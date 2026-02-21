@@ -1,0 +1,2 @@
+{"location":"diagnose-login.mjs","message":"diagnostic","data":{"login_id":"admin","user_exists":true,"has_password_hash":true,"hash_prefix":"$2b$10$V6T","bcrypt_match":true,"error":null,"active_flag":true},"timestamp":1771334706066}
+{"location":"LoginPage.tsx:handleLogin","message":"login_attempt","data":{"login_id":"admin","hasPassword":true},"timestamp":1771336328990,"hypothesisId":"H0"}

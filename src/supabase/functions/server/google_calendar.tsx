@@ -11,9 +11,6 @@ export async function syncToGoogleCalendar(
   menuItem?: any,
   location?: any
 ): Promise<string | null> {
-  // #region agent log
-  console.log('[Google Calendar] syncToGoogleCalendar called', { action, reservation_id: reservation?.reservation_id, has_customer: !!customer, has_menuItem: !!menuItem, has_location: !!location, has_CALENDAR_ID: !!CALENDAR_ID, has_SERVICE_ACCOUNT_JSON: !!SERVICE_ACCOUNT_JSON });
-  // #endregion
   if (!CALENDAR_ID) {
     console.log('[Google Calendar] GOOGLE_CALENDAR_ID missing, skipping sync');
     return null;
