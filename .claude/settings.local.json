@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && supabase db push 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && npx supabase db push 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && npx supabase migration list 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && npx supabase migration repair --status applied 20250215000000 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && npx supabase functions deploy make-server-fe84bde0 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && git add \\\\\n  supabase/migrations/20260221000000_add_user_location_access.sql \\\\\n  src/supabase/functions/server/db.ts \\\\\n  src/supabase/functions/server/index.tsx \\\\\n  src/utils/calendarCache.ts \\\\\n  src/components/CalendarPage.tsx \\\\\n  src/components/LocationPermissionsPage.tsx \\\\\n  src/components/OperationsPage.tsx \\\\\n  src/App.tsx 2>&1)",
+      "Bash(cd C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg:*)",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && git push 2>&1)",
+      "mcp__claude_ai_Vercel__deploy_to_vercel",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && npx vercel deploy --prod 2>&1)",
+      "mcp__claude_ai_Vercel__list_teams",
+      "mcp__claude_ai_Vercel__list_projects",
+      "mcp__claude_ai_Vercel__list_deployments",
+      "mcp__claude_ai_Vercel__get_deployment_build_logs",
+      "mcp__claude_ai_Vercel__get_project",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && git log origin/main..HEAD --oneline && git push origin main 2>&1)",
+      "Bash(gh api:*)",
+      "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && curl -s \"https://api.github.com/repos/lifecastingtimecapsule/Abcdefg/commits?per_page=3\" | python -c \"import sys,json; commits=json.load\\(sys.stdin\\); [print\\(c['sha'][:7], c['commit']['message'].splitlines\\(\\)[0]\\) for c in commits]\" 2>&1)"
+    ]
+  }
+}

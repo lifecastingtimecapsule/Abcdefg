@@ -4,6 +4,9 @@ export interface User {
   login_id: string;
   name: string;
   role: 'admin' | 'staff';
+  email?: string;
+  active_flag?: boolean;
+  last_login_at?: string;
   created_at: string;
   updated_at: string;
   /** 初期パスワードでログインした初回のみ true。パスワード変更後に false */
@@ -31,15 +34,23 @@ export interface Child {
 
 // 顧客関連
 export interface Customer {
-  id: string;
-  external_customer_number: string;
+  customer_id: string;
+  customer_code?: string;
+  external_customer_number?: string;
   parent_name: string;
-  child_name: string;
+  parent_name_kana?: string;
+  child_name?: string;
+  child_name_kana?: string;
+  child_age_years?: number | null;
+  child_age_months?: number | null;
   children?: Child[];
   phone: string;
   email?: string;
-  address?: string;
-  notes?: string;
+  line_url?: string;
+  postal_code?: string;
+  address_text?: string;
+  notes_internal?: string;
+  active_flag?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -47,13 +58,17 @@ export interface Customer {
 // 予約関連
 export interface Reservation {
   reservation_id: string;
+  reservation_number?: string;
   customer_id: string;
-  reservation_date: string;
-  reservation_time: string;
   location_id: string;
-  status: 'confirmed' | 'cancelled' | 'completed';
-  notes?: string;
+  menu_item_id?: string;
+  staff_id_main?: string;
+  reservation_date_time: string;
+  duration_minutes?: number;
+  status: 'confirmed' | 'tentative' | 'pending' | 'cancelled' | 'completed';
+  notes_staff?: string;
   photo_required?: 'not_set' | 'required' | 'not_required';
+  google_event_id?: string;
   created_at: string;
   updated_at: string;
   customer?: Customer;
@@ -66,34 +81,33 @@ export interface WorkOrder {
   customer_id: string;
   reservation_id?: string;
   product_type: string;
-  // New statuses
   status: '乾燥中' | '成形' | '着色' | '額装' | '完成' | '受け取り済み';
   due_date: string;
   delivery_date?: string;
-  pickup_date?: string; // 受け取り可能日
+  pickup_date?: string;
   assigned_staff_id?: string;
   notes?: string;
-  // New fields
   nameplate_name?: string;
   nameplate_font?: '筆記体' | '明朝体' | 'ゴシック体';
   coloring_type?: '金' | '銀';
   frame_color?: '白' | '黒';
   mount_color?: '白' | '黒';
-  status_comments?: Record<string, string>; // Key is status, value is comment
-  
+  status_comments?: Record<string, string>;
   photo_data_status?: 'not_set' | 'available' | 'not_available';
+  priority_order?: number;
   created_at: string;
   updated_at: string;
   customer?: Customer;
   assigned_staff?: User;
-  priority_order?: number;
 }
 
 // ロケーション関連
 export interface Location {
   location_id: string;
-  name: string;
-  address?: string;
+  location_name: string;
+  address_text?: string;
+  phone?: string;
+  active_flag?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -115,12 +129,17 @@ export interface Incentive {
 
 // メニュー設定関連
 export interface MenuItem {
-  menu_id: string;
+  menu_item_id: string;
   name: string;
-  price: number;
-  category?: string;
+  base_price: number;
+  additional_unit_price: number;
   description?: string;
-  active: boolean;
+  duration_minutes?: number;
+  is_active: boolean;
+  discount_type?: 'none' | 'percentage' | 'fixed';
+  discount_value?: number | null;
+  discount_end_date?: string | null;
+  apply_discount_to_additional?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -129,17 +148,4 @@ export interface MenuItem {
 export interface ApiError {
   error: string;
   details?: string;
-}
-
-// API 共通レスポンス型
-export interface Shift {
-  shift_id: string;
-  staff_id: string;
-  date: string; // YYYY-MM-DD
-  shift_type: 'work' | 'holiday' | 'off' | 'training';
-  start_time?: string; // HH:mm
-  end_time?: string; // HH:mm
-  notes?: string;
-  updated_at: string;
-  updated_by: string;
 }

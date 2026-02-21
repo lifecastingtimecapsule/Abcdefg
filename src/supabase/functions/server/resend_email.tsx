@@ -1,101 +1,54 @@
 /**
- * Gmail API で予約確認メールを送信する。
- * 環境変数: GOOGLE_GMAIL_CLIENT_ID, GOOGLE_GMAIL_CLIENT_SECRET, GOOGLE_GMAIL_REFRESH_TOKEN
- * オプション: GOOGLE_GMAIL_FROM_EMAIL（未設定時はリフレッシュトークンに紐づくアカウントから送信）
+ * Resend API で予約確認メールを送信する。
+ * 環境変数: RESEND_API_KEY
+ * オプション: RESEND_FROM_EMAIL, RESEND_FROM_NAME
  */
 
-import { google } from 'npm:googleapis@126.0.1';
-import { OAuth2Client } from 'npm:google-auth-library@9.0.0';
-
-const CLIENT_ID = Deno.env.get('GOOGLE_GMAIL_CLIENT_ID');
-const CLIENT_SECRET = Deno.env.get('GOOGLE_GMAIL_CLIENT_SECRET');
-const REFRESH_TOKEN = Deno.env.get('GOOGLE_GMAIL_REFRESH_TOKEN');
-const FROM_EMAIL = Deno.env.get('GOOGLE_GMAIL_FROM_EMAIL') || '';
-const FROM_NAME = Deno.env.get('GOOGLE_GMAIL_FROM_NAME') || 'Amorétto LifeCastingstudio';
-
-function createOAuth2Client(): OAuth2Client | null {
-  if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) return null;
-  const oauth2 = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, 'urn:ietf:wg:oauth:2.0:oob');
-  oauth2.setCredentials({ refresh_token: REFRESH_TOKEN });
-  return oauth2;
-}
-
-function utf8ToBase64(str: string): string {
-  const u8 = new TextEncoder().encode(str);
-  let binary = '';
-  for (let i = 0; i < u8.length; i++) binary += String.fromCharCode(u8[i]);
-  return btoa(binary);
-}
-
-/** RFC 2822 形式のメールを組み立て、base64url でエンコードする */
-function buildRawMessage(
-  from: string,
-  to: string,
-  toName: string,
-  subject: string,
-  html: string
-): string {
-  const lines = [
-    `From: ${FROM_NAME} <${from}>`,
-    `To: ${toName ? `${toName} <${to}>` : to}`,
-    `Subject: =?UTF-8?B?${utf8ToBase64(subject)}?=`,
-    'MIME-Version: 1.0',
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    utf8ToBase64(html),
-  ];
-  const raw = lines.join('\r\n');
-  const rawUtf8 = new TextEncoder().encode(raw);
-  let binary = '';
-  for (let i = 0; i < rawUtf8.length; i++) binary += String.fromCharCode(rawUtf8[i]);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
+const FROM_EMAIL = Deno.env.get('RESEND_FROM_EMAIL') || 'noreply@example.com';
+const FROM_NAME = Deno.env.get('RESEND_FROM_NAME') || 'Amorétto LifeCastingstudio';
 
 /**
- * Gmail API でメールを1通送信する
+ * Resend API でメールを1通送信する
  */
-export async function sendEmailViaGmail(
+export async function sendEmail(
   toEmail: string,
   toName: string,
   subject: string,
   htmlContent: string
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
-    return { success: false, error: 'GOOGLE_GMAIL_* が未設定です' };
+  if (!RESEND_API_KEY) {
+    return { success: false, error: 'RESEND_API_KEY が未設定です' };
   }
-  const oauth2 = createOAuth2Client();
-  if (!oauth2) return { success: false, error: 'OAuth2 client の作成に失敗しました' };
 
   try {
-    const gmail = google.gmail({ version: 'v1', auth: oauth2 });
-    const fromEmail = FROM_EMAIL || (await getEmailFromGmail(oauth2));
-    if (!fromEmail) {
-      return { success: false, error: '送信元メールアドレスを取得できません。GOOGLE_GMAIL_FROM_EMAIL を設定してください' };
-    }
-    const raw = buildRawMessage(fromEmail, toEmail, toName, subject, htmlContent);
-    const res = await gmail.users.messages.send({
-      userId: 'me',
-      requestBody: { raw },
+    const from = FROM_NAME ? `${FROM_NAME} <${FROM_EMAIL}>` : FROM_EMAIL;
+    const to = toName ? `${toName} <${toEmail}>` : toEmail;
+
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: [to], subject, html: htmlContent }),
     });
-    return { success: true, messageId: res.data.id || undefined };
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error('[Resend] API error:', res.status, body);
+      return { success: false, error: `Resend API ${res.status}: ${body}` };
+    }
+
+    const data = await res.json();
+    return { success: true, messageId: data.id };
   } catch (err: any) {
-    console.error('[Gmail] 送信エラー:', err?.message || err);
+    console.error('[Resend] 送信エラー:', err?.message || err);
     return { success: false, error: err?.message || String(err) };
   }
 }
 
-async function getEmailFromGmail(oauth2: OAuth2Client): Promise<string> {
-  try {
-    const gmail = google.gmail({ version: 'v1', auth: oauth2 });
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    return profile.data.emailAddress || '';
-  } catch {
-    return '';
-  }
-}
-
-/** 予約確認メールの HTML を組み立てる（Edge Function とローカルスクリプトで共通） */
+/** 予約確認メールの HTML を組み立てる */
 export function buildReservationEmailHtml(params: {
   parent_name: string;
   parent_name_kana?: string;

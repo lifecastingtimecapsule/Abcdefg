@@ -40,6 +40,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       if (response.status === 401) {
         console.warn('[Auth] Session expired - triggering re-authentication');
         localStorage.removeItem('access_token');
+        localStorage.removeItem('cached_user');
         
         // コールバッ���が設定されていれば実行（再ログインモーダル表示など）
         if (onUnauthorizedCallback) {

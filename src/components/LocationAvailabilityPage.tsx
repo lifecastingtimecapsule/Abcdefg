@@ -221,37 +221,42 @@ export function LocationAvailabilityPage() {
   const selectedLocation = locations.find(l => l.location_id === selectedLocationId);
 
   return (
-    <div className="p-6 md:p-8 max-w-5xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-slate-900 mb-2">店舗別予約可能日設定</h1>
-        <p className="text-slate-600">
-          各店舗の定休日、営業時間、特別営業日を設定できます
-        </p>
+    <div className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto">
+      {/* 左: 店舗リスト（クリックで切り替え） */}
+      <div className="md:w-56 flex-shrink-0">
+        <p className="text-xs text-slate-500 mb-2">店舗を選んで設定を編集</p>
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+          {locations.length === 0 ? (
+            <p className="p-4 text-sm text-slate-500">店舗がありません</p>
+          ) : (
+            locations.map((loc) => (
+              <button
+                key={loc.location_id}
+                type="button"
+                onClick={() => setSelectedLocationId(loc.location_id)}
+                className={`w-full text-left px-4 py-3 border-b border-slate-100 last:border-b-0 flex items-center gap-2 transition ${
+                  selectedLocationId === loc.location_id
+                    ? 'bg-blue-50 text-blue-700 font-medium'
+                    : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <MapPin className="w-4 h-4 flex-shrink-0 text-slate-400" />
+                <span className="truncate">{loc.location_name}</span>
+              </button>
+            ))
+          )}
+        </div>
       </div>
 
-      {/* 店舗選択 */}
-      <div className="bg-white rounded-2xl shadow-sm border mb-6" style={{ borderColor: '#E5E0D8' }}>
-        <div className="p-6 border-b" style={{ borderColor: '#E5E0D8' }}>
-          <label className="block text-sm font-medium text-slate-700 mb-3">
-            <MapPin className="inline-block w-4 h-4 mr-2" />
-            店舗を選択
-          </label>
-          <select
-            value={selectedLocationId}
-            onChange={(e) => setSelectedLocationId(e.target.value)}
-            className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">店舗を選択してください</option>
-            {locations.map((location) => (
-              <option key={location.location_id} value={location.location_id}>
-                {location.location_name}
-              </option>
-            ))}
-          </select>
+      {/* 右: 選択した店舗の設定 */}
+      <div className="flex-1 min-w-0">
+      {!selectedLocationId ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+          左の一覧から店舗を選んでください
         </div>
-
-        {selectedLocationId && !loading && (
-          <div className="p-6 space-y-6">
+      ) : !loading ? (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-6 md:p-8 space-y-6 pb-24">
             {/* 基本営業時間 */}
             <div>
               <h2 className="flex items-center gap-2 text-slate-900 mb-4">
@@ -520,22 +525,22 @@ export function LocationAvailabilityPage() {
               />
             </div>
 
-            {/* 保存ボタン */}
-            <div className="pt-6 border-t" style={{ borderColor: '#E5E0D8' }}>
+            </div>
+
+            <div className="sticky bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur-sm px-6 py-4 flex items-center justify-between gap-4">
+              <p className="text-sm text-slate-500">{selectedLocation?.location_name} の設定</p>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 font-medium shadow-sm flex items-center gap-2"
               >
                 <Save className="w-5 h-5" />
                 {saving ? '保存中...' : '設定を保存'}
               </button>
             </div>
           </div>
-        )}
-
-        {loading && (
-          <div className="p-12 text-center">
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             <p className="text-slate-600 mt-4">読み込み中...</p>
           </div>

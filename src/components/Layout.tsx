@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed, TrendingUp, User as UserIcon, CalendarRange } from 'lucide-react';
+import { Calendar, Users, Package, UserCog, LogOut, Menu, X, TrendingUp, User as UserIcon } from 'lucide-react';
 import { createClient } from '../utils/supabase/client';
 import { User } from '../types';
 
@@ -30,9 +30,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
   const navSections = [
     {
       items: [
-        { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard, roles: ['admin', 'staff'] },
         { id: 'calendar', label: 'カレンダー', icon: Calendar, roles: ['admin', 'staff'] },
-        { id: 'shifts', label: 'シフト管理', icon: CalendarRange, roles: ['admin', 'staff'] },
         { id: 'customers', label: '顧客管理', icon: Users, roles: ['admin', 'staff'] },
         { id: 'work-orders', label: '作品管理', icon: Package, roles: ['admin', 'staff'] },
         { id: 'sales-incentives', label: '売上・インセンティブ', icon: TrendingUp, roles: ['admin'] },
@@ -55,6 +53,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
     const supabase = createClient();
     await supabase.auth.signOut();
     localStorage.removeItem('access_token');
+    localStorage.removeItem('cached_user');
     onLogout();
   };
 
@@ -139,7 +138,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
         </div>
       )}
 
-      {/* Desktop sidebar */}
+      {/* Desktop: 左サイドバー */}
       <aside className="hidden lg:block fixed top-0 left-0 h-full w-64 bg-white border-r border-slate-200 z-30">
         <div className="p-6 border-b border-slate-200">
           <h1 className="text-slate-900">アマレット</h1>
@@ -180,7 +179,6 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
         </nav>
 
         <div className="absolute bottom-0 left-0 right-0 border-t border-slate-200">
-          {/* User info */}
           {currentUser && (
             <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50">
               <div className="flex items-center gap-3 mb-2">
@@ -199,8 +197,6 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
               </p>
             </div>
           )}
-          
-          {/* Logout button */}
           <div className="p-4">
             <button
               onClick={handleLogout}

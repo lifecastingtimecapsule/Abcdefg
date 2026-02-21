@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * 予約確認メール送信スクリプト（Gmail API 使用・Edge Function と同じ内容をローカルから実行）
+ * 予約確認メール送信スクリプト（Resend API 使用・Edge Function と同じ内容をローカルから実行）
  *
  * 使い方:
  *   npm run send-reservation-email
  *   node --env-file=.env.local scripts/send-reservation-email.mjs scripts/payload-reservation-email.json
  *
  * 環境変数:
- *   GOOGLE_GMAIL_CLIENT_ID, GOOGLE_GMAIL_CLIENT_SECRET, GOOGLE_GMAIL_REFRESH_TOKEN
- *   任意: GOOGLE_GMAIL_FROM_EMAIL, GOOGLE_GMAIL_FROM_NAME
+ *   RESEND_API_KEY
+ *   任意: RESEND_FROM_EMAIL, RESEND_FROM_NAME
  *
  * JSON の例（scripts/payload-reservation-email.example.json）:
  *   {
@@ -27,10 +27,9 @@
  */
 
 import { readFileSync } from 'fs';
-import { google } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
 
-const FROM_NAME = process.env.GOOGLE_GMAIL_FROM_NAME || 'Amorétto LifeCastingstudio';
+const FROM_NAME = process.env.RESEND_FROM_NAME || 'Amorétto LifeCastingstudio';
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'noreply@example.com';
 
 function loadPayload() {
   const path = process.argv[2];
@@ -47,7 +46,7 @@ function loadPayload() {
     child_age_years: 1,
     child_age_months: 6,
     reservation_number: 'RSV-TEST-001',
-    reservation_date_time: new Date().toISOString().slice(0, 16).replace('T', 'T'),
+    reservation_date_time: new Date().toISOString().slice(0, 16),
     menu_name: '手形・足形セット',
     location_name: '豊川店',
   };
@@ -161,39 +160,10 @@ function buildEmailHtml(p) {
 `;
 }
 
-function utf8ToBase64(str) {
-  return Buffer.from(str, 'utf8').toString('base64');
-}
-
-function buildRawMessage(from, to, toName, subject, html) {
-  const lines = [
-    `From: ${FROM_NAME} <${from}>`,
-    `To: ${toName ? `${toName} <${to}>` : to}`,
-    `Subject: =?UTF-8?B?${utf8ToBase64(subject)}?=`,
-    'MIME-Version: 1.0',
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    utf8ToBase64(html),
-  ];
-  const raw = lines.join('\r\n');
-  const rawB64 = utf8ToBase64(raw);
-  return rawB64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-async function getFromEmail(gmail) {
-  const profile = await gmail.users.getProfile({ userId: 'me' });
-  return profile.data.emailAddress || '';
-}
-
 async function main() {
-  const clientId = process.env.GOOGLE_GMAIL_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_GMAIL_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_GMAIL_REFRESH_TOKEN;
-  if (!clientId || !clientSecret || !refreshToken) {
-    console.error(
-      'GOOGLE_GMAIL_CLIENT_ID / GOOGLE_GMAIL_CLIENT_SECRET / GOOGLE_GMAIL_REFRESH_TOKEN を .env.local に設定してください。'
-    );
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.error('RESEND_API_KEY を .env.local に設定してください。');
     process.exit(1);
   }
 
@@ -206,28 +176,35 @@ async function main() {
 
   const htmlContent = buildEmailHtml(payload);
   const subject = `【アマレット】ご予約を承りました（予約番号: ${payload.reservation_number || '---'}）`;
+  const from = FROM_NAME ? `${FROM_NAME} <${FROM_EMAIL}>` : FROM_EMAIL;
 
   console.log('送信先:', email);
+  console.log('送信元:', from);
   console.log('件名:', subject);
-  console.log('Gmail API で送信中...');
+  console.log('Resend API で送信中...');
 
-  const oauth2 = new OAuth2Client(clientId, clientSecret, 'urn:ietf:wg:oauth:2.0:oob');
-  oauth2.setCredentials({ refresh_token: refreshToken });
-  const gmail = google.gmail({ version: 'v1', auth: oauth2 });
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: [email],
+      subject,
+      html: htmlContent,
+    }),
+  });
 
-  const fromEmail = process.env.GOOGLE_GMAIL_FROM_EMAIL || (await getFromEmail(gmail));
-  if (!fromEmail) {
-    console.error('送信元メールアドレスを取得できません。GOOGLE_GMAIL_FROM_EMAIL を設定するか、リフレッシュトークンが Gmail アカウントに紐づいているか確認してください。');
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`Resend API エラー (${res.status}):`, body);
     process.exit(1);
   }
 
-  const raw = buildRawMessage(fromEmail, email, payload.parent_name || '', subject, htmlContent);
-  const res = await gmail.users.messages.send({
-    userId: 'me',
-    requestBody: { raw },
-  });
-
-  console.log('送信成功。メッセージID:', res.data.id);
+  const data = await res.json();
+  console.log('送信成功。メッセージID:', data.id);
 }
 
 main().catch((e) => {

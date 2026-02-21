@@ -160,19 +160,16 @@ export function ReservationSettingsPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
-      <div className="flex items-center gap-3 mb-8">
-        <Settings className="w-8 h-8 text-blue-600" />
-        <h1 className="text-slate-900">予約受付設定</h1>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-8">
+    <div className="max-w-5xl mx-auto">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-6 md:p-8 space-y-8 pb-24">
         {/* 予約可能曜日 */}
-        <div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-3">
-            <Calendar className="w-4 h-4" />
+        <section className="rounded-xl border border-slate-200 p-5 bg-slate-50/50">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800 mb-3">
+            <Calendar className="w-4 h-4 text-blue-600" />
             予約可能曜日
-          </label>
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">予約を受け付ける曜日を選んでください</p>
           <div className="grid grid-cols-7 gap-2">
             {dayLabels.map((day, index) => (
               <button
@@ -188,14 +185,15 @@ export function ReservationSettingsPage() {
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
         {/* 営業時間 */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <Clock className="w-4 h-4 text-slate-700" />
-            <span className="text-sm font-medium text-slate-700">基本営業時間</span>
-          </div>
+        <section className="rounded-xl border border-slate-200 p-5 bg-slate-50/50">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800 mb-1">
+            <Clock className="w-4 h-4 text-blue-600" />
+            基本営業時間
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">共通の営業開始・終了時刻</p>
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
@@ -222,10 +220,9 @@ export function ReservationSettingsPage() {
               />
             </div>
           </div>
-        </div>
 
         {/* 曜日ごとの営業時間 */}
-        <div className="border-t pt-6">
+        <div className="border-t border-slate-200 pt-6 mt-6">
           <div className="flex items-center justify-between mb-4">
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <Calendar className="w-4 h-4" />
@@ -266,9 +263,13 @@ export function ReservationSettingsPage() {
             </div>
           )}
         </div>
+        </section>
 
         {/* 予約受付期間 */}
-        <div className="grid md:grid-cols-2 gap-4 border-t pt-6">
+        <section className="rounded-xl border border-slate-200 p-5 bg-slate-50/50">
+          <h2 className="text-sm font-semibold text-slate-800 mb-1">予約受付期間</h2>
+          <p className="text-xs text-slate-500 mb-4">何日先から・何日先まで予約可能にするか</p>
+        <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium text-slate-700 mb-2 block">
               何日前まで予約不可
@@ -314,13 +315,15 @@ export function ReservationSettingsPage() {
             </p>
           </div>
         </div>
+        </section>
 
         {/* 予約制限 */}
-        <div className="border-t pt-6">
-          <h3 className="text-sm font-medium text-slate-700 mb-4 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" />
+        <section className="rounded-xl border border-slate-200 p-5 bg-slate-50/50">
+          <h2 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-blue-600" />
             予約数の制限
-          </h3>
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">1日あたり・同時刻あたりの上限</p>
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium text-slate-700 mb-2 block">
@@ -359,22 +362,23 @@ export function ReservationSettingsPage() {
               </div>
               <p className="text-xs text-slate-500 mt-1">
                 ※ 同じ時間帯に予約可能な組数
-              </p>
-            </div>
+            </p>
           </div>
-          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        </div>
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-xs text-blue-800">
               <strong>予約時間枠について：</strong>時間枠は30分間隔で自動生成されます。各メニューの所要時間により予約可能な枠が調整されます。
             </p>
           </div>
-        </div>
+        </section>
 
         {/* 休業日設定 */}
-        <div className="border-t pt-6">
-          <h3 className="text-sm font-medium text-slate-700 mb-4 flex items-center gap-2">
-            <Ban className="w-4 h-4" />
+        <section className="rounded-xl border border-slate-200 p-5 bg-slate-50/50">
+          <h2 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-2">
+            <Ban className="w-4 h-4 text-blue-600" />
             休業日の設定
-          </h3>
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">臨時休業日を追加（祝日など）</p>
           <div className="space-y-4">
             <div className="flex gap-2">
               <input
@@ -419,14 +423,16 @@ export function ReservationSettingsPage() {
               </p>
             )}
           </div>
+        </section>
         </div>
 
-        {/* 保存ボタン */}
-        <div className="border-t pt-6">
+        {/* 固定保存バー */}
+        <div className="sticky bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur-sm px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+          <p className="text-sm text-slate-500">変更後は必ず保存してください</p>
           <button
             onClick={handleSave}
             disabled={loading}
-            className="w-full md:w-auto px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 font-medium shadow-sm flex items-center gap-2"
           >
             <Save className="w-5 h-5" />
             {loading ? '保存中...' : '設定を保存'}
@@ -435,7 +441,7 @@ export function ReservationSettingsPage() {
       </div>
 
       {/* 設定の説明 */}
-      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
         <h3 className="text-sm font-medium text-blue-900 mb-2 flex items-center gap-2">
           <AlertCircle className="w-4 h-4" />
           設定のヒント

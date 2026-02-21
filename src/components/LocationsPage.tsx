@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
 import { Plus, Edit2, MapPin } from 'lucide-react';
@@ -19,6 +19,17 @@ export function LocationsPage() {
   useEffect(() => {
     loadLocations();
   }, []);
+
+  const closeModal = useCallback(() => {
+    if (modalOpen) setModalOpen(false);
+  }, [modalOpen]);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') closeModal(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [modalOpen, closeModal]);
 
   const loadLocations = async () => {
     try {
@@ -91,7 +102,10 @@ export function LocationsPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h1 className="text-slate-900">拠点管理</h1>
+        <div>
+          <h1 className="text-slate-900">拠点一覧</h1>
+          <p className="text-sm text-slate-500 mt-0.5">店舗・拠点を追加・編集できます</p>
+        </div>
         <button
           onClick={() => handleOpenModal()}
           className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition"
@@ -150,17 +164,22 @@ export function LocationsPage() {
       {modalOpen && (
         <div 
           className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
-          onClick={() => setModalOpen(false)}
+          onClick={closeModal}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="location-modal-title"
         >
           <div 
             className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-6 border-b border-slate-200">
-              <h2 className="text-slate-900">{editingLocation ? '拠点編集' : '新規拠点'}</h2>
+              <h2 id="location-modal-title" className="text-slate-900">{editingLocation ? '拠点を編集' : '新規拠点を追加'}</h2>
               <button
-                onClick={() => setModalOpen(false)}
+                type="button"
+                onClick={closeModal}
                 className="p-2 hover:bg-slate-100 rounded-lg transition"
+                aria-label="閉じる"
               >
                 <span className="text-xl">&times;</span>
               </button>
@@ -207,7 +226,7 @@ export function LocationsPage() {
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setModalOpen(false)}
+                  onClick={closeModal}
                   className="flex-1 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition text-center"
                 >
                   キャンセル

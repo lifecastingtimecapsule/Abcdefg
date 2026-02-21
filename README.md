@@ -92,13 +92,13 @@
  4. （任意）ログイン不具合の診断・パスワードリセット  
     - `npm run diagnose-login` … ログイン周りの診断（要 `.env.local`）
     - `npm run reset-admin-password` … 管理者パスワードのリセット用スクリプト
- 5. **予約確認メールをローカルから送信**  
-    - 本番では公開予約成立時に Edge Function 内で Gmail API（OAuth2）によりメール送信されます。同じ内容をローカルで実行する場合、`.env.local` に Gmail 用の環境変数（`GOOGLE_GMAIL_CLIENT_ID`, `GOOGLE_GMAIL_CLIENT_SECRET`, `GOOGLE_GMAIL_REFRESH_TOKEN`）を設定して:  
-      `npm run send-reservation-email`  
-    - ペイロードを指定する場合:  
-      `node --env-file=.env.local scripts/send-reservation-email.mjs scripts/payload-reservation-email.json`  
-    - サンプル: `scripts/payload-reservation-email.example.json` をコピーして編集してください。  
-    - Gmail の設定手順（OAuth2 クライアント作成・リフレッシュトークン取得）は `.env.example` のコメントを参照してください。
+ 5. **予約確認メールをローカルから送信**
+    - 本番では公開予約成立時に Edge Function 内で **Resend API** によりメール送信されます。同じ内容をローカルで実行する場合、`.env.local` に Resend 用の環境変数（`RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_FROM_NAME`）を設定して:
+      `npm run send-reservation-email`
+    - ペイロードを指定する場合:
+      `node --env-file=.env.local scripts/send-reservation-email.mjs scripts/payload-reservation-email.json`
+    - サンプル: `scripts/payload-reservation-email.example.json` をコピーして編集してください。
+    - Resend の設定手順（アカウント作成・ドメイン認証・API キー取得）は `.env.example` のコメントを参照してください。
 
  ---
 
@@ -145,9 +145,9 @@
       | `JWT_SECRET` | **Project Settings** → **API** → **JWT Secret** をコピー（ログイン高速化・password_hash 検証用）。※ `SUPABASE_`  prefix は使えないため `JWT_SECRET` で登録すること |
       | `GOOGLE_CALENDAR_ID` | Google カレンダー設定で「カレンダーID」（予約を反映したいカレンダー） |
       | `GOOGLE_SERVICE_ACCOUNT_JSON` | Google Cloud で作成したサービスアカウントの JSON キーを **1行の文字列** で貼り付け |
-      | `GOOGLE_GMAIL_CLIENT_ID` | Google Cloud で作成した OAuth2 クライアントの Client ID。予約確認メール送信（Gmail API）用。 |
-      | `GOOGLE_GMAIL_CLIENT_SECRET` | 上記 OAuth2 クライアントの Client Secret。 |
-      | `GOOGLE_GMAIL_REFRESH_TOKEN` | 送信元 Gmail アカウントで取得した OAuth2 リフレッシュトークン。未設定の場合はメール送信をスキップします。 |
+      | `RESEND_API_KEY` | [Resend](https://resend.com) ダッシュボードの **API Keys** から取得。予約確認メール送信用。未設定の場合はメール送信をスキップします。 |
+      | `RESEND_FROM_EMAIL` | 送信元メールアドレス（Resend でドメイン認証済みのアドレスを指定）。例: `noreply@yourdomain.com` |
+      | `RESEND_FROM_NAME` | 送信者名。例: `Amorétto LifeCastingstudio` |
     - **注意**: `GOOGLE_SERVICE_ACCOUNT_JSON` は、JSON 全体をそのまま 1 つの文字列として貼り付けます（改行を含めても可。Edge Function 内で `JSON.parse` しています）。
     - すでに Supabase が注入しているため、通常は追加不要: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`。
 
