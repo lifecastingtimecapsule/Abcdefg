@@ -349,6 +349,46 @@ export async function getWorkOrders(): Promise<Record<string, unknown>[]> {
   return (data ?? []) as Record<string, unknown>[];
 }
 
+/** 指定予約IDの制作物だけ取得（ensure チェック用: reservation_id のみ返す） */
+export async function getWorkOrdersByReservationIds(
+  reservationIds: string[],
+): Promise<{ work_order_id: string; reservation_id: string }[]> {
+  if (reservationIds.length === 0) return [];
+  const { data, error } = await getClient()
+    .from('work_orders')
+    .select('work_order_id, reservation_id')
+    .in('reservation_id', reservationIds);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as { work_order_id: string; reservation_id: string }[];
+}
+
+/** 指定顧客IDの予約を全件取得（顧客ページ用） */
+export async function getReservationsByCustomerIds(
+  customerIds: string[],
+): Promise<Record<string, unknown>[]> {
+  if (customerIds.length === 0) return [];
+  const { data, error } = await getClient()
+    .from('reservations')
+    .select('*')
+    .in('customer_id', customerIds)
+    .order('reservation_date_time', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+/** 指定予約IDの制作物を全件取得（顧客ページ用） */
+export async function getWorkOrdersByReservationIdsAll(
+  reservationIds: string[],
+): Promise<Record<string, unknown>[]> {
+  if (reservationIds.length === 0) return [];
+  const { data, error } = await getClient()
+    .from('work_orders')
+    .select('*')
+    .in('reservation_id', reservationIds);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Record<string, unknown>[];
+}
+
 export async function upsertWorkOrder(row: Record<string, unknown>): Promise<void> {
   const { error } = await getClient().from('work_orders').upsert({
     work_order_id: row.work_order_id,

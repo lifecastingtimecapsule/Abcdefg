@@ -6,22 +6,28 @@ import { ReservationCompletePage } from './components/ReservationCompletePage';
 import { ReauthModal } from './components/ReauthModal';
 import { Layout } from './components/Layout';
 import { MustChangePasswordModal } from './components/MustChangePasswordModal';
-import { Dashboard } from './components/Dashboard';
 import { CalendarPage } from './components/CalendarPage';
-import { ShiftManagementPage } from './components/ShiftManagementPage';
 import { CustomersPage } from './components/CustomersPage';
 import { WorkOrdersPage } from './components/WorkOrdersPage';
 import { SalesIncentivesPage } from './components/SalesIncentivesPage';
 import { OperationsPage } from './components/OperationsPage';
 import { apiRequest, setUnauthorizedCallback } from './utils/api';
+import { functionsBaseUrl, publicAnonKey } from './utils/supabase/info';
 import { User, MeResponse } from './types';
+
+// アプリ起動直後に Edge Function をウォームアップ（コールドスタート対策）
+const _warmup = (() => {
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), 4000);
+  fetch(`${functionsBaseUrl}/public/health`, { signal: ac.signal, headers: { Authorization: `Bearer ${publicAnonKey}` } }).catch(() => {});
+})();
 
 export default function App() {
   const [currentRoute, setCurrentRoute] = useState(window.location.pathname);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState('calendar');
   const [showReauthModal, setShowReauthModal] = useState(false);
 
   // URL???E???????E
@@ -126,7 +132,7 @@ export default function App() {
     localStorage.removeItem('access_token');
     setIsAuthenticated(false);
     setCurrentUser(null);
-    setCurrentPage('dashboard');
+    setCurrentPage('calendar');
     setShowReauthModal(false);
   };
 
@@ -196,7 +202,7 @@ export default function App() {
   }
 
   const renderPage = () => {
-    if (!currentUser) return <Dashboard onNavigate={setCurrentPage} />;
+    if (!currentUser) return <CalendarPage userRole="staff" />;
     
     // Check if user has access to the current page
     const hasAccess = () => {
@@ -209,20 +215,15 @@ export default function App() {
       return true;
     };
 
-    // If no access, silently redirect to dashboard
+    // If no access, silently redirect to calendar
     if (!hasAccess()) {
-      // Use setTimeout to avoid state update during render
-      setTimeout(() => setCurrentPage('dashboard'), 0);
-      return <Dashboard onNavigate={setCurrentPage} />;
+      setTimeout(() => setCurrentPage('calendar'), 0);
+      return <CalendarPage userRole={currentUser.role} />;
     }
     
     switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard onNavigate={setCurrentPage} userRole={currentUser.role} />;
       case 'calendar':
         return <CalendarPage userRole={currentUser.role} />;
-      case 'shifts':
-        return <ShiftManagementPage />;
       case 'customers':
         return <CustomersPage userRole={currentUser.role} />;
       case 'work-orders':
@@ -239,7 +240,7 @@ export default function App() {
           onReauthRequest={() => setShowReauthModal(true)} 
         />;
       default:
-        return <Dashboard onNavigate={setCurrentPage} userRole={currentUser.role} />;
+        return <CalendarPage userRole={currentUser.role} />;
     }
   };
 

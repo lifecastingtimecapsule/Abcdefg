@@ -1,65 +1,45 @@
-import { useEffect, useState, useMemo, useCallback, memo } from 'react';
-import { Calendar, momentLocalizer, Views } from 'react-big-calendar';
-import moment from 'moment';
-import 'moment/locale/ja';
-import 'react-big-calendar/lib/css/react-big-calendar.css';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
 
-// 日本語ロケール設定
-moment.locale('ja');
-const localizer = momentLocalizer(moment);
+const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
-const messages = {
-  allDay: '終日',
-  previous: '前へ',
-  next: '次へ',
-  today: '今日',
-  month: '月',
-  week: '週',
-  day: '日',
-  agenda: '予定表',
-  date: '日時',
-  time: '時間',
-  event: 'イベント',
-  noEventsInRange: 'この期間に予約はありません',
-  showMore: (total: number) => `+${total}件`,
-};
+function getMonthGrid(year: number, month: number): (Date | null)[][] {
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  const startDow = first.getDay();
+  const daysInMonth = last.getDate();
+  const rows: (Date | null)[][] = [];
+  let row: (Date | null)[] = [];
+  // 前月の空白
+  for (let i = 0; i < startDow; i++) {
+    row.push(null);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    row.push(new Date(year, month, d));
+    if (row.length === 7) {
+      rows.push(row);
+      row = [];
+    }
+  }
+  if (row.length > 0) {
+    while (row.length < 7) row.push(null);
+    rows.push(row);
+  }
+  return rows;
+}
 
-const calendarStyle = { height: '100%', minHeight: 'max(1200px, calc(100vh - 180px))' as const };
-
-/** Phase2（users/menuItems/workOrders）更新で親が再レンダーしても、events/date が同じならカレンダーは再描画しない */
-const MemoizedCalendar = memo(function MemoizedCalendar_(props: {
-  events: any[];
-  date: Date;
-  onNavigate: (d: Date) => void;
-  eventPropGetter: (event: any) => { style?: React.CSSProperties };
-  onSelectEvent: (event: any) => void;
-}) {
-  return (
-    <Calendar
-      localizer={localizer}
-      events={props.events}
-      startAccessor="start"
-      endAccessor="end"
-      style={calendarStyle}
-      messages={messages}
-      views={[Views.MONTH]}
-      view={Views.MONTH}
-      date={props.date}
-      onNavigate={props.onNavigate}
-      eventPropGetter={props.eventPropGetter}
-      onSelectEvent={props.onSelectEvent}
-      popup
-      selectable
-      allDayMaxRows={5}
-    />
-  );
-});
+function getStatusBadgeClass(status: string): string {
+  if (status === 'confirmed') return 'bg-primary';
+  if (status === 'tentative') return 'bg-warning text-dark';
+  if (status === 'cancelled') return 'bg-danger';
+  if (status === 'completed') return 'bg-success';
+  return 'bg-secondary';
+}
 
 export function CalendarPage({ userRole }: { userRole: string }) {
   const [reservations, setReservations] = useState<any[]>([]);
@@ -76,64 +56,63 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
-  
+
   const [date, setDate] = useState(new Date());
 
+  const year = date.getFullYear();
+  const month = date.getMonth();
   const monthParam = useMemo(() => {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    return `${y}-${m}`;
-  }, [date]);
+    const m = String(month + 1).padStart(2, '0');
+    return `${year}-${m}`;
+  }, [year, month]);
 
   useEffect(() => {
     loadCalendarData();
   }, [monthParam]);
 
-  // 詳細モーダルを開いたときにメニュー一覧がまだ無ければその時点で取得（足りない分を取得）
-  useEffect(() => {
-    if (!modalOpen || menuItems.length > 0) return;
-    apiRequest('/menu-items').then((data: any) => {
-      if (data?.menu_items) setMenuItems(data.menu_items);
-    }).catch(() => {});
-  }, [modalOpen]);
 
   const loadCalendarData = async () => {
     try {
       setLoading(true);
-      const month = monthParam;
-      // Phase1: 名前と日付用に「予約一覧＋場所」だけ取得して先にカレンダー表示
-      const [resSettled, locSettled] = await Promise.all([
-        apiRequest(`/reservations?month=${month}`).then((v: any) => ({ status: 'fulfilled' as const, value: v })).catch(() => ({ status: 'rejected' as const, reason: null })),
-        apiRequest('/locations').then((v: any) => ({ status: 'fulfilled' as const, value: v })).catch(() => ({ status: 'rejected' as const, reason: null })),
-      ]);
-      const resResult = resSettled.status === 'fulfilled' ? resSettled.value : null;
-      const locResult = locSettled.status === 'fulfilled' ? locSettled.value : null;
-
-      if (resResult) {
-        setReservations((resResult as any).reservations || []);
-      } else {
-        console.error('Failed to load reservations');
-        toast.error('予���データの読み込みに失敗しました');
+      // まず統合 API を試みる（1リクエスト）、失敗時は旧マルチリクエストにフォールバック
+      let loaded = false;
+      try {
+        const data = await apiRequest<{
+          reservations: any[];
+          locations: any[];
+          menu_items: any[];
+          users: any[];
+        }>(`/calendar?month=${monthParam}`);
+        setReservations(data.reservations || []);
+        setLocations(data.locations || []);
+        setMenuItems(data.menu_items || []);
+        setUsers(data.users || []);
+        loaded = true;
+      } catch (_) {
+        // 統合 API が未デプロイの場合は旧方式にフォールバック
       }
 
-      if (locResult) setLocations((locResult as any).locations || []);
+      if (!loaded) {
+        const [resResult, locResult] = await Promise.allSettled([
+          apiRequest(`/reservations?month=${monthParam}`),
+          apiRequest('/locations'),
+        ]);
+        if (resResult.status === 'fulfilled') setReservations((resResult.value as any).reservations || []);
+        else toast.error('予約データの読み込みに失敗しました');
+        if (locResult.status === 'fulfilled') setLocations((locResult.value as any).locations || []);
 
-      setLoading(false);
-
-      // Phase2: 裏でメニュー・ユーザー・制作物を取得（詳細モーダル用）。制作物自動作成は GET /reservations 内で実施済みのためここでは呼ばない
-      Promise.allSettled([
-        apiRequest('/menu-items'),
-        apiRequest('/users'),
-        apiRequest(`/work-orders?month=${month}`),
-      ]).then(([menu, u, w]) => {
-        if (menu.status === 'fulfilled' && (menu as any).value?.menu_items) setMenuItems((menu as any).value.menu_items);
-        if (u.status === 'fulfilled' && (u as any).value?.users) setUsers((u as any).value.users);
-        else if (u.status === 'rejected') setUsers([]);
-        if (w.status === 'fulfilled' && (w as any).value?.work_orders) setWorkOrders((w as any).value.work_orders);
-      });
+        // マスタを非同期で取得
+        Promise.allSettled([
+          apiRequest('/menu-items'),
+          apiRequest('/users'),
+        ]).then(([menu, u]) => {
+          if (menu.status === 'fulfilled' && (menu.value as any)?.menu_items) setMenuItems((menu.value as any).menu_items);
+          if (u.status === 'fulfilled' && (u.value as any)?.users) setUsers((u.value as any).users);
+        });
+      }
     } catch (err: any) {
-      console.error('Load data error:', err);
       toast.error('データの読み込みに失敗しました');
+    } finally {
       setLoading(false);
     }
   };
@@ -144,7 +123,6 @@ export function CalendarPage({ userRole }: { userRole: string }) {
       toast.success('予約を削除しました');
       await loadCalendarData();
     } catch (err: any) {
-      console.error('Delete reservation error:', err);
       toast.error('削除に失敗しました: ' + err.message);
     }
   };
@@ -155,43 +133,23 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     await loadCalendarData();
   };
 
-  // Events for Calendar（APIからcustomer_name取得、フォールバックでchild_name/parent_name）
-  const events = useMemo(() => {
-    return reservations.map((r: any) => {
+  const eventsByDate = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    reservations.forEach((r: any) => {
       const customerName = r.customer_name ?? r.child_name ?? r.parent_name ?? '名称未設定';
       const start = new Date(r.reservation_date_time);
-      const end = new Date(start.getTime() + (r.duration_minutes || 30) * 60000);
-
-      return {
+      const key = start.toISOString().slice(0, 10);
+      if (!map[key]) map[key] = [];
+      map[key].push({
         id: r.reservation_id,
         title: customerName,
         start,
-        end,
-        resourceId: r.location_id,
         resource: r,
-        status: r.status
-      };
+        status: r.status,
+      });
     });
+    return map;
   }, [reservations]);
-
-  const eventPropGetter = useCallback((event: any) => {
-    let backgroundColor = '#64748b'; // slate-500
-    if (event.status === 'confirmed') backgroundColor = '#2563eb'; // blue-600
-    if (event.status === 'tentative') backgroundColor = '#d97706'; // amber-600
-    if (event.status === 'cancelled') backgroundColor = '#dc2626'; // red-600
-    if (event.status === 'completed') backgroundColor = '#059669'; // emerald-600
-    
-    return { 
-      style: { 
-        backgroundColor,
-        borderRadius: '4px',
-        opacity: 0.9,
-        color: 'white',
-        border: 'none',
-        display: 'block'
-      } 
-    };
-  }, []);
 
   const handleSelectEvent = useCallback(async (event: any) => {
     try {
@@ -199,67 +157,180 @@ export function CalendarPage({ userRole }: { userRole: string }) {
       const data = await apiRequest(`/reservations/${event.resource.reservation_id}`) as any;
       const reservation = data.reservation;
       const customer = data.customer;
-      const customersForDetail = customer ? [customer] : [];
-      setCustomersForModal(customersForDetail);
+      setCustomersForModal(customer ? [customer] : []);
       setEditingReservation(reservation);
       setReservationMode('view');
-      // 詳細APIで返ってきた users を、まだ裏取得が終わっていなければ補完（足りない分を取得）
       setUsers(prev => (prev.length > 0 ? prev : (data.users || [])));
       setModalOpen(true);
     } catch (err: any) {
-      console.error('Fetch reservation detail error:', err);
       toast.error('詳細の取得に失敗しました');
     } finally {
       setDetailLoading(false);
     }
   }, []);
 
+  const monthGrid = useMemo(() => getMonthGrid(year, month), [year, month]);
+
+  const prevMonth = () => setDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setDate(new Date(year, month + 1, 1));
+  const goToday = () => setDate(new Date());
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+      <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '320px' }}>
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">読み込み中</span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col gap-4 min-h-0">
-      <div className="flex-shrink-0 flex items-center justify-between flex-wrap gap-4">
-         <h1 className="text-2xl font-bold text-slate-900">予約カレンダー</h1>
-         <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm text-slate-600">
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-600"></span>確定</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-amber-600"></span>仮予約</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-600"></span>キャンセル</span>
-            </div>
-            <button
-              onClick={() => {
-                setEditingReservation(null);
-                setCustomersForModal([]);
-                setReservationMode('edit');
-                setModalOpen(true);
-              }}
-              className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-xl hover:from-blue-600 hover:to-indigo-700 transition shadow-sm"
-            >
-              <Plus className="w-5 h-5" />
-              <span>新規予約</span>
+    <div className="container-fluid p-0">
+      {/* ヘッダー */}
+      <div className="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+        <h1 className="h4 fw-bold mb-0">予約カレンダー</h1>
+        <div className="d-flex align-items-center gap-3 flex-wrap">
+          <div className="d-flex align-items-center gap-2">
+            <span className="badge bg-primary px-2 py-1" style={{ fontSize: '0.82rem' }}>確定</span>
+            <span className="badge bg-warning text-dark px-2 py-1" style={{ fontSize: '0.82rem' }}>仮予約</span>
+            <span className="badge bg-danger px-2 py-1" style={{ fontSize: '0.82rem' }}>キャンセル</span>
+            <span className="badge bg-success px-2 py-1" style={{ fontSize: '0.82rem' }}>完了</span>
+          </div>
+          <div className="btn-group">
+            <button type="button" className="btn btn-outline-secondary px-3" onClick={prevMonth} aria-label="前月">
+              <ChevronLeft size={18} />
             </button>
-         </div>
+            <button type="button" className="btn btn-outline-secondary px-3 fw-semibold" onClick={goToday}>
+              今日
+            </button>
+            <button type="button" className="btn btn-outline-secondary px-3" onClick={nextMonth} aria-label="次月">
+              <ChevronRight size={18} />
+            </button>
+          </div>
+          <span className="fw-bold fs-5">{year}年{month + 1}月</span>
+          <button
+            type="button"
+            className="btn btn-primary d-flex align-items-center gap-1 px-3"
+            onClick={() => {
+              setEditingReservation(null);
+              setCustomersForModal([]);
+              setReservationMode('edit');
+              setModalOpen(true);
+            }}
+          >
+            <Plus size={18} />
+            新規予約
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 min-h-0 bg-white rounded-2xl shadow-sm p-4 overflow-hidden calendar-compact-wrapper relative">
+      {/* カレンダー本体 */}
+      <div className="position-relative">
         {detailLoading && (
-          <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10 rounded-2xl">
-            <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent"></div>
+          <div className="position-absolute top-0 start-0 end-0 bottom-0 d-flex align-items-center justify-content-center bg-white bg-opacity-75 rounded z-2" style={{ zIndex: 10 }}>
+            <div className="spinner-border text-primary" role="status">
+              <span className="visually-hidden">読み込み中</span>
+            </div>
           </div>
         )}
-        <MemoizedCalendar
-          events={events}
-          date={date}
-          onNavigate={setDate}
-          eventPropGetter={eventPropGetter}
-          onSelectEvent={handleSelectEvent}
-        />
+
+        <div className="card shadow-sm">
+          <div className="card-body p-0">
+            <div className="table-responsive">
+              <table className="table table-bordered mb-0" style={{ tableLayout: 'fixed', width: '100%' }}>
+                <thead className="table-light">
+                  <tr>
+                    {WEEKDAYS_JA.map((day, idx) => (
+                      <th
+                        key={day}
+                        className="text-center py-2 fw-bold"
+                        style={{
+                          width: '14.28%',
+                          fontSize: '1rem',
+                          color: idx === 0 ? '#dc3545' : idx === 6 ? '#0d6efd' : undefined,
+                        }}
+                      >
+                        {day}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthGrid.map((row, rowIdx) => (
+                    <tr key={rowIdx} style={{ height: '130px' }}>
+                      {row.map((cellDate, colIdx) => {
+                        const key = cellDate ? cellDate.toISOString().slice(0, 10) : `empty-${rowIdx}-${colIdx}`;
+                        const events = cellDate ? (eventsByDate[key] || []) : [];
+                        const isToday = cellDate && new Date().toDateString() === cellDate.toDateString();
+                        const dow = cellDate?.getDay();
+                        return (
+                          <td
+                            key={key}
+                            className="p-1 align-top"
+                            style={{
+                              verticalAlign: 'top',
+                              backgroundColor: !cellDate ? '#f8f9fa' : undefined,
+                            }}
+                          >
+                            {cellDate && (
+                              <>
+                                <div className="mb-1 d-flex justify-content-between align-items-center px-1">
+                                  <span
+                                    className={isToday ? 'badge bg-primary rounded-circle' : ''}
+                                    style={{
+                                      fontSize: '1rem',
+                                      fontWeight: 600,
+                                      color: isToday ? undefined : dow === 0 ? '#dc3545' : dow === 6 ? '#0d6efd' : '#212529',
+                                      width: isToday ? '28px' : undefined,
+                                      height: isToday ? '28px' : undefined,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                    }}
+                                  >
+                                    {cellDate.getDate()}
+                                  </span>
+                                  {events.length > 0 && (
+                                    <small className="text-muted" style={{ fontSize: '0.7rem' }}>
+                                      {events.length}件
+                                    </small>
+                                  )}
+                                </div>
+                                <div className="d-flex flex-column gap-1">
+                                  {events.map((ev: any) => (
+                                    <button
+                                      key={ev.id}
+                                      type="button"
+                                      className={`badge ${getStatusBadgeClass(ev.status)} border-0 text-start w-100 text-truncate`}
+                                      style={{
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        padding: '4px 6px',
+                                        lineHeight: 1.4,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                      }}
+                                      onClick={() => handleSelectEvent(ev)}
+                                      title={ev.title}
+                                    >
+                                      {ev.title}
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
 
       {modalOpen && (
@@ -286,9 +357,9 @@ export function CalendarPage({ userRole }: { userRole: string }) {
           customers={customersForModal}
           menuItems={menuItems}
           onSave={() => {
-             setWorkOrderModalOpen(false);
-             setEditingWorkOrder(null);
-             loadCalendarData();
+            setWorkOrderModalOpen(false);
+            setEditingWorkOrder(null);
+            loadCalendarData();
           }}
           onClose={() => {
             setWorkOrderModalOpen(false);

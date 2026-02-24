@@ -11,10 +11,51 @@ const app = new Hono();
 
 const JWT_SECRET = Deno.env.get('JWT_SECRET') || '';
 const SALT_ROUNDS = 10;
-const JWT_EXPIRY = '7d';
+// セキュリティ: 有効期限は短めに。環境変数 JWT_EXPIRY で上書き可能（例: 30m, 1h）。デフォルト 30 分
+const JWT_EXPIRY = Deno.env.get('JWT_EXPIRY') || '30m';
 
 app.use('*', cors());
 app.use('*', logger(console.log));
+
+// ========== In-memory cache (TTL 5 min) ==========
+interface CacheEntry<T> { data: T; expiresAt: number; }
+const cache = new Map<string, CacheEntry<unknown>>();
+const CACHE_TTL = 5 * 60 * 1000; // 5分
+
+function cacheGet<T>(key: string): T | null {
+  const entry = cache.get(key) as CacheEntry<T> | undefined;
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { cache.delete(key); return null; }
+  return entry.data;
+}
+function cacheSet<T>(key: string, data: T): void {
+  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+}
+function cacheInvalidate(...keys: string[]): void {
+  keys.forEach(k => cache.delete(k));
+}
+
+async function getCachedLocations() {
+  const cached = cacheGet<Record<string, unknown>[]>('locations');
+  if (cached) return cached;
+  const data = await db.getLocations();
+  cacheSet('locations', data);
+  return data;
+}
+async function getCachedMenuItems() {
+  const cached = cacheGet<Record<string, unknown>[]>('menu_items');
+  if (cached) return cached;
+  const data = await db.getMenuItems();
+  cacheSet('menu_items', data);
+  return data;
+}
+async function getCachedUsers() {
+  const cached = cacheGet<Record<string, unknown>[]>('users');
+  if (cached) return cached;
+  const data = await db.getAppUsers();
+  cacheSet('users', data);
+  return data;
+}
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -71,14 +112,13 @@ async function getUserRole(userId: string) {
 
 // ========== Auth Routes ==========
 
-// Login with login_id（全件探索なし: user_login のみ。password_hash があれば Edge 内検証＋自前 JWT で Supabase Auth 呼び出しを回避）
+// Login with login_id（password_hash + bcrypt のみ。自前 JWT 発行。Supabase Auth は呼ばない）
 app.post('/make-server-fe84bde0/login', async (c) => {
   const t0 = Date.now();
   try {
     const body = await c.req.json();
     const { login_id, password } = body;
 
-    // Find user by login_id (db)
     const user = await db.getAppUserByLoginId(login_id);
     const tUser = Date.now();
 
@@ -91,46 +131,45 @@ app.post('/make-server-fe84bde0/login', async (c) => {
       return c.json({ error: 'このアカウントは無効です' }, 403);
     }
 
-    let accessToken: string;
-    if (user.password_hash && JWT_SECRET) {
-      const ok = await bcrypt.compare(password, user.password_hash);
-      if (!ok) {
-        console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${Date.now() - tUser} totalMs=${Date.now() - t0} result=wrong_password`);
-        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
-      }
-      const secret = new TextEncoder().encode(JWT_SECRET);
-      accessToken = await new jose.SignJWT({ email: user.email })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setSubject(user.user_id)
-        .setIssuedAt()
-        .setExpirationTime(JWT_EXPIRY)
-        .sign(secret);
-    } else {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: user.email,
-        password,
-      });
-      if (error) {
-        console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${Date.now() - tUser} totalMs=${Date.now() - t0} result=supabase_auth_fail`);
-        console.log(`Login authentication error: ${error.message}`);
-        return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
-      }
-      accessToken = data.session.access_token;
+    // A のみ: password_hash が必須。未設定の場合はログイン不可（Supabase Auth フォールバックは廃止）
+    if (!user.password_hash) {
+      console.log(`[Perf] POST /login userLookupMs=${tUser - t0} totalMs=${Date.now() - t0} result=password_not_set`);
+      return c.json({ error: 'このアカウントはパスワードが未設定です。管理者にパスワード設定を依頼してください。' }, 403);
     }
-    const tAuth = Date.now();
+    if (!JWT_SECRET) {
+      console.log(`[Perf] POST /login JWT_SECRET not configured`);
+      return c.json({ error: '認証の設定が完了していません。管理者に連絡してください。' }, 503);
+    }
 
-    try {
-      const updatedUser = {
-        ...user,
-        last_login_at: new Date().toISOString(),
-      };
-      await db.upsertAppUser(updatedUser);
-    } catch (updateError) {
+    const ok = await bcrypt.compare(password, user.password_hash);
+    const tBcrypt = Date.now();
+    if (!ok) {
+      console.log(`[Perf] POST /login userLookupMs=${tUser - t0} bcryptMs=${tBcrypt - tUser} totalMs=${Date.now() - t0} result=wrong_password`);
+      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
+    }
+
+    const secret = new TextEncoder().encode(JWT_SECRET);
+    const accessToken = await new jose.SignJWT({ email: user.email })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(user.user_id)
+      .setIssuedAt()
+      .setExpirationTime(JWT_EXPIRY)
+      .sign(secret);
+    const tJwt = Date.now();
+
+    // 認証成功後は即座にトークンを返し、last_login_at 更新は非同期で実行（応答を遅らせない）
+    db.upsertAppUser({
+      ...user,
+      last_login_at: new Date().toISOString(),
+    }).catch((updateError) => {
       console.log(`Failed to update last login time: ${updateError}`);
-    }
+    });
     const tEnd = Date.now();
-    console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${tAuth - tUser} updateMs=${tEnd - tAuth} totalMs=${tEnd - t0} result=success`);
-
+    const userLookupMs = tUser - t0;
+    const bcryptMs = tBcrypt - tUser;
+    const jwtMs = tJwt - tBcrypt;
+    const totalMs = tEnd - t0;
+    console.log(`[Perf] POST /login userLookupMs=${userLookupMs} bcryptMs=${bcryptMs} jwtMs=${jwtMs} totalMs=${totalMs} result=success`);
     return c.json({
       success: true,
       access_token: accessToken,
@@ -540,6 +579,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
     }
 
     await db.upsertAppUser(updatedUser);
+    cacheInvalidate('users');
     return c.json({ success: true, user: sanitizeUserForResponse(updatedUser) });
   } catch (error) {
     console.log(`Update user error: ${error}`);
@@ -640,6 +680,7 @@ app.post('/make-server-fe84bde0/locations', async (c) => {
     };
 
     await db.upsertLocation(locationData);
+    cacheInvalidate('locations');
     return c.json({ success: true, location: locationData });
   } catch (error) {
     console.log(`Create/Update location error: ${error}`);
@@ -923,42 +964,51 @@ app.post('/make-server-fe84bde0/customers/batch-fix-age', async (c) => {
 
 // ========== Reservations ==========
 
-/** 指定した予約リストに対して、不足している制作物を自動作成する（GET内で呼び、通信1回で済ませる用） */
+/** 指定した予約リストに対して、不足している制作物を自動作成する（N+1解消版） */
 async function ensureWorkOrdersForReservations(
   reservations: Record<string, unknown>[],
   user: { id: string }
 ): Promise<void> {
   if (reservations.length === 0) return;
-  const workOrders = await db.getWorkOrders();
-  const menuItems = await db.getMenuItems();
+
+  const now = new Date();
+  const japanNow = new Date(now.getTime() + (9 * 60 - now.getTimezoneOffset()) * 60000);
+
+  // 確定済みかつ過去の予約だけに絞る
+  const targetReservations = reservations.filter((r: any) => {
+    if (r.status !== 'confirmed') return false;
+    return new Date(r.reservation_date_time as string) < japanNow;
+  });
+  if (targetReservations.length === 0) return;
+
+  const reservationIds = targetReservations.map((r: any) => r.reservation_id as string);
+
+  // 全件ではなく対象予約IDだけで work_orders を検索（N+1解消）
+  const [existingWOs, menuItems] = await Promise.all([
+    db.getWorkOrdersByReservationIds(reservationIds),
+    getCachedMenuItems(),
+  ]);
+
+  const existingSet = new Set(existingWOs.map(wo => wo.reservation_id));
   const menuById = new Map<string, { name?: string }>();
   for (const m of menuItems as { menu_item_id: string; name?: string }[]) {
     menuById.set(m.menu_item_id, m);
   }
-  const getJapanNow = () => {
-    const now = new Date();
-    const jstOffset = 9 * 60;
-    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    return new Date(utc + (jstOffset * 60000));
-  };
-  const japanNow = getJapanNow();
 
-  for (const reservation of reservations) {
-    if (reservation.status !== 'confirmed') continue;
-    const reservationDate = new Date(reservation.reservation_date_time as string);
-    if (reservationDate >= japanNow) continue;
-    const existingWorkOrder = workOrders.find((wo: any) => wo.reservation_id === reservation.reservation_id);
-    if (existingWorkOrder) continue;
+  const toCreate = targetReservations.filter((r: any) => !existingSet.has(r.reservation_id as string));
+  if (toCreate.length === 0) return;
 
+  // 並列で一括作成
+  await Promise.all(toCreate.map((reservation: any) => {
     const workRequired = (reservation.work_required as string)?.trim();
     const productType = workRequired
       ? workRequired
       : (menuById.get(reservation.menu_item_id as string)?.name) || 'メニュー不明';
-    const workOrderId = crypto.randomUUID();
+    const reservationDate = new Date(reservation.reservation_date_time as string);
     const dueDate = new Date(reservationDate);
     dueDate.setDate(dueDate.getDate() + 28);
-    const workOrderData = {
-      work_order_id: workOrderId,
+    return db.upsertWorkOrder({
+      work_order_id: crypto.randomUUID(),
       reservation_id: reservation.reservation_id,
       product_type: productType,
       status: '制作中',
@@ -969,10 +1019,8 @@ async function ensureWorkOrdersForReservations(
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       updated_by_user_id: user.id,
-    };
-    await db.upsertWorkOrder(workOrderData);
-    workOrders.push(workOrderData as any);
-  }
+    });
+  }));
 }
 
 // Get reservations（optional: ?month=YYYY-MM or ?start=YYYY-MM-DD&end=YYYY-MM-DD で範囲指定）
@@ -989,6 +1037,14 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
     const month = c.req.query('month');
     const start = c.req.query('start');
     const end = c.req.query('end');
+    const customerIds = c.req.query('customer_ids');
+
+    // 顧客IDリスト指定（顧客ページ用。全件取得を避ける）
+    if (customerIds) {
+      const ids = customerIds.split(',').filter(Boolean);
+      const reservations = await db.getReservationsByCustomerIds(ids);
+      return c.json({ reservations });
+    }
 
     let reservations: Record<string, unknown>[];
     if (month) {
@@ -1033,6 +1089,72 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
     return c.json({ error: String(error) }, 500);
   }
 });
+
+// ========== カレンダー専用 API（1リクエストで全データを返す） ==========
+const calendarHandler = async (c: any) => {
+  const t0 = Date.now();
+  try {
+    const user = await getAuthUser(c.req.raw);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const tAuth = Date.now();
+
+    const month = c.req.query('month');
+    if (!month) return c.json({ error: 'month parameter is required (YYYY-MM)' }, 400);
+
+    const [y, m] = month.split('-').map(Number);
+    const startDate = new Date(y, m - 1, 1, 0, 0, 0, 0);
+    const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+
+    const [reservationsRaw, locations, menuItems, allUsers] = await Promise.all([
+      db.getReservationsByDateRange(startDate, endDate),
+      getCachedLocations(),
+      getCachedMenuItems(),
+      getCachedUsers(),
+    ]);
+    const tFetch = Date.now();
+
+    await ensureWorkOrdersForReservations(reservationsRaw, user);
+    const tEnsure = Date.now();
+
+    let reservations: Record<string, unknown>[] = reservationsRaw;
+    if (reservationsRaw.length > 0) {
+      const customerIds = [...new Set(reservationsRaw.map((r: any) => r.customer_id).filter(Boolean))];
+      const customers = await db.getCustomersByIds(customerIds as string[]);
+      const customerMap = Object.fromEntries((customers as any[]).map((c: any) => [c.customer_id, c]));
+      reservations = reservationsRaw.map((r: any) => {
+        const cust = customerMap[r.customer_id];
+        return {
+          ...r,
+          customer_name: cust ? (cust.child_name || cust.parent_name || '名称未設定') : '顧客不明',
+          external_customer_number: cust?.external_customer_number ?? '',
+        };
+      });
+    }
+
+    const currentAppUser = (allUsers as any[]).find((u: any) => u.user_id === user.id);
+    const role = currentAppUser?.role || null;
+    const users = role !== 'admin'
+      ? (allUsers as any[]).filter((u: any) => u.active_flag !== false).map((u: any) => ({
+          user_id: u.user_id, login_id: u.login_id, name: u.name, role: u.role,
+        }))
+      : (allUsers as any[]).filter((u: any) => u.active_flag !== false);
+
+    const tEnd = Date.now();
+    console.log(`[Perf] GET /calendar month=${month} authMs=${tAuth - t0} fetchMs=${tFetch - tAuth} ensureMs=${tEnsure - tFetch} enrichMs=${tEnd - tEnsure} totalMs=${tEnd - t0}`);
+
+    return c.json({
+      reservations,
+      locations: (locations as any[]).filter((l: any) => l.active_flag !== false),
+      menu_items: menuItems,
+      users,
+    });
+  } catch (error) {
+    console.log(`Get calendar error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+};
+app.get('/make-server-fe84bde0/calendar', calendarHandler);
+app.get('/calendar', calendarHandler);
 
 // 予約1件の詳細取得（モーダル用：顧客・場所・メニュー含む）
 app.get('/make-server-fe84bde0/reservations/:id', async (c) => {
@@ -1143,11 +1265,9 @@ app.post('/make-server-fe84bde0/reservations', async (c) => {
 
     // Auto-create work order if status is confirmed and work_required is set
     if (status === 'confirmed' && work_required && work_required.trim() !== '') {
-      // Check if work order already exists for this reservation
-      const existingWorkOrders = await db.getWorkOrders();
-      const existingWorkOrder = existingWorkOrders.find((wo: any) => wo.reservation_id === reservationId);
-
-      if (!existingWorkOrder) {
+      // Check if work order already exists for this reservation (条件付き取得で当該予約のみ)
+      const existingForReservation = await db.getWorkOrdersByReservationIds([reservationId]);
+      if (existingForReservation.length === 0) {
         // Create work order automatically
         const workOrderId = crypto.randomUUID();
         
@@ -1352,6 +1472,13 @@ app.get('/make-server-fe84bde0/work-orders', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
+    const reservationIds = c.req.query('reservation_ids');
+    if (reservationIds) {
+      const ids = reservationIds.split(',').filter(Boolean);
+      const workOrders = await db.getWorkOrdersByReservationIdsAll(ids);
+      return c.json({ work_orders: workOrders });
+    }
+
     let workOrders = await db.getWorkOrders();
     const month = c.req.query('month');
     if (month) {
@@ -1404,11 +1531,9 @@ app.post('/make-server-fe84bde0/work-orders', async (c) => {
 
     // Check for duplicate work orders for the same reservation and product type (only for new work orders)
     if (!work_order_id && reservation_id) {
-      const allWorkOrders = await db.getWorkOrders();
-      const duplicateExists = allWorkOrders.some((wo: any) => 
-        wo.reservation_id === reservation_id && 
-        wo.product_type === product_type &&
-        wo.work_order_id !== workOrderId
+      const workOrdersForReservation = await db.getWorkOrdersByReservationIdsAll([reservation_id]);
+      const duplicateExists = workOrdersForReservation.some((wo: any) =>
+        wo.product_type === product_type && wo.work_order_id !== workOrderId
       );
       
       if (duplicateExists) {
@@ -2142,6 +2267,7 @@ app.post('/make-server-fe84bde0/menu-items', async (c) => {
     };
 
     await db.upsertMenuItem(menuItemData);
+    cacheInvalidate('menu_items');
 
     // 新規作成時のみ、全店舗にデフォルトで追加
     if (!menu_item_id) {
@@ -2192,6 +2318,7 @@ app.delete('/make-server-fe84bde0/menu-items/:id', async (c) => {
     const menuItem = await db.getMenuItem(menuItemId);
 
     await db.deleteMenuItem(menuItemId);
+    cacheInvalidate('menu_items');
 
     // Audit log
     await db.insertAuditLog({
@@ -2362,200 +2489,6 @@ app.get('/make-server-fe84bde0/staff', async (c) => {
     return c.json({ staff: activeUsers });
   } catch (error) {
     console.log(`Get staff error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// ========== Dashboard ==========
-
-// Get dashboard data (optional ?with_lists=1 returns reservations, customers, locations, users, menu_items in one response)
-app.get('/make-server-fe84bde0/dashboard', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const withLists = c.req.query('with_lists') === '1';
-    const role = await getUserRole(user.id);
-
-    const [workOrders, reservations, customers, menuItems] = await Promise.all([
-      db.getWorkOrders(),
-      db.getReservations(),
-      db.getCustomers({ activeOnly: false }),
-      db.getMenuItems(),
-    ]);
-
-    // Get current time in JST (Asia/Tokyo)
-    const getJapanNow = () => {
-      const now = new Date();
-      const jstOffset = 9 * 60; // JST is UTC+9
-      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      return new Date(utc + (jstOffset * 60000));
-    };
-    const japanNow = getJapanNow();
-
-    // Filter non-delivered work orders AND only those where reservation date has passed
-    const activeWorkOrders = workOrders.filter((wo: any) => {
-      if (wo.status === '引渡し済') return false;
-      
-      // Check if reservation date has passed (for confirmed reservations)
-      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-      if (!reservation) return true; // Keep if no reservation found
-      
-      // Only filter confirmed reservations
-      if (reservation.status !== 'confirmed') return true;
-      
-      // Check if reservation date has passed
-      const reservationDate = new Date(reservation.reservation_date_time);
-      return reservationDate < japanNow;
-    });
-
-    // Sort by priority
-    const sortedWorkOrders = activeWorkOrders.sort((a: any, b: any) => {
-      // First by priority_order (if set)
-      if (a.priority_order !== null && b.priority_order !== null) {
-        return a.priority_order - b.priority_order;
-      }
-      if (a.priority_order !== null) return -1;
-      if (b.priority_order !== null) return 1;
-
-      // Then by due_date
-      const aDate = new Date(a.due_date);
-      const bDate = new Date(b.due_date);
-      if (aDate < bDate) return -1;
-      if (aDate > bDate) return 1;
-
-      // Then by reservation date
-      const aReservation = reservations.find((r: any) => r.reservation_id === a.reservation_id);
-      const bReservation = reservations.find((r: any) => r.reservation_id === b.reservation_id);
-      if (aReservation && bReservation) {
-        const aResDate = new Date(aReservation.reservation_date_time);
-        const bResDate = new Date(bReservation.reservation_date_time);
-        return aResDate.getTime() - bResDate.getTime();
-      }
-
-      return 0;
-    });
-
-    // Top 5 priority work orders
-    const topWorkOrders = sortedWorkOrders.slice(0, 5).map((wo: any) => {
-      const reservation = reservations.find((r: any) => r.reservation_id === wo.reservation_id);
-      const customer = customers.find((c: any) => c.customer_id === reservation?.customer_id);
-      return {
-        ...wo,
-        reservation,
-        customer,
-      };
-    });
-
-    // Today's reservations (in Japan timezone)
-    const getJapanDateString = (date: Date) => {
-      return new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
-        .toISOString()
-        .slice(0, 10);
-    };
-    
-    const today = getJapanDateString(new Date());
-    const todayReservations = reservations.filter((r: any) => {
-      const resDate = getJapanDateString(new Date(r.reservation_date_time));
-      return resDate === today;
-    }).map((r: any) => {
-      const customer = customers.find((c: any) => c.customer_id === r.customer_id);
-      return { ...r, customer };
-    });
-
-    // Tentative reservations
-    const tentativeReservations = reservations.filter((r: any) => 
-      r.status === 'tentative'
-    ).map((r: any) => {
-      const customer = customers.find((c: any) => c.customer_id === r.customer_id);
-      return { ...r, customer };
-    });
-
-    // Calculate statistics
-    const stats = {
-      total_customers: customers.length,
-      active_work_orders: activeWorkOrders.length,
-      upcoming_reservations: reservations.filter((r: any) => {
-        const resDate = new Date(r.reservation_date_time);
-        const now = new Date();
-        return resDate > now && r.status === 'confirmed';
-      }).length,
-    };
-
-    // Get recent week sales data (last 7 days) — menuItems already fetched above
-    const weekSalesData = [];
-    
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = getJapanDateString(date);
-      
-      const dayReservations = reservations.filter((r: any) => {
-        const resDate = getJapanDateString(new Date(r.reservation_date_time));
-        return resDate === dateStr && r.status !== 'cancelled' && r.status !== 'rescheduled';
-      });
-      
-      let revenue = 0;
-      for (const res of dayReservations) {
-        const menuItem = menuItems.find((m: any) => m.menu_item_id === res.menu_item_id);
-        if (menuItem) {
-          revenue += menuItem.base_price + (res.additional_units || 0) * menuItem.additional_unit_price;
-        }
-      }
-      
-      weekSalesData.push({
-        date: dateStr,
-        revenue,
-        count: dayReservations.length,
-      });
-    }
-
-    // Overdue work orders (from already filtered activeWorkOrders)
-    const overdueWorkOrders = activeWorkOrders.filter((wo: any) => {
-      const dueDate = new Date(wo.due_date);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      dueDate.setHours(0, 0, 0, 0);
-      return dueDate < today;
-    }).length;
-
-    const payload: any = {
-      top_work_orders: topWorkOrders,
-      today_reservations: todayReservations,
-      tentative_reservations: tentativeReservations,
-      stats,
-      week_sales: weekSalesData,
-      overdue_work_orders: overdueWorkOrders,
-    };
-    if (withLists) {
-      const month = c.req.query('month');
-      let listReservations = reservations;
-      if (month) {
-        const [y, m] = month.split('-').map(Number);
-        const startDate = new Date(y, m - 1, 1);
-        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
-        listReservations = reservations.filter((r: any) => {
-          const d = new Date(r.reservation_date_time);
-          return d >= startDate && d <= endDate;
-        });
-      }
-      const locationsList = await db.getLocations();
-      const locations = locationsList.filter((l: any) => l.active_flag !== false);
-      const allUsers = (await db.getAppUsers()).filter((u: any) => u.active_flag !== false);
-      const users = role !== 'admin'
-        ? allUsers.map((u: any) => ({ user_id: u.user_id, login_id: u.login_id, name: u.name, role: u.role }))
-        : allUsers;
-      payload.reservations = listReservations;
-      payload.customers = customers;
-      payload.locations = locations;
-      payload.users = users;
-      payload.menu_items = menuItems;
-    }
-    return c.json(payload);
-  } catch (error) {
-    console.log(`Get dashboard data error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -2904,14 +2837,14 @@ app.put('/make-server-fe84bde0/reservation-settings', async (c) => {
 
 // ========== Public API (認証不要) ==========
 
-// Health check endpoint (public)
-app.get('/make-server-fe84bde0/public/health', async (c) => {
-  return c.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    message: 'Public API is working'
-  });
+// Health check endpoint (public) — プレフィックスあり・なしの両方で登録（Supabase 本番の path に合わせる）
+const publicHealthHandler = (c: any) => c.json({
+  status: 'ok',
+  timestamp: new Date().toISOString(),
+  message: 'Public API is working',
 });
+app.get('/make-server-fe84bde0/public/health', publicHealthHandler);
+app.get('/public/health', publicHealthHandler);
 
 // Get menu items (public) - optionally filter by location
 app.get('/make-server-fe84bde0/public/menu-items', async (c) => {
@@ -3763,92 +3696,6 @@ app.post('/make-server-fe84bde0/location-availability', async (c) => {
     });
   } catch (error) {
     console.log(`Save location availability error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// ========== Shift Management ==========
-
-// Get shifts by month
-app.get('/make-server-fe84bde0/shifts', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    
-    // year_month format: YYYY-MM
-    const yearMonth = c.req.query('year_month');
-    if (!yearMonth) {
-       return c.json({ error: 'year_month is required' }, 400);
-    }
-
-    // Key format: shift:YYYY-MM-DD:staff_id
-    // Prefix search with 'shift:YYYY-MM' works to get all shifts for that month
-    const shifts = await db.getShiftsByYearMonth(yearMonth);
-    return c.json({ shifts });
-  } catch (error) {
-    console.log(`Get shifts error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Create/Update shift
-app.post('/make-server-fe84bde0/shifts', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const body = await c.req.json();
-    const { staff_id, date, shift_type, start_time, end_time, notes } = body;
-
-    if (!staff_id || !date) {
-      return c.json({ error: 'staff_id and date are required' }, 400);
-    }
-
-    const key = `shift:${date}:${staff_id}`;
-    const shiftData = {
-      shift_id: key, // Use key as ID
-      staff_id,
-      date,
-      shift_type: shift_type || 'work',
-      start_time,
-      end_time,
-      notes,
-      updated_at: new Date().toISOString(),
-      updated_by: user.id
-    };
-
-    await db.upsertShift(shiftData);
-    return c.json({ success: true, shift: shiftData });
-  } catch (error) {
-    console.log(`Save shift error: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Delete shift
-app.delete('/make-server-fe84bde0/shifts', async (c) => {
-  try {
-    const user = await getAuthUser(c.req.raw);
-    if (!user) {
-       return c.json({ error: 'Unauthorized' }, 401);
-    }
-    
-    const staffId = c.req.query('staff_id');
-    const date = c.req.query('date');
-    
-    if (!staffId || !date) {
-       return c.json({ error: 'staff_id and date are required' }, 400);
-    }
-    
-    await db.deleteShift(staffId, date);
-    
-    return c.json({ success: true });
-  } catch (error) {
-    console.log(`Delete shift error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });

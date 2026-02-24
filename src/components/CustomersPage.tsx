@@ -63,55 +63,53 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
         params.append('search', searchTerm);
       }
 
-      // すべてのデータを並列取得（Promise.allSettledで個別エラーハンドリング）
-      const results = await Promise.allSettled([
+      // まず顧客・マスタを並列取得
+      const [customerRes, menuRes, locRes, userRes] = await Promise.allSettled([
         apiRequest(`/customers?${params.toString()}`),
-        apiRequest('/reservations'),
-        apiRequest('/work-orders'),
         apiRequest('/menu-items'),
         apiRequest('/locations'),
-        apiRequest('/users'), // スタッフ権限では限定情報のみ、403の可能性あり
+        apiRequest('/users'),
       ]);
-      
-      // 各結果を個別に処理
-      if (results[0].status === 'fulfilled') {
-        setCustomers(results[0].value.customers);
-        setTotal(results[0].value.total || 0);
-        setTotalPages(results[0].value.totalPages || 1);
+
+      if (customerRes.status === 'fulfilled') {
+        const customerData = customerRes.value.customers || [];
+        setCustomers(customerData);
+        setTotal(customerRes.value.total || 0);
+        setTotalPages(customerRes.value.totalPages || 1);
+
+        // 表示中の顧客IDだけで reservations/work-orders を取得（全件取得を回避）
+        const customerIds = customerData.map((c: any) => c.customer_id).filter(Boolean);
+        if (customerIds.length > 0) {
+          const resResult = await apiRequest<{ reservations: any[] }>(
+            `/reservations?customer_ids=${customerIds.join(',')}`
+          ).catch(() => null);
+          const fetchedReservations = resResult?.reservations || [];
+          setReservations(fetchedReservations);
+
+          const reservationIds = fetchedReservations.map((r: any) => r.reservation_id).filter(Boolean);
+          if (reservationIds.length > 0) {
+            const woResult = await apiRequest<{ work_orders: any[] }>(
+              `/work-orders?reservation_ids=${reservationIds.join(',')}`
+            ).catch(() => null);
+            setWorkOrders(woResult?.work_orders || []);
+          } else {
+            setWorkOrders([]);
+          }
+        } else {
+          setReservations([]);
+          setWorkOrders([]);
+        }
       } else {
-        console.error('Failed to load customers:', results[0].reason);
+        console.error('Failed to load customers:', customerRes.reason);
         toast.error('顧客データの読み込みに失敗しました');
       }
-      
-      if (results[1].status === 'fulfilled') {
-        setReservations(results[1].value.reservations || []);
+
+      if (menuRes.status === 'fulfilled') setMenuItems(menuRes.value.menu_items || []);
+      if (locRes.status === 'fulfilled') setLocations(locRes.value.locations || []);
+      if (userRes.status === 'fulfilled') {
+        setStaffData(userRes.value.users || []);
       } else {
-        console.error('Failed to load reservations:', results[1].reason);
-      }
-      
-      if (results[2].status === 'fulfilled') {
-        setWorkOrders(results[2].value.work_orders || []);
-      } else {
-        console.error('Failed to load work orders:', results[2].reason);
-      }
-      
-      if (results[3].status === 'fulfilled') {
-        setMenuItems(results[3].value.menu_items || []);
-      } else {
-        console.error('Failed to load menu items:', results[3].reason);
-      }
-      
-      if (results[4].status === 'fulfilled') {
-        setLocations(results[4].value.locations || []);
-      } else {
-        console.error('Failed to load locations:', results[4].reason);
-      }
-      
-      if (results[5].status === 'fulfilled') {
-        setStaffData(results[5].value.users || []);
-      } else {
-        console.error('Failed to load users:', results[5].reason);
-        setStaffData([]); // 403エラー時は空配列で継続
+        setStaffData([]);
       }
     } catch (err: any) {
       console.error('Load data error:', err);
@@ -328,94 +326,122 @@ export function CustomersPage({ userRole }: CustomersPageProps) {
         </div>
       </div>
 
-      {/* Customers Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {customers.length === 0 ? (
-          <div className="col-span-full bg-white rounded-2xl p-8 text-center text-slate-500">
-            {searchTerm ? '検索条件に一致する顧客が見つかりません' : '顧客が登録されていません'}
-          </div>
-        ) : (
-          customers.map((customer) => {
-            const customerReservations = getCustomerReservations(customer.customer_id);
-            const isExpanded = expandedCustomers.has(customer.customer_id);
-            
-            const customerWorkOrders = getCustomerWorkOrders(customer.customer_id);
-            
-            return (
-              <div
-                key={customer.customer_id}
-                className="bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition overflow-hidden"
-              >
-                <div 
-                  className="p-6 cursor-pointer"
-                  onClick={() => {
-                    setEditingCustomer(customer);
-                    setModalOpen(true);
-                  }}
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex-1">
-                      {customer.external_customer_number && (
-                        <div className="text-sm text-blue-600 mb-1">顧客番号: {customer.external_customer_number}</div>
-                      )}
-                      <h3 className="text-slate-900 mb-1">
-                        {customer.parent_name || '保護者名未設定'}
-                        {customer.parent_name_kana && (
-                          <span className="text-sm text-slate-500 ml-2">({customer.parent_name_kana})</span>
+      {/* Customers Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">顧客番号</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">保護者名</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">フリガナ</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">お子さま</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">年齢</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">電話</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">予約</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap">制作物</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-medium whitespace-nowrap min-w-[120px]">メモ</th>
+                <th className="px-3 py-2 text-slate-600 font-medium whitespace-nowrap">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {customers.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                    {searchTerm ? '検索条件に一致する顧客が見つかりません' : '顧客が登録されていません'}
+                  </td>
+                </tr>
+              ) : (
+                customers.map((customer, idx) => {
+                  const customerReservations = getCustomerReservations(customer.customer_id);
+                  const customerWorkOrders = getCustomerWorkOrders(customer.customer_id);
+                  const childDisplay = customer.children && customer.children.length > 0
+                    ? customer.children.map((c: any) => c.name).filter(Boolean).join('、')
+                    : customer.child_name || '-';
+                  const childKana = customer.children && customer.children.length > 0
+                    ? customer.children.map((c: any) => c.name_kana).filter(Boolean).join('、')
+                    : customer.child_name_kana || '';
+                  return (
+                    <tr
+                      key={customer.customer_id}
+                      className={`border-b border-slate-100 hover:bg-blue-50 transition cursor-pointer ${idx % 2 === 0 ? '' : 'bg-slate-50/50'}`}
+                      onClick={() => { setEditingCustomer(customer); setModalOpen(true); }}
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className="text-xs text-blue-600 font-medium">
+                          {customer.external_customer_number || customer.customer_code || '-'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap font-medium text-slate-800">
+                        {customer.parent_name || '未設定'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-500">
+                        {customer.parent_name_kana || '-'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="text-slate-800">{childDisplay}</div>
+                        {childKana && <div className="text-xs text-slate-400">{childKana}</div>}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-700">
+                        {getAgeDisplay(customer) || '-'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-700">
+                        {customer.phone || '-'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-center">
+                        {customerReservations.length > 0 ? (
+                          <span className="inline-block bg-blue-100 text-blue-700 text-xs font-medium px-2 py-0.5 rounded-full">
+                            {customerReservations.length}件
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">-</span>
                         )}
-                      </h3>
-                      <p className="text-slate-600 text-sm mb-1">
-                        お子さま: {
-                          customer.children && customer.children.length > 0
-                            ? customer.children.map((c: any) => c.name + (c.name_kana ? ` (${c.name_kana})` : '')).join('、')
-                            : (customer.child_name || '-') + (customer.child_name_kana ? ` (${customer.child_name_kana})` : '')
-                        }
-                      </p>
-                      {getAgeDisplay(customer) && (
-                        <p className="text-slate-600 text-sm">
-                          年齢: {getAgeDisplay(customer)}
-                        </p>
-                      )}
-                    </div>
-                    {userRole === 'admin' && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteCustomer(customer);
-                        }}
-                        className="p-2 hover:bg-red-50 rounded-lg transition text-red-600 shrink-0"
-                        title="顧客を削除"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 text-sm text-slate-700">
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-500">電話:</span>
-                      <span>{customer.phone || '-'}</span>
-                    </div>
-                    {customer.address_text && (
-                      <div className="flex items-start gap-2">
-                        <span className="text-slate-500 shrink-0">住所:</span>
-                        <span className="break-words">{customer.address_text}</span>
-                      </div>
-                    )}
-                    {customer.notes_internal && (
-                      <div className="mt-3 pt-3 border-t border-slate-200">
-                        <span className="text-slate-500">メモ: </span>
-                        <span className="text-slate-600">{customer.notes_internal}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-
-              </div>
-            );
-          })
-        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-center">
+                        {customerWorkOrders.length > 0 ? (
+                          <span className="inline-block bg-emerald-100 text-emerald-700 text-xs font-medium px-2 py-0.5 rounded-full">
+                            {customerWorkOrders.length}件
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 max-w-[160px]">
+                        {customer.notes_internal ? (
+                          <span className="text-xs text-slate-600 line-clamp-2" title={customer.notes_internal}>
+                            {customer.notes_internal.slice(0, 40)}{customer.notes_internal.length > 40 ? '…' : ''}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 text-xs">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-center" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            className="p-1.5 rounded hover:bg-blue-100 text-blue-600 transition"
+                            title="編集"
+                            onClick={() => { setEditingCustomer(customer); setModalOpen(true); }}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          {userRole === 'admin' && (
+                            <button
+                              className="p-1.5 rounded hover:bg-red-100 text-red-500 transition"
+                              title="削除"
+                              onClick={() => handleDeleteCustomer(customer)}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}

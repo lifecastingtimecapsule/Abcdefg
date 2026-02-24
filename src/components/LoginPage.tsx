@@ -13,22 +13,37 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // 犯人B対策: ログイン画面表示時に Edge Function をウォームアップし、コールドスタートを先に消化する
+  // Edge Function のコールドスタートをログイン画面表示直後に消化する（最大3秒待ち）
   useEffect(() => {
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 2000);
-    fetch(`${functionsBaseUrl}/public/health`, { signal: ac.signal })
-      .catch(() => {})
-      .finally(() => clearTimeout(t));
+    const t = setTimeout(() => ac.abort(), 3000);
+    fetch(`${functionsBaseUrl}/public/health`, {
+      signal: ac.signal,
+      headers: { Authorization: `Bearer ${publicAnonKey}` },
+    }).catch(() => {}).finally(() => clearTimeout(t));
     return () => { ac.abort(); clearTimeout(t); };
   }, []);
+
+  // ログインボタンが押される前に Edge をウォーム: ログインID入力時とパスワード欄フォーカス時
+  useEffect(() => {
+    if (!loginId) return;
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 2000);
+    fetch(`${functionsBaseUrl}/public/health`, { signal: ac.signal, headers: { Authorization: `Bearer ${publicAnonKey}` } }).catch(() => {}).finally(() => clearTimeout(t));
+    return () => { ac.abort(); clearTimeout(t); };
+  }, [loginId !== '']);
+
+  const warmupOnPasswordFocus = () => {
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 3000);
+    fetch(`${functionsBaseUrl}/public/health`, { signal: ac.signal, headers: { Authorization: `Bearer ${publicAnonKey}` } }).catch(() => {});
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     const t0 = Date.now();
-
     const trimmedLoginId = loginId.trim();
 
     try {
@@ -70,8 +85,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       if (data.access_token && data.user) {
         localStorage.setItem('access_token', data.access_token);
         onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
-        const totalMs = Date.now() - t0;
-        console.log(`[LoginPerf] login totalMs=${totalMs} fetchMs=${tFetch - t0} status=${response.status} result=success`);
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=success`);
       } else {
         setError(data.error || 'アクセストークンが返されませんでした');
         console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=no_token`);
@@ -117,6 +131,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onFocus={warmupOnPasswordFocus}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 placeholder="••••••••"
                 required

@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { LayoutDashboard, Calendar, Users, Package, DollarSign, UserCog, MapPin, LogOut, Menu, X, UtensilsCrossed, TrendingUp, User as UserIcon, CalendarRange } from 'lucide-react';
+import { Calendar, Users, Package, DollarSign, UserCog, LogOut, Menu, X, UtensilsCrossed, TrendingUp, User as UserIcon } from 'lucide-react';
 import { createClient } from '../utils/supabase/client';
 import { User } from '../types';
 
@@ -30,9 +30,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
   const navSections = [
     {
       items: [
-        { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard, roles: ['admin', 'staff'] },
-        { id: 'calendar', label: 'カレンダー', icon: Calendar, roles: ['admin', 'staff'] },
-        { id: 'shifts', label: 'シフト管理', icon: CalendarRange, roles: ['admin', 'staff'] },
+        { id: 'calendar', label: '予約カレンダー', icon: Calendar, roles: ['admin', 'staff'] },
         { id: 'customers', label: '顧客管理', icon: Users, roles: ['admin', 'staff'] },
         { id: 'work-orders', label: '作品管理', icon: Package, roles: ['admin', 'staff'] },
         { id: 'sales-incentives', label: '売上・インセンティブ', icon: TrendingUp, roles: ['admin'] },
@@ -61,13 +59,17 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Mobile header */}
-      <div className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
-        <h1 className="text-slate-900">アマレット</h1>
+      <div className="lg:hidden bg-white border-b border-slate-200 px-4 py-4 flex items-center justify-between sticky top-0 z-40">
+        <div>
+          <h1 className="text-lg font-semibold text-slate-900">アマレット</h1>
+          <p className="text-xs text-slate-500 mt-0.5">予約管理システム</p>
+        </div>
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-2 hover:bg-slate-100 rounded-lg transition"
+          className="p-3 hover:bg-slate-100 rounded-lg transition touch-manipulation"
+          aria-label="メニュー"
         >
-          {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          {mobileMenuOpen ? <X className="w-7 h-7" /> : <Menu className="w-7 h-7" />}
         </button>
       </div>
 
@@ -112,7 +114,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
                           onNavigate(item.id);
                           setMobileMenuOpen(false);
                         }}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${
+                        className={`w-full flex items-center gap-4 px-4 py-4 rounded-xl transition text-left touch-manipulation ${
                           section.title ? 'pl-8' : ''
                         } ${
                           currentPage === item.id
@@ -120,8 +122,8 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
                             : 'text-slate-700 hover:bg-slate-100'
                         }`}
                       >
-                        <Icon className="w-5 h-5" />
-                        <span>{item.label}</span>
+                        <Icon className="w-6 h-6 flex-shrink-0" />
+                        <span className="text-base font-medium">{item.label}</span>
                       </button>
                     );
                   })}
@@ -130,9 +132,9 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
             ))}
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition mt-4"
+              className="w-full flex items-center gap-4 px-4 py-4 rounded-xl text-red-600 hover:bg-red-50 transition mt-4 text-base font-medium touch-manipulation"
             >
-              <LogOut className="w-5 h-5" />
+              <LogOut className="w-6 h-6 flex-shrink-0" />
               <span>ログアウト</span>
             </button>
           </nav>
@@ -142,11 +144,11 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
       {/* Desktop sidebar */}
       <aside className="hidden lg:block fixed top-0 left-0 h-full w-64 bg-white border-r border-slate-200 z-30">
         <div className="p-6 border-b border-slate-200">
-          <h1 className="text-slate-900">アマレット</h1>
-          <p className="text-slate-600 text-sm mt-1">管理システム</p>
+          <h1 className="text-lg font-semibold text-slate-900">アマレット</h1>
+          <p className="text-slate-600 text-sm mt-1">予約管理システム</p>
         </div>
 
-        <nav className="p-4 space-y-4">
+        <nav className="p-4 space-y-1">
           {filteredNavSections.map((section, sectionIndex) => (
             <div key={sectionIndex}>
               {section.title && (
@@ -161,7 +163,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
                     <button
                       key={item.id}
                       onClick={() => onNavigate(item.id)}
-                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${
+                      className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-xl transition text-left ${
                         section.title ? 'pl-8' : ''
                       } ${
                         currentPage === item.id
@@ -169,8 +171,8 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
                           : 'text-slate-700 hover:bg-slate-100'
                       }`}
                     >
-                      <Icon className="w-5 h-5" />
-                      <span>{item.label}</span>
+                      <Icon className="w-5 h-5 flex-shrink-0" />
+                      <span className="text-base">{item.label}</span>
                     </button>
                   );
                 })}
@@ -187,8 +189,8 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
                 <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full flex items-center justify-center flex-shrink-0">
                   <UserIcon className="w-5 h-5 text-white" />
                 </div>
-                <div className="overflow-hidden">
-                  <p className="text-slate-900 text-sm truncate">{currentUser.name}</p>
+                <div className="overflow-hidden min-w-0">
+                  <p className="text-slate-900 text-sm font-medium truncate">{currentUser.name}</p>
                   <p className="text-xs text-slate-600">
                     {currentUser.role === 'admin' ? '管理者' : 'スタッフ'}
                   </p>
@@ -204,9 +206,9 @@ export function Layout({ children, currentPage, onNavigate, onLogout, userRole, 
           <div className="p-4">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition"
+              className="w-full flex items-center gap-4 px-4 py-3.5 rounded-xl text-red-600 hover:bg-red-50 transition text-base"
             >
-              <LogOut className="w-5 h-5" />
+              <LogOut className="w-5 h-5 flex-shrink-0" />
               <span>ログアウト</span>
             </button>
           </div>
