@@ -13,6 +13,7 @@ import { SalesIncentivesPage } from './components/SalesIncentivesPage';
 import { OperationsPage } from './components/OperationsPage';
 import { apiRequest, setUnauthorizedCallback } from './utils/api';
 import { functionsBaseUrl, publicAnonKey } from './utils/supabase/info';
+import { createClient } from './utils/supabase/client';
 import { User, MeResponse } from './types';
 
 // アプリ起動直後に Edge Function をウォームアップ（コールドスタート対策）
@@ -54,10 +55,9 @@ export default function App() {
 
   const checkAuth = async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      
+      const { getAccessToken } = await import('./utils/api');
+      const token = await getAccessToken();
       if (!token) {
-        // ??E?????E???????E??????????E
         await tryInitializeSystem();
         setIsAuthenticated(false);
         setCurrentUser(null);
@@ -69,13 +69,11 @@ export default function App() {
       setCurrentUser(userData.user);
       setIsAuthenticated(true);
     } catch (err: any) {
-      // UNAUTHORIZED???????E??E???????????????E?????????E
       if (err?.message === 'UNAUTHORIZED') {
-        // ?????????????E
         console.log('[Auth] Re-authentication required');
       } else {
-        // ??E??E???????E?????E
         localStorage.removeItem('access_token');
+        createClient().auth.signOut();
         setIsAuthenticated(false);
         setCurrentUser(null);
       }
@@ -130,6 +128,7 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
+    createClient().auth.signOut();
     setIsAuthenticated(false);
     setCurrentUser(null);
     setCurrentPage('calendar');

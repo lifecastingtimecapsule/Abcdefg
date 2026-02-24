@@ -157,6 +157,34 @@
 
 ---
 
+## Supabase Auth 移行（既存環境向け）
+
+ログイン遅延を抑えるため、フロントでは **Supabase Auth**（`signInWithPassword`）を優先し、未対応のユーザーは従来の Edge 経由ログインにフォールバックします。
+
+### 既存ユーザーを Supabase ログイン対応にする
+
+管理者でログインした状態で、次の API を 1 回だけ呼び出します。
+
+- **エンドポイント**: `POST /admin/migrate-auth`
+- **認証**: 管理者の Bearer トークン
+- **Body（任意）**: `{ "temp_password": "ChangeMe1!" }` — 未指定時は `ChangeMe1!` が全員の一時パスワードになります
+
+**実行例（curl）**:
+
+```bash
+curl -X POST "https://<PROJECT_REF>.supabase.co/functions/v1/make-server-fe84bde0/admin/migrate-auth" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <管理者のaccess_token>" \
+  -d '{"temp_password":"ChangeMe1!"}'
+```
+
+**注意**:
+- 全 `app_users` の Auth のメールが `ログインID@app.local` に更新され、指定した一時パスワードに設定されます。
+- 移行後、各ユーザーは「ログインID」とその一時パスワードでログインできます。初回ログイン後にパスワード変更を推奨してください。
+- 移行を実行しない場合も、従来どおり Edge 経由ログイン（やや遅い）で利用できます。
+
+---
+
 ## 📞 サポート
 
 システムに関する質問や問題がある場合は、開発チームにお問い合わせください。

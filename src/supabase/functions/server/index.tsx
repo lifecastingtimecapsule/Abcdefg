@@ -17,6 +17,18 @@ const JWT_EXPIRY = Deno.env.get('JWT_EXPIRY') || '30m';
 app.use('*', cors());
 app.use('*', logger(console.log));
 
+// #region agent log
+const DEBUG_INGEST = 'http://127.0.0.1:7242/ingest/93745845-57e6-4b1b-93d4-0d25c98425e1';
+const logDebug = (location: string, message: string, data: Record<string, unknown>) => {
+  fetch(DEBUG_INGEST, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '818b69' }, body: JSON.stringify({ sessionId: '818b69', location, message, data, timestamp: Date.now() }) }).catch(() => {});
+};
+app.use('*', async (c, next) => {
+  const u = new URL(c.req.url);
+  logDebug('index.tsx:middleware', 'incoming request', { method: c.req.method, pathname: u.pathname, url: c.req.url, hypothesisId: 'A' });
+  await next();
+});
+// #endregion
+
 // ========== In-memory cache (TTL 5 min) ==========
 interface CacheEntry<T> { data: T; expiresAt: number; }
 const cache = new Map<string, CacheEntry<unknown>>();
@@ -62,9 +74,12 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
 );
 
+// Supabase Auth ログイン用: email = login_id + AUTH_EMAIL_SUFFIX（クライアントは signInWithPassword で直接認証）
+const AUTH_EMAIL_SUFFIX = '@app.local';
+
 // Default admin credentials (固定の初期アカウント情報)
 const DEFAULT_ADMIN = {
-  email: 'admin@amaretto.local',
+  email: 'admin@app.local',
   password: 'amaretto2024',
   login_id: 'admin',
   name: '管理者',
@@ -206,10 +221,10 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
       return c.json({ error: 'このログインIDは既に使用されています' }, 400);
     }
 
-    // Create user in Supabase Auth
-    // Automatically confirm the user's email since an email server hasn't been configured.
+    // Create user in Supabase Auth (email = login_id@app.local で signInWithPassword 対応)
+    const authEmail = (login_id || '').trim() + AUTH_EMAIL_SUFFIX;
     const { data, error } = await supabase.auth.admin.createUser({
-      email,
+      email: authEmail,
       password,
       email_confirm: true,
     });
@@ -224,7 +239,7 @@ app.post('/make-server-fe84bde0/signup', async (c) => {
     await db.upsertAppUser({
       user_id: userId,
       name,
-      email,
+      email: authEmail,
       login_id,
       role: role || 'staff',
       active_flag: true,
@@ -354,30 +369,30 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
     
     console.log('Creating default admin account...');
     
-    // Try to get existing user by email first
+    // Try to get existing user by email (login_id@app.local) first
+    const adminAuthEmail = DEFAULT_ADMIN.login_id + AUTH_EMAIL_SUFFIX;
     const { data: existingUsers } = await supabase.auth.admin.listUsers();
-    const existingAdmin = existingUsers?.users?.find(u => u.email === DEFAULT_ADMIN.email);
+    const existingAdmin = existingUsers?.users?.find(u => u.email === adminAuthEmail || u.email === DEFAULT_ADMIN.email);
     
     let userId: string;
     
     if (existingAdmin) {
-      // Admin user exists in Auth but not in KV - recover it
-      console.log('Admin user exists in Auth, recovering to KV store...');
+      // Admin user exists in Auth - recover and ensure email is login_id@app.local
+      console.log('Admin user exists in Auth, recovering to app_users...');
       userId = existingAdmin.id;
       
-      // Update password to ensure it matches default
       const { error: updateError } = await supabase.auth.admin.updateUserById(
         userId,
-        { password: DEFAULT_ADMIN.password }
+        { email: adminAuthEmail, password: DEFAULT_ADMIN.password }
       );
       
       if (updateError) {
-        console.error(`Failed to update admin password: ${updateError.message}`);
+        console.error(`Failed to update admin auth: ${updateError.message}`);
       }
     } else {
-      // Create admin user in Supabase Auth
+      // Create admin user in Supabase Auth (email = login_id@app.local for signInWithPassword)
       const { data, error } = await supabase.auth.admin.createUser({
-        email: DEFAULT_ADMIN.email,
+        email: adminAuthEmail,
         password: DEFAULT_ADMIN.password,
         email_confirm: true,
       });
@@ -393,7 +408,7 @@ app.post('/make-server-fe84bde0/initialize', async (c) => {
     await db.upsertAppUser({
       user_id: userId,
       name: DEFAULT_ADMIN.name,
-      email: DEFAULT_ADMIN.email,
+      email: adminAuthEmail,
       login_id: DEFAULT_ADMIN.login_id,
       role: 'admin',
       active_flag: true,
@@ -476,6 +491,43 @@ app.post('/make-server-fe84bde0/admin/backfill-user-login', async (c) => {
     return c.json({ success: true, updated: 0, total: users.length, note: 'Login is via app_users.login_id' });
   } catch (error) {
     console.log(`Backfill user_login error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// 既存 app_users を Supabase Auth ログイン対応に移行（email = login_id@app.local、一時パスワード設定）
+app.post('/make-server-fe84bde0/admin/migrate-auth', async (c) => {
+  try {
+    const authUser = await getAuthUser(c.req.raw);
+    if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+    if (await getUserRole(authUser.id) !== 'admin') return c.json({ error: 'Admin access required' }, 403);
+
+    const body = await c.req.json().catch(() => ({}));
+    const tempPassword = (body.temp_password as string) || 'ChangeMe1!';
+
+    const users = await db.getAppUsers();
+    let updated = 0;
+    for (const u of users as { user_id: string; login_id: string }[]) {
+      const authEmail = (u.login_id || '').trim() + AUTH_EMAIL_SUFFIX;
+      if (!authEmail || authEmail === AUTH_EMAIL_SUFFIX) continue;
+      const { error } = await supabase.auth.admin.updateUserById(u.user_id, {
+        email: authEmail,
+        password: tempPassword,
+      });
+      if (error) {
+        console.warn(`[migrate-auth] ${u.login_id}: ${error.message}`);
+        continue;
+      }
+      updated++;
+    }
+    return c.json({
+      success: true,
+      updated,
+      total: users.length,
+      note: '各ユーザーは login_id と一時パスワードで Supabase ログイン可能。初回ログイン後にパスワード変更を推奨。',
+    });
+  } catch (error) {
+    console.error(`migrate-auth error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -1092,6 +1144,10 @@ app.get('/make-server-fe84bde0/reservations', async (c) => {
 
 // ========== カレンダー専用 API（1リクエストで全データを返す） ==========
 const calendarHandler = async (c: any) => {
+  // #region agent log
+  const u = new URL(c.req.url);
+  fetch('http://127.0.0.1:7242/ingest/93745845-57e6-4b1b-93d4-0d25c98425e1', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '818b69' }, body: JSON.stringify({ sessionId: '818b69', location: 'index.tsx:calendarHandler', message: 'calendar route hit', data: { pathname: u.pathname, month: c.req.query('month') }, timestamp: Date.now(), hypothesisId: 'C' }) }).catch(() => {});
+  // #endregion
   const t0 = Date.now();
   try {
     const user = await getAuthUser(c.req.raw);
@@ -2838,11 +2894,17 @@ app.put('/make-server-fe84bde0/reservation-settings', async (c) => {
 // ========== Public API (認証不要) ==========
 
 // Health check endpoint (public) — プレフィックスあり・なしの両方で登録（Supabase 本番の path に合わせる）
-const publicHealthHandler = (c: any) => c.json({
+const publicHealthHandler = (c: any) => {
+  // #region agent log
+  const u = new URL(c.req.url);
+  fetch('http://127.0.0.1:7242/ingest/93745845-57e6-4b1b-93d4-0d25c98425e1', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '818b69' }, body: JSON.stringify({ sessionId: '818b69', location: 'index.tsx:publicHealthHandler', message: 'health route hit', data: { pathname: u.pathname }, timestamp: Date.now(), hypothesisId: 'B' }) }).catch(() => {});
+  // #endregion
+  return c.json({
   status: 'ok',
   timestamp: new Date().toISOString(),
   message: 'Public API is working',
-});
+  });
+};
 app.get('/make-server-fe84bde0/public/health', publicHealthHandler);
 app.get('/public/health', publicHealthHandler);
 

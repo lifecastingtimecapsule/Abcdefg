@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import { createClient } from '../utils/supabase/client';
 import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
+
+const AUTH_EMAIL_SUFFIX = '@app.local';
 
 interface ReauthModalProps {
   onSuccess: (token: string) => void;
@@ -19,27 +22,37 @@ export function ReauthModal({ onSuccess, onCancel }: ReauthModalProps) {
     setLoading(true);
 
     try {
-      const response = await fetch(
-        `${functionsBaseUrl}/login`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-          body: JSON.stringify({ login_id: loginId, password }),
-        }
-      );
+      const supabase = createClient();
+      const authEmail = loginId.trim() + AUTH_EMAIL_SUFFIX;
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password,
+      });
+
+      if (!authError && authData?.session?.access_token) {
+        onSuccess(authData.session.access_token);
+        return;
+      }
+
+      const response = await fetch(`${functionsBaseUrl}/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({ login_id: loginId.trim(), password }),
+      });
 
       const data = await response.json();
-
       if (!response.ok) {
         throw new Error(data.error || 'ログインに失敗しました');
       }
-
-      // トークンを保存して成功コールバックを実行
-      localStorage.setItem('access_token', data.access_token);
-      onSuccess(data.access_token);
+      if (data.access_token) {
+        localStorage.setItem('access_token', data.access_token);
+        onSuccess(data.access_token);
+      } else {
+        throw new Error(data.error || 'ログインに失敗しました');
+      }
     } catch (err: any) {
       console.error('Reauth error:', err);
       setError(err.message || 'ログインに失敗しました');

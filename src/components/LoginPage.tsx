@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '../utils/supabase/client';
 import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
+import { apiRequest } from '../utils/api';
+import { MeResponse } from '../types';
 import { LogIn } from 'lucide-react';
+
+const AUTH_EMAIL_SUFFIX = '@app.local';
 
 interface LoginPageProps {
   onLogin: (user?: { user_id: string; name: string; login_id: string; role: string }) => void;
@@ -47,53 +51,73 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     const trimmedLoginId = loginId.trim();
 
     try {
+      const supabase = createClient();
+      const authEmail = trimmedLoginId + AUTH_EMAIL_SUFFIX;
+
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password,
+      });
+
+      if (!authError && authData?.session) {
+        const tAuth = Date.now();
+        const meData = await apiRequest<MeResponse>('/me');
+        onLogin(meData.user as { user_id: string; name: string; login_id: string; role: string });
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} authMs=${tAuth - t0} result=success(supabase)`);
+        return;
+      }
+
+      const fallbackToLegacy =
+        authError?.message?.includes('Invalid login') ||
+        authError?.message?.includes('invalid') ||
+        authError?.status === 400;
+      if (!fallbackToLegacy) {
+        setError(authError?.message || 'ログインに失敗しました');
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=fail(supabase)`, authError);
+        return;
+      }
+
       const response = await fetch(`${functionsBaseUrl}/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${publicAnonKey}`,
         },
-        body: JSON.stringify({
-          login_id: trimmedLoginId,
-          password,
-        }),
+        body: JSON.stringify({ login_id: trimmedLoginId, password }),
       });
       const tFetch = Date.now();
 
-      let data: { error?: string; access_token?: string; user?: unknown; debug_code?: string } = {};
+      let data: { error?: string; access_token?: string; user?: unknown } = {};
       const contentType = response.headers.get('content-type');
       try {
         if (contentType?.includes('application/json')) {
           data = await response.json();
         } else {
           const text = await response.text();
-          if (text) setError('サーバーエラーです。しばらく経ってからお試しください。');
-          else setError('ログインに失敗しました。');
+          setError(text ? 'サーバーエラーです。' : 'ログインに失敗しました。');
           return;
         }
       } catch (_) {
-        setError('サーバーからの応答を読み取れませんでした。しばらく経ってからお試しください。');
+        setError('サーバーからの応答を読み取れませんでした。');
         return;
       }
 
       if (!response.ok) {
         setError(data.error || 'ログインに失敗しました');
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=fail`);
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} result=fail(legacy)`);
         return;
       }
 
       if (data.access_token && data.user) {
         localStorage.setItem('access_token', data.access_token);
         onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=success`);
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=success(legacy)`);
       } else {
         setError(data.error || 'アクセストークンが返されませんでした');
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} status=${response.status} result=no_token`);
       }
     } catch (err: unknown) {
       console.error('Login error:', err);
-      const errorMessage = err instanceof Error ? err.message : 'ログインに失敗しました';
-      setError(errorMessage);
+      setError(err instanceof Error ? err.message : 'ログインに失敗しました');
       console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=error`, err);
     } finally {
       setLoading(false);

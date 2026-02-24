@@ -1,4 +1,5 @@
 import { publicAnonKey, functionsBaseUrl } from './supabase/info';
+import { createClient } from './supabase/client';
 import { toast } from 'sonner@2.0.3';
 
 const BASE_URL = functionsBaseUrl;
@@ -10,8 +11,15 @@ export function setUnauthorizedCallback(callback: () => void) {
   onUnauthorizedCallback = callback;
 }
 
+/** Supabase セッションを優先し、なければ従来の access_token を返す */
+export async function getAccessToken(): Promise<string | null> {
+  const { data } = await createClient().auth.getSession();
+  if (data?.session?.access_token) return data.session.access_token;
+  return localStorage.getItem('access_token');
+}
+
 export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem('access_token');
+  const token = await getAccessToken();
   
   if (!token) {
     console.warn('[API] No access token found');
@@ -40,8 +48,8 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       if (response.status === 401) {
         console.warn('[Auth] Session expired - triggering re-authentication');
         localStorage.removeItem('access_token');
-        
-        // コールバッ���が設定されていれば実行（再ログインモーダル表示など）
+        await createClient().auth.signOut();
+        //���が設定されていれば実行（再ログインモーダル表示など）
         if (onUnauthorizedCallback) {
           onUnauthorizedCallback();
         } else {
