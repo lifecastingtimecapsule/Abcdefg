@@ -1,4 +1,4 @@
-{
+{dafffa
   "permissions": {
     "allow": [
       "Bash(cd \"C:\\\\Users\\\\renan\\\\OneDrive\\\\デスクトップ\\\\Abcdefg\" && supabase db push 2>&1)",

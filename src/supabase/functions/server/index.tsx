@@ -11,7 +11,6 @@ import { sendEmail, buildReservationEmailHtml } from './resend_email.tsx';
 const app = new Hono();
 
 const JWT_SECRET = Deno.env.get('JWT_SECRET') || '';
-const SALT_ROUNDS = 10;
 const JWT_EXPIRY = '30d';
 
 app.use('*', cors());
@@ -92,31 +91,52 @@ app.post('/make-server-fe84bde0/login', async (c) => {
       return c.json({ error: 'このアカウントは無効です' }, 403);
     }
 
+    // Supabase Auth を常に第一優先で試みる（高速）
     let accessToken: string;
-    if (user.password_hash && JWT_SECRET) {
-      const ok = await bcrypt.compare(password, user.password_hash);
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: user.email as string,
+      password,
+    });
+
+    if (!authError) {
+      // Supabase Auth 成功 → password_hash が残っていれば削除（マイグレーション完了）
+      accessToken = authData.session.access_token;
+      if (user.password_hash) {
+        try {
+          await db.upsertAppUser({ ...user, password_hash: null });
+        } catch (e) {
+          console.log(`[Migration] Failed to clear password_hash for user ${user.user_id}: ${e}`);
+        }
+      }
+    } else if (user.password_hash) {
+      // Supabase Auth 失敗 & password_hash あり → bcrypt でフォールバック（旧形式ユーザーの自動マイグレーション）
+      const ok = await bcrypt.compare(password, user.password_hash as string);
       if (!ok) {
         console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${Date.now() - tUser} totalMs=${Date.now() - t0} result=wrong_password`);
         return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
       }
-      const secret = new TextEncoder().encode(JWT_SECRET);
-      accessToken = await new jose.SignJWT({ email: user.email })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setSubject(user.user_id)
-        .setIssuedAt()
-        .setExpirationTime(JWT_EXPIRY)
-        .sign(secret);
-    } else {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: user.email,
+      // bcrypt 認証成功 → Supabase Auth にパスワードを同期してマイグレーション
+      try {
+        await supabase.auth.admin.updateUserById(user.user_id as string, { password });
+        await db.upsertAppUser({ ...user, password_hash: null });
+        console.log(`[Migration] Migrated user ${user.user_id} from bcrypt to Supabase Auth`);
+      } catch (migErr) {
+        console.log(`[Migration] Failed to migrate user ${user.user_id}: ${migErr}`);
+      }
+      // Supabase Auth で再サインイン
+      const { data: migratedData, error: migratedError } = await supabase.auth.signInWithPassword({
+        email: user.email as string,
         password,
       });
-      if (error) {
-        console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${Date.now() - tUser} totalMs=${Date.now() - t0} result=supabase_auth_fail`);
-        console.log(`Login authentication error: ${error.message}`);
+      if (migratedError) {
+        console.log(`[Migration] Post-migration sign-in failed for user ${user.user_id}: ${migratedError.message}`);
         return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
       }
-      accessToken = data.session.access_token;
+      accessToken = migratedData.session.access_token;
+    } else {
+      console.log(`[Perf] POST /login userLookupMs=${tUser - t0} authMs=${Date.now() - tUser} totalMs=${Date.now() - t0} result=supabase_auth_fail`);
+      console.log(`Login authentication error: ${authError.message}`);
+      return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
     const tAuth = Date.now();
 
@@ -239,19 +259,35 @@ app.post('/make-server-fe84bde0/me/change-password', async (c) => {
 
     const userData = await db.getAppUser(authUser.id);
     if (!userData) return c.json({ error: 'User not found' }, 404);
-    if (!userData.password_hash) {
-      return c.json({ error: 'パスワード認証が設定されていません。管理者に連絡してください。' }, 400);
+
+    // 現在のパスワードを検証（password_hash がある場合はまず bcrypt でフォールバック）
+    if (userData.password_hash) {
+      const ok = await bcrypt.compare(current_password, userData.password_hash as string);
+      if (!ok) {
+        return c.json({ error: '現在のパスワードが正しくありません' }, 401);
+      }
+    } else {
+      // Supabase Auth で検証
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: userData.email as string,
+        password: current_password,
+      });
+      if (signInError) {
+        return c.json({ error: '現在のパスワードが正しくありません' }, 401);
+      }
     }
 
-    const ok = await bcrypt.compare(current_password, userData.password_hash as string);
-    if (!ok) {
-      return c.json({ error: '現在のパスワードが正しくありません' }, 401);
+    // Supabase Auth のパスワードを更新
+    const { error: updateError } = await supabase.auth.admin.updateUserById(authUser.id, {
+      password: new_password,
+    });
+    if (updateError) {
+      return c.json({ error: 'パスワードの更新に失敗しました' }, 500);
     }
 
-    const newHash = await bcrypt.hash(new_password, SALT_ROUNDS);
     const updated = {
       ...userData,
-      password_hash: newHash,
+      password_hash: null,
       must_change_password: false,
       updated_at: new Date().toISOString(),
     };
@@ -274,16 +310,22 @@ app.post('/make-server-fe84bde0/admin/issue-initial-passwords', async (c) => {
 
     const users = await db.getAppUsers();
     let updated = 0;
-    const hash = await bcrypt.hash(INITIAL_PASSWORD, SALT_ROUNDS);
     for (const u of users) {
-      if (u.password_hash) continue;
-      await db.upsertAppUser({
-        ...u,
-        password_hash: hash,
-        must_change_password: true,
-        updated_at: new Date().toISOString(),
-      });
-      updated++;
+      if (u.must_change_password) continue; // 既に初期パスワード発行済み
+      try {
+        await supabase.auth.admin.updateUserById(u.user_id as string, {
+          password: INITIAL_PASSWORD,
+        });
+        await db.upsertAppUser({
+          ...u,
+          password_hash: null,
+          must_change_password: true,
+          updated_at: new Date().toISOString(),
+        });
+        updated++;
+      } catch (err) {
+        console.error(`Failed to set initial password for user ${u.user_id}: ${err}`);
+      }
     }
     return c.json({
       success: true,
@@ -532,7 +574,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
       }
       try {
         await supabase.auth.admin.updateUserById(user_id, { password: update_password });
-        updatedUser.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
+        updatedUser.password_hash = null;
         updatedUser.must_change_password = false;
       } catch (pwError) {
         console.error(`Failed to update password: ${pwError}`);
@@ -1063,7 +1105,11 @@ app.get('/make-server-fe84bde0/me/locations', async (c) => {
     }
 
     // staff: アクセス可能な location_id でフィルタ
+    // 未設定（0件）の場合は全店舗を返す（新規ユーザーや未設定時のデフォルト動作）
     const accessibleIds = await db.getAccessibleLocations(user.id);
+    if (accessibleIds.length === 0) {
+      return c.json({ locations: allLocations });
+    }
     const accessibleLocations = allLocations.filter(
       (loc: any) => accessibleIds.includes(loc.location_id)
     );
@@ -2174,7 +2220,7 @@ app.post('/make-server-fe84bde0/users/update', async (c) => {
         console.error(`Failed to update password: ${passwordError.message}`);
         return c.json({ error: `パスワード更新に失敗しました: ${passwordError.message}` }, 500);
       }
-      userData.password_hash = await bcrypt.hash(update_password, SALT_ROUNDS);
+      userData.password_hash = null;
       userData.must_change_password = false;
     }
 

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Frontend (Vite)",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "npm", "run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "Supabase Local",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "npx", "supabase", "start"],
+      "port": 54321
+    }
+  ]
+}
