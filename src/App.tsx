@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner@2.0.3';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { LoginPage } from './components/LoginPage';
 import { PublicReservationPage } from './components/PublicReservationPage';
 import { ReservationCompletePage } from './components/ReservationCompletePage';
@@ -160,6 +161,7 @@ export default function App() {
           }}
         />
         <PublicReservationPage />
+        <SpeedInsights />
       </>
     );
   }
@@ -176,6 +178,7 @@ export default function App() {
           }}
         />
         <ReservationCompletePage />
+        <SpeedInsights />
       </>
     );
   }
@@ -184,9 +187,12 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
-      </div>
+      <>
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+        </div>
+        <SpeedInsights />
+      </>
     );
   }
 
@@ -198,7 +204,12 @@ export default function App() {
       setCurrentRoute('/reservation');
       return null;
     }
-    return <LoginPage onLogin={handleLogin} />;
+    return (
+      <>
+        <LoginPage onLogin={handleLogin} />
+        <SpeedInsights />
+      </>
+    );
   }
 
   const renderPage = () => {
@@ -270,6 +281,7 @@ export default function App() {
       >
         {renderPage()}
       </Layout>
+      <SpeedInsights />
     </>
   );
 }
