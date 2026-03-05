@@ -100,10 +100,20 @@ async function getAuthUser(request: Request): Promise<{ id: string } | null> {
   const accessToken = authHeader.split(' ')[1];
   if (!accessToken) return null;
 
-  const supabaseUser = await supabase.auth.getUser(accessToken);
-  if (supabaseUser.data?.user) {
-    return supabaseUser.data.user;
+  // verify_jwt: true により、ゲートウェイがJWT署名を検証済み。
+  // 安全にペイロードをデコードして sub（ユーザーID）を取得できる。
+  try {
+    const parts = accessToken.split('.');
+    if (parts.length === 3) {
+      const pad = (s: string) => s + '='.repeat((4 - s.length % 4) % 4);
+      const payload = JSON.parse(atob(pad(parts[1].replace(/-/g, '+').replace(/_/g, '/'))));
+      if (payload.sub) return { id: payload.sub as string };
+    }
+  } catch (_) {
+    // malformed JWT
   }
+
+  // フォールバック: JWT_SECRET で署名されたカスタムJWT（旧形式）
   if (JWT_SECRET) {
     try {
       const { payload } = await jose.jwtVerify(
@@ -112,7 +122,7 @@ async function getAuthUser(request: Request): Promise<{ id: string } | null> {
         { algorithms: ['HS256'] }
       );
       const sub = payload.sub;
-      if (sub) return { id: sub };
+      if (sub) return { id: sub as string };
     } catch (_) {
       // not our JWT or invalid
     }

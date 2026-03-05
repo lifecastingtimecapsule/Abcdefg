@@ -1,11 +1,6 @@
 import { useState, useEffect } from 'react';
-import { createClient } from '../utils/supabase/client';
 import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
-import { apiRequest } from '../utils/api';
-import { MeResponse } from '../types';
 import { LogIn } from 'lucide-react';
-
-const AUTH_EMAIL_SUFFIX = '@app.local';
 
 interface LoginPageProps {
   onLogin: (user?: { user_id: string; name: string; login_id: string; role: string }) => void;
@@ -51,27 +46,31 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     const trimmedLoginId = loginId.trim();
 
     try {
-      const supabase = createClient();
-      const authEmail = trimmedLoginId + AUTH_EMAIL_SUFFIX;
-
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password,
+      const response = await fetch(`${functionsBaseUrl}/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({ login_id: trimmedLoginId, password }),
       });
 
-      if (authError || !authData?.session) {
-        setError('IDまたはパスワードが違います');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data.error || 'ログインに失敗しました');
         return;
       }
 
-      const tAuth = Date.now();
-      const meData = await apiRequest<MeResponse>('/me');
-      onLogin(meData.user as { user_id: string; name: string; login_id: string; role: string });
-      console.log(`[LoginPerf] login totalMs=${Date.now() - t0} authMs=${tAuth - t0}`);
+      if (data.access_token && data.user) {
+        localStorage.setItem('access_token', data.access_token);
+        onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0}`);
+      } else {
+        setError('ログインに失敗しました');
+      }
     } catch (err: unknown) {
       console.error('Login error:', err);
-      setError(err instanceof Error ? err.message : 'ログインに失敗しました');
-      console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=error`, err);
+      setError('ネットワークエラーが発生しました');
     } finally {
       setLoading(false);
     }
