@@ -59,62 +59,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         password,
       });
 
-      if (!authError && authData?.session) {
-        const tAuth = Date.now();
-        const meData = await apiRequest<MeResponse>('/me');
-        onLogin(meData.user as { user_id: string; name: string; login_id: string; role: string });
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} authMs=${tAuth - t0} result=success(supabase)`);
+      if (authError || !authData?.session) {
+        setError('IDまたはパスワードが違います');
         return;
       }
 
-      const fallbackToLegacy =
-        authError?.message?.includes('Invalid login') ||
-        authError?.message?.includes('invalid') ||
-        authError?.status === 400;
-      if (!fallbackToLegacy) {
-        setError(authError?.message || 'ログインに失敗しました');
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=fail(supabase)`, authError);
-        return;
-      }
-
-      const response = await fetch(`${functionsBaseUrl}/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ login_id: trimmedLoginId, password }),
-      });
-      const tFetch = Date.now();
-
-      let data: { error?: string; access_token?: string; user?: unknown } = {};
-      const contentType = response.headers.get('content-type');
-      try {
-        if (contentType?.includes('application/json')) {
-          data = await response.json();
-        } else {
-          const text = await response.text();
-          setError(text ? 'サーバーエラーです。' : 'ログインに失敗しました。');
-          return;
-        }
-      } catch (_) {
-        setError('サーバーからの応答を読み取れませんでした。');
-        return;
-      }
-
-      if (!response.ok) {
-        setError(data.error || 'ログインに失敗しました');
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} fetchMs=${tFetch - t0} result=fail(legacy)`);
-        return;
-      }
-
-      if (data.access_token && data.user) {
-        localStorage.setItem('access_token', data.access_token);
-        onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} result=success(legacy)`);
-      } else {
-        setError(data.error || 'アクセストークンが返されませんでした');
-      }
+      const tAuth = Date.now();
+      const meData = await apiRequest<MeResponse>('/me');
+      onLogin(meData.user as { user_id: string; name: string; login_id: string; role: string });
+      console.log(`[LoginPerf] login totalMs=${Date.now() - t0} authMs=${tAuth - t0}`);
     } catch (err: unknown) {
       console.error('Login error:', err);
       setError(err instanceof Error ? err.message : 'ログインに失敗しました');
