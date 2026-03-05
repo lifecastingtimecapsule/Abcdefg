@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
+import { createClient } from '../utils/supabase/client';
 import { LogIn } from 'lucide-react';
 
 interface LoginPageProps {
@@ -63,8 +64,19 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
       if (data.access_token && data.user) {
         localStorage.setItem('access_token', data.access_token);
+        // Supabase Auth セッションとして保存（自動トークン更新が有効になる）
+        if (data.refresh_token) {
+          try {
+            await createClient().auth.setSession({
+              access_token: data.access_token,
+              refresh_token: data.refresh_token,
+            });
+          } catch (sessionErr) {
+            console.log('[Login] setSession failed, using localStorage token:', sessionErr);
+          }
+        }
         onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0}`);
+        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} hasRefreshToken=${!!data.refresh_token}`);
       } else {
         setError('ログインに失敗しました');
       }

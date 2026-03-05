@@ -173,13 +173,38 @@ app.post('/make-server-fe84bde0/login', async (c) => {
       return c.json({ error: 'ログインIDまたはパスワードが正しくありません' }, 401);
     }
 
-    const secret = new TextEncoder().encode(JWT_SECRET);
-    const accessToken = await new jose.SignJWT({ email: user.email })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setSubject(user.user_id)
-      .setIssuedAt()
-      .setExpirationTime(JWT_EXPIRY)
-      .sign(secret);
+    // bcrypt 検証成功 → Supabase Auth パスワードを同期して正規セッションを取得
+    const authEmail = (user.email as string) || ((user.login_id as string) + AUTH_EMAIL_SUFFIX);
+    let supabaseSession: { access_token: string; refresh_token: string } | null = null;
+    try {
+      await supabase.auth.admin.updateUserById(user.user_id as string, { password });
+      const { data: authData } = await supabase.auth.signInWithPassword({ email: authEmail, password });
+      if (authData?.session) {
+        supabaseSession = {
+          access_token: authData.session.access_token,
+          refresh_token: authData.session.refresh_token,
+        };
+      }
+    } catch (syncErr) {
+      console.log(`[Login] Supabase Auth sync failed, fallback to custom JWT: ${syncErr}`);
+    }
+    const tAuth = Date.now();
+
+    // Supabase Auth セッション取得失敗時はカスタム JWT にフォールバック
+    let responseToken: string;
+    let responseRefreshToken: string | undefined;
+    if (supabaseSession) {
+      responseToken = supabaseSession.access_token;
+      responseRefreshToken = supabaseSession.refresh_token;
+    } else {
+      const secret = new TextEncoder().encode(JWT_SECRET);
+      responseToken = await new jose.SignJWT({ email: user.email })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setSubject(user.user_id as string)
+        .setIssuedAt()
+        .setExpirationTime(JWT_EXPIRY)
+        .sign(secret);
+    }
     const tJwt = Date.now();
 
     // 認証成功後は即座にトークンを返し、last_login_at 更新は非同期で実行（応答を遅らせない）
@@ -192,12 +217,15 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     const tEnd = Date.now();
     const userLookupMs = tUser - t0;
     const bcryptMs = tBcrypt - tUser;
-    const jwtMs = tJwt - tBcrypt;
+    const authSyncMs = tAuth - tBcrypt;
+    const jwtMs = tJwt - tAuth;
     const totalMs = tEnd - t0;
-    console.log(`[Perf] POST /login userLookupMs=${userLookupMs} bcryptMs=${bcryptMs} jwtMs=${jwtMs} totalMs=${totalMs} result=success`);
+    const tokenType = supabaseSession ? 'supabase' : 'custom';
+    console.log(`[Perf] POST /login userLookupMs=${userLookupMs} bcryptMs=${bcryptMs} authSyncMs=${authSyncMs} jwtMs=${jwtMs} totalMs=${totalMs} tokenType=${tokenType} result=success`);
     return c.json({
       success: true,
-      access_token: accessToken,
+      access_token: responseToken,
+      ...(responseRefreshToken && { refresh_token: responseRefreshToken }),
       user: sanitizeUserForResponse({
         ...user,
         created_at: user.created_at || new Date().toISOString(),
@@ -319,6 +347,12 @@ app.post('/make-server-fe84bde0/me/change-password', async (c) => {
       updated_at: new Date().toISOString(),
     };
     await db.upsertAppUser(updated);
+    // Supabase Auth にも反映（パスワード非同期を防ぐ）
+    try {
+      await supabase.auth.admin.updateUserById(authUser.id, { password: new_password });
+    } catch (syncErr) {
+      console.error(`[change-password] Supabase Auth sync failed: ${syncErr}`);
+    }
     return c.json({ success: true, user: sanitizeUserForResponse(updated) });
   } catch (error) {
     console.error(`[/me/change-password] Error: ${error}`);
@@ -357,6 +391,51 @@ app.post('/make-server-fe84bde0/admin/issue-initial-passwords', async (c) => {
     });
   } catch (error) {
     console.error(`[/admin/issue-initial-passwords] Error: ${error}`);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Admin: 個別ユーザーのパスワードリセット（仮パスワード発行・must_change_password=true）
+app.post('/make-server-fe84bde0/admin/users/:user_id/reset-password', async (c) => {
+  try {
+    const authUser = await getAuthUser(c.req.raw);
+    if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+    if (await getUserRole(authUser.id) !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const targetUserId = c.req.param('user_id');
+    const body = await c.req.json();
+    const { new_password } = body;
+
+    if (!new_password || new_password.length < 6) {
+      return c.json({ error: 'パスワードは6文字以上で設定してください' }, 400);
+    }
+
+    const userData = await db.getAppUser(targetUserId);
+    if (!userData) return c.json({ error: 'User not found' }, 404);
+
+    const newHash = await bcrypt.hash(new_password, SALT_ROUNDS);
+    const updated = {
+      ...userData,
+      password_hash: newHash,
+      must_change_password: true,
+      updated_at: new Date().toISOString(),
+    };
+    await db.upsertAppUser(updated);
+
+    // Supabase Auth にも反映
+    try {
+      await supabase.auth.admin.updateUserById(targetUserId, { password: new_password });
+    } catch (syncErr) {
+      console.error(`[reset-password] Supabase Auth sync failed: ${syncErr}`);
+    }
+
+    cacheInvalidate('users');
+    console.log(`[Admin] Password reset for user ${targetUserId} by admin ${authUser.id}`);
+    return c.json({ success: true, must_change_password: true });
+  } catch (error) {
+    console.error(`[/admin/users/reset-password] Error: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });

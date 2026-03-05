@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form@7.55.0';
 import { apiRequest } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, Edit2, UserCheck, UserX, AlertCircle } from 'lucide-react';
+import { Plus, Edit2, UserCheck, UserX, AlertCircle, KeyRound, Copy, RefreshCw } from 'lucide-react';
 import { User } from '../types';
 
 interface StaffFormData {
@@ -22,6 +22,13 @@ export function StaffManagementPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+
+  // パスワードリセット用ステート
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetTargetUser, setResetTargetUser] = useState<User | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
 
   const {
     register,
@@ -207,6 +214,37 @@ export function StaffManagementPage() {
     }
   };
 
+  const generatePassword = () => {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let pw = '';
+    for (let i = 0; i < 10; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+    setResetPassword(pw);
+  };
+
+  const handleOpenResetModal = (user: User) => {
+    setResetTargetUser(user);
+    setResetPassword('');
+    setResetDone(false);
+    setResetModalOpen(true);
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetTargetUser || !resetPassword) return;
+    setResetLoading(true);
+    try {
+      await apiRequest(`/admin/users/${resetTargetUser.user_id}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ new_password: resetPassword }),
+      });
+      setResetDone(true);
+      toast.success(`${resetTargetUser.name} のパスワードをリセットしました`);
+    } catch (err: any) {
+      toast.error(err.message || 'パスワードリセットに失敗しました');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     if (!dateString) return '-';
     const date = new Date(dateString);
@@ -295,13 +333,22 @@ export function StaffManagementPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-700 text-sm">{formatDate(user.last_login_at || '')}</td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleOpenModal(user)}
-                        className="p-2 hover:bg-blue-50 text-blue-600 rounded-lg transition"
-                        title="編集"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleOpenModal(user)}
+                          className="p-2 hover:bg-blue-50 text-blue-600 rounded-lg transition"
+                          title="編集"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenResetModal(user)}
+                          className="p-2 hover:bg-amber-50 text-amber-600 rounded-lg transition"
+                          title="パスワードリセット"
+                        >
+                          <KeyRound className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -507,6 +554,118 @@ export function StaffManagementPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* パスワードリセットモーダル */}
+      {resetModalOpen && resetTargetUser && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => !resetLoading && setResetModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 px-6 py-4 bg-amber-500 rounded-t-2xl">
+              <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-full">
+                <KeyRound className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-white font-bold">パスワードリセット</h2>
+                <p className="text-amber-100 text-sm">{resetTargetUser.name}</p>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {!resetDone ? (
+                <>
+                  <p className="text-slate-600 text-sm">
+                    仮パスワードを設定します。スタッフは次回ログイン時にパスワードの変更が必要になります。
+                  </p>
+
+                  <div>
+                    <label className="block text-slate-700 mb-2">仮パスワード</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={resetPassword}
+                        onChange={(e) => setResetPassword(e.target.value)}
+                        className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono"
+                        placeholder="6文字以上"
+                      />
+                      <button
+                        type="button"
+                        onClick={generatePassword}
+                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition"
+                        title="自動生成"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {resetPassword.length > 0 && resetPassword.length < 6 && (
+                      <p className="text-red-600 text-sm mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        6文字以上で入力してください
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setResetModalOpen(false)}
+                      disabled={resetLoading}
+                      className="flex-1 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition disabled:opacity-50"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetPassword}
+                      disabled={resetLoading || resetPassword.length < 6}
+                      className="flex-1 px-4 py-2 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition disabled:opacity-50"
+                    >
+                      {resetLoading ? 'リセット中...' : 'リセット実行'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-slate-600 text-sm">
+                    パスワードをリセットしました。以下の仮パスワードをスタッフに共有してください。
+                  </p>
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                    <p className="text-xs text-amber-700 mb-1">仮パスワード</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <code className="text-lg font-bold text-amber-900 tracking-widest">{resetPassword}</code>
+                      <button
+                        type="button"
+                        onClick={() => { navigator.clipboard.writeText(resetPassword); toast.success('コピーしました'); }}
+                        className="p-2 hover:bg-amber-100 rounded-lg transition"
+                        title="コピー"
+                      >
+                        <Copy className="w-4 h-4 text-amber-700" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500">
+                    ※ スタッフは次回ログイン後、パスワードの変更が求められます
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => setResetModalOpen(false)}
+                    className="w-full px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition"
+                  >
+                    閉じる
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
