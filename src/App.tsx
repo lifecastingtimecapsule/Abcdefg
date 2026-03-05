@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner@2.0.3';
 import { LoginPage } from './components/LoginPage';
-import { PublicReservationPage } from './components/PublicReservationPage';
-import { ReservationCompletePage } from './components/ReservationCompletePage';
 import { ReauthModal } from './components/ReauthModal';
 import { Layout } from './components/Layout';
 import { MustChangePasswordModal } from './components/MustChangePasswordModal';
@@ -146,41 +144,6 @@ export default function App() {
     handleLogout();
   };
 
-  // ???E???E?????E??E
-  if (currentRoute === '/reservation' || currentRoute === '/yoyaku' || currentRoute === '/public/reservation') {
-    return (
-      <>
-        <Toaster 
-          position="top-center" 
-          richColors 
-          closeButton
-          toastOptions={{
-            duration: 4000,
-          }}
-        />
-        <PublicReservationPage />
-      </>
-    );
-  }
-
-  if (currentRoute.startsWith('/public/reservation/complete')) {
-    return (
-      <>
-        <Toaster 
-          position="top-center" 
-          richColors 
-          closeButton
-          toastOptions={{
-            duration: 4000,
-          }}
-        />
-        <ReservationCompletePage />
-      </>
-    );
-  }
-
-
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -189,14 +152,8 @@ export default function App() {
     );
   }
 
-  // 未認証時: / または /login または /admin-sys-login ならログイン画面、それ以外は公開予約へ
+  // 未認証時: ログイン画面を表示
   if (!isAuthenticated) {
-    const showLogin = currentRoute === '/' || currentRoute === '/login' || currentRoute === '/admin-sys-login';
-    if (!showLogin) {
-      window.history.pushState({}, '', '/reservation');
-      setCurrentRoute('/reservation');
-      return null;
-    }
     return <LoginPage onLogin={handleLogin} />;
   }
 

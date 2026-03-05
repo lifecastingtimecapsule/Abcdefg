@@ -15,16 +15,10 @@ function getMonthGrid(year: number, month: number): (Date | null)[][] {
   const daysInMonth = last.getDate();
   const rows: (Date | null)[][] = [];
   let row: (Date | null)[] = [];
-  // 前月の空白
-  for (let i = 0; i < startDow; i++) {
-    row.push(null);
-  }
+  for (let i = 0; i < startDow; i++) row.push(null);
   for (let d = 1; d <= daysInMonth; d++) {
     row.push(new Date(year, month, d));
-    if (row.length === 7) {
-      rows.push(row);
-      row = [];
-    }
+    if (row.length === 7) { rows.push(row); row = []; }
   }
   if (row.length > 0) {
     while (row.length < 7) row.push(null);
@@ -33,12 +27,12 @@ function getMonthGrid(year: number, month: number): (Date | null)[][] {
   return rows;
 }
 
-function getStatusBadgeClass(status: string): string {
-  if (status === 'confirmed') return 'bg-primary';
-  if (status === 'tentative') return 'bg-warning text-dark';
-  if (status === 'cancelled') return 'bg-danger';
-  if (status === 'completed') return 'bg-success';
-  return 'bg-secondary';
+function getStatusColor(status: string) {
+  if (status === 'confirmed') return 'bg-blue-500 text-white';
+  if (status === 'tentative') return 'bg-amber-400 text-slate-900';
+  if (status === 'cancelled') return 'bg-red-500 text-white';
+  if (status === 'completed') return 'bg-green-500 text-white';
+  return 'bg-slate-400 text-white';
 }
 
 export function CalendarPage({ userRole }: { userRole: string }) {
@@ -62,35 +56,25 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const year = date.getFullYear();
   const month = date.getMonth();
   const monthParam = useMemo(() => {
-    const m = String(month + 1).padStart(2, '0');
-    return `${year}-${m}`;
+    return `${year}-${String(month + 1).padStart(2, '0')}`;
   }, [year, month]);
 
-  useEffect(() => {
-    loadCalendarData();
-  }, [monthParam]);
-
+  useEffect(() => { loadCalendarData(); }, [monthParam]);
 
   const loadCalendarData = async () => {
     try {
       setLoading(true);
-      // まず統合 API を試みる（1リクエスト）、失敗時は旧マルチリクエストにフォールバック
       let loaded = false;
       try {
         const data = await apiRequest<{
-          reservations: any[];
-          locations: any[];
-          menu_items: any[];
-          users: any[];
+          reservations: any[]; locations: any[]; menu_items: any[]; users: any[];
         }>(`/calendar?month=${monthParam}`);
         setReservations(data.reservations || []);
         setLocations(data.locations || []);
         setMenuItems(data.menu_items || []);
         setUsers(data.users || []);
         loaded = true;
-      } catch (_) {
-        // 統合 API が未デプロイの場合は旧方式にフォールバック
-      }
+      } catch (_) {}
 
       if (!loaded) {
         const [resResult, locResult] = await Promise.allSettled([
@@ -101,7 +85,6 @@ export function CalendarPage({ userRole }: { userRole: string }) {
         else toast.error('予約データの読み込みに失敗しました');
         if (locResult.status === 'fulfilled') setLocations((locResult.value as any).locations || []);
 
-        // マスタを非同期で取得
         Promise.allSettled([
           apiRequest('/menu-items'),
           apiRequest('/users'),
@@ -155,10 +138,8 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     try {
       setDetailLoading(true);
       const data = await apiRequest(`/reservations/${event.resource.reservation_id}`) as any;
-      const reservation = data.reservation;
-      const customer = data.customer;
-      setCustomersForModal(customer ? [customer] : []);
-      setEditingReservation(reservation);
+      setCustomersForModal(data.customer ? [data.customer] : []);
+      setEditingReservation(data.reservation);
       setReservationMode('view');
       setUsers(prev => (prev.length > 0 ? prev : (data.users || [])));
       setModalOpen(true);
@@ -177,160 +158,116 @@ export function CalendarPage({ userRole }: { userRole: string }) {
 
   if (loading) {
     return (
-      <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '320px' }}>
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">読み込み中</span>
-        </div>
+      <div className="flex items-center justify-center min-h-[320px]">
+        <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-500 border-t-transparent" />
       </div>
     );
   }
 
   return (
-    <div className="container-fluid p-0">
+    <div>
       {/* ヘッダー */}
-      <div className="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-        <h1 className="h4 fw-bold mb-0">予約カレンダー</h1>
-        <div className="d-flex align-items-center gap-3 flex-wrap">
-          <div className="d-flex align-items-center gap-2">
-            <span className="badge bg-primary px-2 py-1" style={{ fontSize: '0.82rem' }}>確定</span>
-            <span className="badge bg-warning text-dark px-2 py-1" style={{ fontSize: '0.82rem' }}>仮予約</span>
-            <span className="badge bg-danger px-2 py-1" style={{ fontSize: '0.82rem' }}>キャンセル</span>
-            <span className="badge bg-success px-2 py-1" style={{ fontSize: '0.82rem' }}>完了</span>
-          </div>
-          <div className="btn-group">
-            <button type="button" className="btn btn-outline-secondary px-3" onClick={prevMonth} aria-label="前月">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h1 className="text-xl font-bold text-slate-900">{year}年{month + 1}月</h1>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+            <button onClick={prevMonth} className="px-3 py-2 hover:bg-slate-100 transition" aria-label="前月">
               <ChevronLeft size={18} />
             </button>
-            <button type="button" className="btn btn-outline-secondary px-3 fw-semibold" onClick={goToday}>
+            <button onClick={goToday} className="px-3 py-2 hover:bg-slate-100 transition border-x border-slate-300 text-sm font-medium">
               今日
             </button>
-            <button type="button" className="btn btn-outline-secondary px-3" onClick={nextMonth} aria-label="次月">
+            <button onClick={nextMonth} className="px-3 py-2 hover:bg-slate-100 transition" aria-label="次月">
               <ChevronRight size={18} />
             </button>
           </div>
-          <span className="fw-bold fs-5">{year}年{month + 1}月</span>
           <button
-            type="button"
-            className="btn btn-primary d-flex align-items-center gap-1 px-3"
             onClick={() => {
               setEditingReservation(null);
               setCustomersForModal([]);
               setReservationMode('edit');
               setModalOpen(true);
             }}
+            className="flex items-center gap-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
           >
-            <Plus size={18} />
+            <Plus size={16} />
             新規予約
           </button>
         </div>
       </div>
 
-      {/* カレンダー本体 */}
-      <div className="position-relative">
+      {/* カレンダー */}
+      <div className="relative bg-white rounded-xl border border-slate-200 overflow-hidden">
         {detailLoading && (
-          <div className="position-absolute top-0 start-0 end-0 bottom-0 d-flex align-items-center justify-content-center bg-white bg-opacity-75 rounded z-2" style={{ zIndex: 10 }}>
-            <div className="spinner-border text-primary" role="status">
-              <span className="visually-hidden">読み込み中</span>
-            </div>
+          <div className="absolute inset-0 flex items-center justify-center bg-white/75 z-10">
+            <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent" />
           </div>
         )}
 
-        <div className="card shadow-sm">
-          <div className="card-body p-0">
-            <div className="table-responsive">
-              <table className="table table-bordered mb-0" style={{ tableLayout: 'fixed', width: '100%' }}>
-                <thead className="table-light">
-                  <tr>
-                    {WEEKDAYS_JA.map((day, idx) => (
-                      <th
-                        key={day}
-                        className="text-center py-2 fw-bold"
-                        style={{
-                          width: '14.28%',
-                          fontSize: '1rem',
-                          color: idx === 0 ? '#dc3545' : idx === 6 ? '#0d6efd' : undefined,
-                        }}
-                      >
-                        {day}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthGrid.map((row, rowIdx) => (
-                    <tr key={rowIdx} style={{ height: '130px' }}>
-                      {row.map((cellDate, colIdx) => {
-                        const key = cellDate ? cellDate.toISOString().slice(0, 10) : `empty-${rowIdx}-${colIdx}`;
-                        const events = cellDate ? (eventsByDate[key] || []) : [];
-                        const isToday = cellDate && new Date().toDateString() === cellDate.toDateString();
-                        const dow = cellDate?.getDay();
-                        return (
-                          <td
-                            key={key}
-                            className="p-1 align-top"
-                            style={{
-                              verticalAlign: 'top',
-                              backgroundColor: !cellDate ? '#f8f9fa' : undefined,
-                            }}
-                          >
-                            {cellDate && (
-                              <>
-                                <div className="mb-1 d-flex justify-content-between align-items-center px-1">
-                                  <span
-                                    className={isToday ? 'badge bg-primary rounded-circle' : ''}
-                                    style={{
-                                      fontSize: '1rem',
-                                      fontWeight: 600,
-                                      color: isToday ? undefined : dow === 0 ? '#dc3545' : dow === 6 ? '#0d6efd' : '#212529',
-                                      width: isToday ? '28px' : undefined,
-                                      height: isToday ? '28px' : undefined,
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                    }}
-                                  >
-                                    {cellDate.getDate()}
-                                  </span>
-                                  {events.length > 0 && (
-                                    <small className="text-muted" style={{ fontSize: '0.7rem' }}>
-                                      {events.length}件
-                                    </small>
-                                  )}
-                                </div>
-                                <div className="d-flex flex-column gap-1">
-                                  {events.map((ev: any) => (
-                                    <button
-                                      key={ev.id}
-                                      type="button"
-                                      className={`badge ${getStatusBadgeClass(ev.status)} border-0 text-start w-100 text-truncate`}
-                                      style={{
-                                        fontSize: '0.8rem',
-                                        cursor: 'pointer',
-                                        padding: '4px 6px',
-                                        lineHeight: 1.4,
-                                        whiteSpace: 'nowrap',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                      }}
-                                      onClick={() => handleSelectEvent(ev)}
-                                      title={ev.title}
-                                    >
-                                      {ev.title}
-                                    </button>
-                                  ))}
-                                </div>
-                              </>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* 曜日ヘッダー */}
+        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+          {WEEKDAYS_JA.map((day, idx) => (
+            <div
+              key={day}
+              className={`text-center py-2 text-sm font-semibold ${
+                idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-700'
+              }`}
+            >
+              {day}
             </div>
-          </div>
+          ))}
         </div>
+
+        {/* 日付グリッド */}
+        {monthGrid.map((row, rowIdx) => (
+          <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0">
+            {row.map((cellDate, colIdx) => {
+              const key = cellDate ? cellDate.toISOString().slice(0, 10) : `empty-${rowIdx}-${colIdx}`;
+              const events = cellDate ? (eventsByDate[key] || []) : [];
+              const isToday = cellDate && new Date().toDateString() === cellDate.toDateString();
+              const dow = cellDate?.getDay();
+              return (
+                <div
+                  key={key}
+                  className={`min-h-[100px] p-1 border-r border-slate-100 last:border-r-0 ${
+                    !cellDate ? 'bg-slate-50' : ''
+                  }`}
+                >
+                  {cellDate && (
+                    <>
+                      <div className="flex items-center justify-between px-0.5 mb-0.5">
+                        <span
+                          className={`text-sm font-semibold inline-flex items-center justify-center ${
+                            isToday
+                              ? 'bg-blue-600 text-white w-7 h-7 rounded-full'
+                              : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-slate-800'
+                          }`}
+                        >
+                          {cellDate.getDate()}
+                        </span>
+                        {events.length > 0 && (
+                          <span className="text-[10px] text-slate-400">{events.length}件</span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        {events.map((ev: any) => (
+                          <button
+                            key={ev.id}
+                            onClick={() => handleSelectEvent(ev)}
+                            className={`${getStatusColor(ev.status)} text-left text-xs px-1.5 py-0.5 rounded truncate w-full hover:opacity-80 transition`}
+                            title={ev.title}
+                          >
+                            {ev.title}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       {modalOpen && (
