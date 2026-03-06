@@ -100,20 +100,22 @@ async function getAuthUser(request: Request): Promise<{ id: string } | null> {
   const accessToken = authHeader.split(' ')[1];
   if (!accessToken) return null;
 
-  // verify_jwt: true により、ゲートウェイがJWT署名を検証済み。
-  // 安全にペイロードをデコードして sub（ユーザーID）を取得できる。
-  try {
-    const parts = accessToken.split('.');
-    if (parts.length === 3) {
-      const pad = (s: string) => s + '='.repeat((4 - s.length % 4) % 4);
-      const payload = JSON.parse(atob(pad(parts[1].replace(/-/g, '+').replace(/_/g, '/'))));
+  // 1. Supabase Auth JWT の検証（SUPABASE_JWT_SECRET を使用して署名を検証）
+  const supabaseJwtSecret = Deno.env.get('SUPABASE_JWT_SECRET');
+  if (supabaseJwtSecret) {
+    try {
+      const { payload } = await jose.jwtVerify(
+        accessToken,
+        new TextEncoder().encode(supabaseJwtSecret),
+        { algorithms: ['HS256'] }
+      );
       if (payload.sub) return { id: payload.sub as string };
+    } catch (_) {
+      // Supabase Auth JWT ではない、または無効
     }
-  } catch (_) {
-    // malformed JWT
   }
 
-  // フォールバック: JWT_SECRET で署名されたカスタムJWT（旧形式）
+  // 2. カスタム JWT の検証（JWT_SECRET を使用して署名を検証）
   if (JWT_SECRET) {
     try {
       const { payload } = await jose.jwtVerify(
@@ -124,7 +126,7 @@ async function getAuthUser(request: Request): Promise<{ id: string } | null> {
       const sub = payload.sub;
       if (sub) return { id: sub as string };
     } catch (_) {
-      // not our JWT or invalid
+      // カスタム JWT でもない、または無効
     }
   }
   return null;
@@ -177,7 +179,21 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     const authEmail = (user.email as string) || ((user.login_id as string) + AUTH_EMAIL_SUFFIX);
     let supabaseSession: { access_token: string; refresh_token: string } | null = null;
     try {
-      await supabase.auth.admin.updateUserById(user.user_id as string, { password });
+      // まず既存ユーザーのパスワードを更新（Supabase Auth に登録済みの場合）
+      const { error: updateErr } = await supabase.auth.admin.updateUserById(user.user_id as string, { password });
+      if (updateErr) {
+        // Supabase Auth にユーザーが存在しない場合は新規作成
+        console.log(`[Login] User not in Supabase Auth (${updateErr.message}), creating...`);
+        const { error: createErr } = await supabase.auth.admin.createUser({
+          id: user.user_id as string,
+          email: authEmail,
+          password,
+          email_confirm: true,
+        });
+        if (createErr) {
+          throw new Error(`Supabase Auth user creation failed: ${createErr.message}`);
+        }
+      }
       const { data: authData } = await supabase.auth.signInWithPassword({ email: authEmail, password });
       if (authData?.session) {
         supabaseSession = {
