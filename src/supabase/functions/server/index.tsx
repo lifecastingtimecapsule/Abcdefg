@@ -100,22 +100,7 @@ async function getAuthUser(request: Request): Promise<{ id: string } | null> {
   const accessToken = authHeader.split(' ')[1];
   if (!accessToken) return null;
 
-  // 1. Supabase Auth JWT の検証（SUPABASE_JWT_SECRET を使用して署名を検証）
-  const supabaseJwtSecret = Deno.env.get('SUPABASE_JWT_SECRET');
-  if (supabaseJwtSecret) {
-    try {
-      const { payload } = await jose.jwtVerify(
-        accessToken,
-        new TextEncoder().encode(supabaseJwtSecret),
-        { algorithms: ['HS256'] }
-      );
-      if (payload.sub) return { id: payload.sub as string };
-    } catch (_) {
-      // Supabase Auth JWT ではない、または無効
-    }
-  }
-
-  // 2. カスタム JWT の検証（JWT_SECRET を使用して署名を検証）
+  // JWT_SECRET で署名されたカスタム JWT を検証
   if (JWT_SECRET) {
     try {
       const { payload } = await jose.jwtVerify(
@@ -126,7 +111,7 @@ async function getAuthUser(request: Request): Promise<{ id: string } | null> {
       const sub = payload.sub;
       if (sub) return { id: sub as string };
     } catch (_) {
-      // カスタム JWT でもない、または無効
+      // 無効な JWT
     }
   }
   return null;
@@ -206,21 +191,14 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     }
     const tAuth = Date.now();
 
-    // Supabase Auth セッション取得失敗時はカスタム JWT にフォールバック
-    let responseToken: string;
-    let responseRefreshToken: string | undefined;
-    if (supabaseSession) {
-      responseToken = supabaseSession.access_token;
-      responseRefreshToken = supabaseSession.refresh_token;
-    } else {
-      const secret = new TextEncoder().encode(JWT_SECRET);
-      responseToken = await new jose.SignJWT({ email: user.email })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setSubject(user.user_id as string)
-        .setIssuedAt()
-        .setExpirationTime(JWT_EXPIRY)
-        .sign(secret);
-    }
+    // 常に JWT_SECRET で署名したカスタム JWT を発行（Supabase Auth は登録・同期のみに使用）
+    const secret = new TextEncoder().encode(JWT_SECRET);
+    const responseToken = await new jose.SignJWT({ email: user.email })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(user.user_id as string)
+      .setIssuedAt()
+      .setExpirationTime(JWT_EXPIRY)
+      .sign(secret);
     const tJwt = Date.now();
 
     // 認証成功後は即座にトークンを返し、last_login_at 更新は非同期で実行（応答を遅らせない）
@@ -236,12 +214,10 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     const authSyncMs = tAuth - tBcrypt;
     const jwtMs = tJwt - tAuth;
     const totalMs = tEnd - t0;
-    const tokenType = supabaseSession ? 'supabase' : 'custom';
-    console.log(`[Perf] POST /login userLookupMs=${userLookupMs} bcryptMs=${bcryptMs} authSyncMs=${authSyncMs} jwtMs=${jwtMs} totalMs=${totalMs} tokenType=${tokenType} result=success`);
+    console.log(`[Perf] POST /login userLookupMs=${userLookupMs} bcryptMs=${bcryptMs} authSyncMs=${authSyncMs} jwtMs=${jwtMs} totalMs=${totalMs} tokenType=custom result=success`);
     return c.json({
       success: true,
       access_token: responseToken,
-      ...(responseRefreshToken && { refresh_token: responseRefreshToken }),
       user: sanitizeUserForResponse({
         ...user,
         created_at: user.created_at || new Date().toISOString(),
