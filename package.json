@@ -62,7 +62,7 @@
             "@types/node": "^20.10.0",
             "@vitejs/plugin-react-swc": "^3.10.2",
             "bcryptjs": "^3.0.3",
-            "supabase": "^2.76.8",
+            "supabase": "^2.76.17",
             "vite": "6.3.5"
       },
       "scripts": {
