@@ -177,7 +177,20 @@ app.post('/make-server-fe84bde0/login', async (c) => {
     const authEmail = (user.email as string) || ((user.login_id as string) + AUTH_EMAIL_SUFFIX);
     let supabaseSession: { access_token: string; refresh_token: string } | null = null;
     try {
-      await supabase.auth.admin.updateUserById(user.user_id as string, { password });
+      // まず既存ユーザーのパスワードを更新。失敗した場合はユーザーが Supabase Auth に存在しないため新規作成する
+      const { error: updateError } = await supabase.auth.admin.updateUserById(user.user_id as string, { password });
+      if (updateError) {
+        console.log(`[Login] updateUserById failed (${updateError.message}), creating Supabase Auth user with same UUID...`);
+        const { error: createError } = await supabase.auth.admin.createUser({
+          id: user.user_id as string,
+          email: authEmail,
+          password,
+          email_confirm: true,
+        });
+        if (createError) {
+          throw new Error(`Supabase Auth user creation failed: ${createError.message}`);
+        }
+      }
       const { data: authData } = await supabase.auth.signInWithPassword({ email: authEmail, password });
       if (authData?.session) {
         supabaseSession = {
