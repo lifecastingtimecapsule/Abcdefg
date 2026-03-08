@@ -17,6 +17,7 @@ export interface LoginResponse {
 
 export interface MeResponse {
   user: User;
+  locations: Location[];
 }
 
 export interface Child {

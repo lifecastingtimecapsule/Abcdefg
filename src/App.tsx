@@ -12,7 +12,7 @@ import { OperationsPage } from './components/OperationsPage';
 import { apiRequest, setUnauthorizedCallback, invalidateTokenCache } from './utils/api';
 import { functionsBaseUrl, publicAnonKey } from './utils/supabase/info';
 import { createClient } from './utils/supabase/client';
-import { User, MeResponse } from './types';
+import { User, Location, MeResponse } from './types';
 
 // アプリ起動直後に Edge Function をウォームアップ（コールドスタート対策）
 const _warmup = (() => {
@@ -25,16 +25,17 @@ export default function App() {
   const [currentRoute, setCurrentRoute] = useState(window.location.pathname);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [accessibleLocations, setAccessibleLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState('calendar');
   const [showReauthModal, setShowReauthModal] = useState(false);
 
-  // URL???E???????E
+  // URL変更検知
   useEffect(() => {
-    console.log('[App] ?????E', window.location.pathname);
-    
+    console.log('[App] 初期パス:', window.location.pathname);
+
     const handlePopState = () => {
-      console.log('[App] ?????:', window.location.pathname);
+      console.log('[App] ポップステート:', window.location.pathname);
       setCurrentRoute(window.location.pathname);
     };
 
@@ -43,11 +44,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // 401?????E???????????E?????????E?E
+    // 401発生時の再認証コールバックを設定
     setUnauthorizedCallback(() => {
       setShowReauthModal(true);
     });
-    
+
     checkAuth();
   }, []);
 
@@ -59,12 +60,15 @@ export default function App() {
         await tryInitializeSystem();
         setIsAuthenticated(false);
         setCurrentUser(null);
+        setAccessibleLocations([]);
         setLoading(false);
         return;
       }
 
-      const userData = await apiRequest<MeResponse>('/me');
-      setCurrentUser(userData.user);
+      // /me は v137 から { user, locations } を返す
+      const meData = await apiRequest<MeResponse>('/me');
+      setCurrentUser(meData.user);
+      setAccessibleLocations(meData.locations || []);
       setIsAuthenticated(true);
     } catch (err: any) {
       if (err?.message === 'UNAUTHORIZED') {
@@ -74,6 +78,7 @@ export default function App() {
         createClient().auth.signOut();
         setIsAuthenticated(false);
         setCurrentUser(null);
+        setAccessibleLocations([]);
       }
     } finally {
       setLoading(false);
@@ -82,41 +87,41 @@ export default function App() {
 
   const tryInitializeSystem = async () => {
     try {
-      // ???E??????????????????????E???????E?E
       const { projectId, publicAnonKey } = await import('./utils/supabase/info');
       const apiUrl = `https://${projectId}.supabase.co/functions/v1/make-server-fe84bde0/initialize`;
-      
+
       console.log('[Init] Attempting system initialization...');
-      
+
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${publicAnonKey}`
         }
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         if (data.already_initialized) {
-          console.log('????????????????');
+          console.log('システムは既に初期化済み');
         } else {
-          console.log('?????????????', data);
+          console.log('システム初期化完了', data);
         }
       } else {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        console.error(`?????? (${response.status}):`, errorData.error || errorData);
+        console.error(`初期化エラー (${response.status}):`, errorData.error || errorData);
       }
     } catch (err: any) {
-      console.error('?????? (Network/Exception):', err?.message || err);
-      // Network errors are often not critical for initialization check
-      // The system might already be initialized
+      console.error('初期化エラー (Network/Exception):', err?.message || err);
     }
   };
 
-  const handleLogin = async (initialUser?: User) => {
-    if (initialUser) {
-      setCurrentUser(initialUser);
+  // LoginPage からログイン成功時に呼ばれる。
+  // user + locations の両方を受け取ることで checkAuth() の /me 往復を省略する。
+  const handleLogin = async (initialData?: { user: User; locations: Location[] }) => {
+    if (initialData) {
+      setCurrentUser(initialData.user);
+      setAccessibleLocations(initialData.locations || []);
       setIsAuthenticated(true);
       setLoading(false);
       return;
@@ -130,13 +135,14 @@ export default function App() {
     createClient().auth.signOut();
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setAccessibleLocations([]);
     setCurrentPage('calendar');
     setShowReauthModal(false);
   };
 
-  const handleReauthSuccess = async (token: string) => {
+  const handleReauthSuccess = async (_token: string) => {
     setShowReauthModal(false);
-    // ??E????E?????E???????E????E????
+    // セッションを再取得してユーザー情報を更新
     await checkAuth();
   };
 
@@ -159,8 +165,8 @@ export default function App() {
   }
 
   const renderPage = () => {
-    if (!currentUser) return <CalendarPage userRole="staff" />;
-    
+    if (!currentUser) return <CalendarPage userRole="staff" initialLocations={accessibleLocations} />;
+
     // Check if user has access to the current page
     const hasAccess = () => {
       if (currentPage === 'operations' && currentUser.role !== 'admin') {
@@ -175,37 +181,37 @@ export default function App() {
     // If no access, silently redirect to calendar
     if (!hasAccess()) {
       setTimeout(() => setCurrentPage('calendar'), 0);
-      return <CalendarPage userRole={currentUser.role} />;
+      return <CalendarPage userRole={currentUser.role} initialLocations={accessibleLocations} />;
     }
-    
+
     switch (currentPage) {
       case 'calendar':
-        return <CalendarPage userRole={currentUser.role} />;
+        return <CalendarPage userRole={currentUser.role} initialLocations={accessibleLocations} />;
       case 'customers':
         return <CustomersPage userRole={currentUser.role} />;
       case 'work-orders':
         return <WorkOrdersPage />;
       case 'sales-incentives':
-        return <SalesIncentivesPage 
+        return <SalesIncentivesPage
           userRole={currentUser.role}
           userId={currentUser.user_id}
-          onReauthRequest={() => setShowReauthModal(true)} 
+          onReauthRequest={() => setShowReauthModal(true)}
         />;
       case 'operations':
-        return <OperationsPage 
-          userRole={currentUser.role} 
-          onReauthRequest={() => setShowReauthModal(true)} 
+        return <OperationsPage
+          userRole={currentUser.role}
+          onReauthRequest={() => setShowReauthModal(true)}
         />;
       default:
-        return <CalendarPage userRole={currentUser.role} />;
+        return <CalendarPage userRole={currentUser.role} initialLocations={accessibleLocations} />;
     }
   };
 
   return (
     <>
-      <Toaster 
-        position="top-center" 
-        richColors 
+      <Toaster
+        position="top-center"
+        richColors
         closeButton
         toastOptions={{
           duration: 4000,
@@ -217,7 +223,7 @@ export default function App() {
           onCancel={handleReauthCancel}
         />
       )}
-      {/* ????????????????????????????????????E?? */}
+      {/* パスワード変更が必要なユーザーにはモーダルを強制表示 */}
       {currentUser?.must_change_password && (
         <MustChangePasswordModal
           currentUser={currentUser}

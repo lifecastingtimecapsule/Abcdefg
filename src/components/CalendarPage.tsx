@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { apiRequest, consumeCalendarPrefetch } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, MapPin } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
@@ -98,11 +98,20 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
   );
 }
 
-export function CalendarPage({ userRole }: { userRole: string }) {
+interface CalendarPageProps {
+  userRole: string;
+  /** App.tsx から受け取るアクセス可能ロケーション一覧（ページリフレッシュ時に使用） */
+  initialLocations?: Location[];
+}
+
+export function CalendarPage({ userRole, initialLocations = [] }: CalendarPageProps) {
   const [reservations, setReservations] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [customersForModal, setCustomersForModal] = useState<Customer[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
+  const [locations, setLocations] = useState<Location[]>(initialLocations);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(
+    initialLocations[0]?.location_id ?? null
+  );
   const [users, setUsers] = useState<User[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,83 +131,100 @@ export function CalendarPage({ userRole }: { userRole: string }) {
     return `${year}-${String(month + 1).padStart(2, '0')}`;
   }, [year, month]);
 
-  useEffect(() => { loadCalendarData(); }, [monthParam]);
+  // selectedLocationId を ref で追跡することで、loadCalendarData 内で
+  // クロージャの古い値に依存せず常に最新値を参照できる
+  const selectedLocationIdRef = useRef<string | null>(selectedLocationId);
+  useEffect(() => {
+    selectedLocationIdRef.current = selectedLocationId;
+  }, [selectedLocationId]);
 
-  const loadCalendarData = async () => {
+  // カレンダーデータを適用するヘルパー
+  const applyCalendarData = useCallback((calData: any) => {
+    setReservations(calData.reservations || []);
+    setLocations(prev => calData.locations?.length ? calData.locations : prev);
+    setMenuItems(calData.menu_items || []);
+    setUsers(calData.users || []);
+    if (calData.work_orders) {
+      setWorkOrders(calData.work_orders);
+    }
+  }, []);
+
+  const loadCalendarData = useCallback(async (locationIdOverride?: string | null) => {
+    setLoading(true);
     try {
-      setLoading(true);
-
-      // ── プリフェッチ結果を優先して使用 ──────────────────────
-      // ログイン直後なら /calendar はすでに進行中（または完了済み）。
-      // await すると即座に値が返るか、残りミリ秒だけ待つだけでよい。
+      // ── プリフェッチ結果を優先して使用 ────────────────────────────
+      // ログイン直後なら /calendar-data はすでに進行中（または完了済み）。
       const prefetched = consumeCalendarPrefetch(monthParam);
-      let calendarData: {
-        reservations: any[]; locations: any[]; menu_items: any[]; users: any[];
-      } | null = null;
 
       if (prefetched) {
         console.log('[CalendarPage] プリフェッチ結果を使用');
-        calendarData = await prefetched;
+        const result = await prefetched;
+        if (result) {
+          const { meData, calendarData } = result;
+          // プリフェッチが initialLocations なしに実行された場合（ログイン直後）、
+          // meData から locations を補完する
+          const locs = (meData.locations as Location[]);
+          if (locs?.length > 0) {
+            setLocations(locs);
+            if (!selectedLocationIdRef.current) {
+              const firstLocId = locs[0]?.location_id ?? null;
+              setSelectedLocationId(firstLocId);
+              selectedLocationIdRef.current = firstLocId;
+            }
+          }
+          applyCalendarData(calendarData);
+          return;
+        }
       }
 
-      // プリフェッチがない、または失敗した場合は通常リクエスト
-      if (!calendarData) {
+      // ── プリフェッチなし: 通常リクエスト ────────────────────────
+      // location_id を決定する
+      let locId = locationIdOverride !== undefined ? locationIdOverride : selectedLocationIdRef.current;
+
+      // locations がまだ空の場合（稀: 初回リフレッシュで initialLocations が未渡し）、
+      // /me を呼んでロケーション一覧を取得する
+      if (!locId && locations.length === 0) {
+        console.log('[CalendarPage] /me でロケーション取得');
         try {
-          calendarData = await apiRequest<{
-            reservations: any[]; locations: any[]; menu_items: any[]; users: any[];
-          }>(`/calendar?month=${monthParam}`);
-        } catch (primaryErr) {
-          console.warn('[CalendarPage] /calendar 失敗、フォールバックへ:', primaryErr);
+          const meData = await apiRequest<{ user: any; locations: Location[] }>('/me');
+          const locs = meData.locations || [];
+          setLocations(locs);
+          locId = locs[0]?.location_id ?? null;
+          setSelectedLocationId(locId);
+          selectedLocationIdRef.current = locId;
+        } catch (meErr) {
+          console.warn('[CalendarPage] /me 失敗:', meErr);
         }
       }
 
-      if (calendarData) {
-        // ── 正常系：単一エンドポイントからすべてのデータを取得 ──
-        setReservations(calendarData.reservations || []);
-        setLocations(calendarData.locations || []);
-        setMenuItems(calendarData.menu_items || []);
-        setUsers(calendarData.users || []);
-      } else {
-        // ── フォールバック：個別エンドポイントを並列取得 ────────
-        // すべての結果を await してから setLoading(false) を呼ぶ（fire-and-forget を防ぐ）
-        console.log('[CalendarPage] フォールバック: 個別エンドポイントを並列取得');
-        const [resResult, locResult, menuResult, usersResult] = await Promise.allSettled([
-          apiRequest(`/reservations?month=${monthParam}`),
-          apiRequest('/locations'),
-          apiRequest('/menu-items'),
-          apiRequest('/users'),
-        ]);
+      const locationParam = locId ? `&location_id=${locId}` : '';
+      const calData = await apiRequest(`/calendar-data?month=${monthParam}${locationParam}`);
+      applyCalendarData(calData);
 
-        if (resResult.status === 'fulfilled') {
-          setReservations((resResult.value as any).reservations || []);
-        } else {
-          console.error('[CalendarPage] /reservations 失敗:', resResult.reason);
-          toast.error('予約データの読み込みに失敗しました');
-        }
-        if (locResult.status === 'fulfilled') {
-          setLocations((locResult.value as any).locations || []);
-        } else {
-          console.error('[CalendarPage] /locations 失敗:', locResult.reason);
-        }
-        if (menuResult.status === 'fulfilled' && (menuResult.value as any)?.menu_items) {
-          setMenuItems((menuResult.value as any).menu_items);
-        } else if (menuResult.status === 'rejected') {
-          console.warn('[CalendarPage] /menu-items 失敗:', menuResult.reason);
-        }
-        if (usersResult.status === 'fulfilled' && (usersResult.value as any)?.users) {
-          setUsers((usersResult.value as any).users);
-        } else if (usersResult.status === 'rejected') {
-          console.warn('[CalendarPage] /users 失敗:', usersResult.reason);
-        }
-      }
     } catch (err: any) {
       console.error('[CalendarPage] データ読み込み失敗:', err);
       toast.error('データの読み込みに失敗しました');
     } finally {
-      // すべての await が完了してから loading を false にする
       setLoading(false);
     }
-  };
+  }, [monthParam, applyCalendarData]);
+
+  // 月が変わったら再取得
+  useEffect(() => {
+    loadCalendarData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthParam]);
+
+  // ロケーション切り替え時に再取得（初回マウント時は monthParam の effect に任せる）
+  const isFirstMountRef = useRef(true);
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    loadCalendarData(selectedLocationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLocationId]);
 
   const handleDelete = async (reservationId: string) => {
     try {
@@ -257,18 +283,47 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const goToday = () => setDate(new Date());
 
   // ── ロード中はスケルトン UI を表示 ──────────────────────────
-  // 単純なスピナーではなくカレンダー骨格を見せることで
-  // 「空白の間」の知覚を軽減する
   if (loading) {
     return <CalendarSkeleton year={year} month={month} />;
   }
+
+  // 現在選択中のロケーション名
+  const selectedLocation = locations.find(l => l.location_id === selectedLocationId);
 
   return (
     <div>
       {/* ヘッダー */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h1 className="text-xl font-bold text-slate-900">{year}年{month + 1}月</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* ロケーションセレクター（複数ある場合のみ表示） */}
+          {locations.length > 1 && (
+            <div className="flex items-center gap-1.5">
+              <MapPin size={15} className="text-slate-500 flex-shrink-0" />
+              <select
+                value={selectedLocationId ?? ''}
+                onChange={(e) => setSelectedLocationId(e.target.value || null)}
+                className="text-sm border border-slate-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {userRole === 'admin' && (
+                  <option value="">全店舗</option>
+                )}
+                {locations.map(loc => (
+                  <option key={loc.location_id} value={loc.location_id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {/* ロケーションが1つだけの場合はラベル表示 */}
+          {locations.length === 1 && (
+            <span className="flex items-center gap-1 text-sm text-slate-500">
+              <MapPin size={14} />
+              {locations[0].name}
+            </span>
+          )}
+
           <div className="flex rounded-lg border border-slate-300 overflow-hidden">
             <button onClick={prevMonth} className="px-3 py-2 hover:bg-slate-100 transition" aria-label="前月">
               <ChevronLeft size={18} />

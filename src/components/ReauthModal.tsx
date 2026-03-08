@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { createClient } from '../utils/supabase/client';
-import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
 
 const AUTH_EMAIL_SUFFIX = '@app.local';
 
@@ -22,6 +21,7 @@ export function ReauthModal({ onSuccess, onCancel }: ReauthModalProps) {
     setLoading(true);
 
     try {
+      // Supabase Auth で直接再認証（v137: JWKS ベース、POST /login は廃止）
       const supabase = createClient();
       const authEmail = loginId.trim() + AUTH_EMAIL_SUFFIX;
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -29,30 +29,11 @@ export function ReauthModal({ onSuccess, onCancel }: ReauthModalProps) {
         password,
       });
 
-      if (!authError && authData?.session?.access_token) {
-        onSuccess(authData.session.access_token);
-        return;
+      if (authError || !authData?.session?.access_token) {
+        throw new Error(authError?.message || 'ログインIDまたはパスワードが正しくありません');
       }
 
-      const response = await fetch(`${functionsBaseUrl}/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ login_id: loginId.trim(), password }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'ログインに失敗しました');
-      }
-      if (data.access_token) {
-        localStorage.setItem('access_token', data.access_token);
-        onSuccess(data.access_token);
-      } else {
-        throw new Error(data.error || 'ログインに失敗しました');
-      }
+      onSuccess(authData.session.access_token);
     } catch (err: any) {
       console.error('Reauth error:', err);
       setError(err.message || 'ログインに失敗しました');

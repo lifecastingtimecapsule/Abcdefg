@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
 import { createClient } from '../utils/supabase/client';
-import { prefetchCalendarData } from '../utils/api';
+import { startPrefetchChain } from '../utils/api';
 import { LogIn } from 'lucide-react';
+import { User, Location } from '../types';
+
+// Supabase Auth のメール形式: loginId + このサフィックス
+const AUTH_EMAIL_SUFFIX = '@app.local';
 
 interface LoginPageProps {
-  onLogin: (user?: { user_id: string; name: string; login_id: string; role: string }) => void;
+  onLogin: (data?: { user: User; locations: Location[] }) => void;
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
@@ -25,52 +29,52 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     const trimmedLoginId = loginId.trim();
 
     try {
-      const response = await fetch(`${functionsBaseUrl}/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ login_id: trimmedLoginId, password }),
+      // ── Step 1: Supabase Auth で直接ログイン ─────────────────────
+      // bcrypt + カスタム JWT から Supabase Auth（JWKS）への移行。
+      // signInWithPassword は Edge Function を経由せず直接 Supabase に認証する。
+      // これにより bcrypt の ~300ms オーバーヘッドが解消される。
+      const supabase = createClient();
+      const authEmail = `${trimmedLoginId}${AUTH_EMAIL_SUFFIX}`;
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password,
       });
 
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setError(data.error || 'ログインに失敗しました');
+      if (authError || !authData?.session?.access_token) {
+        setError(authError?.message || 'ログインIDまたはパスワードが正しくありません');
         return;
       }
 
-      if (data.access_token && data.user) {
-        localStorage.setItem('access_token', data.access_token);
+      const token = authData.session.access_token;
 
-        // ── プリフェッチ開始 ──────────────────────────────────────
-        // トークン取得直後にカレンダーデータ取得を開始。
-        // CalendarPage のマウント・useEffect の発火を待たず、
-        // React レンダリングと並走させることで直列遅延をなくす。
-        const now = new Date();
-        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        prefetchCalendarData(data.access_token, currentMonth);
-        // ─────────────────────────────────────────────────────────
+      // ── Step 2: login-notify を fire-and-forget で送信 ────────────
+      // last_login_at 更新。失敗しても認証には影響しない。
+      fetch(`${functionsBaseUrl}/login-notify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      }).catch(() => {});
 
-        // Supabase Auth セッションとして保存（自動トークン更新が有効になる）
-        if (data.refresh_token) {
-          try {
-            await createClient().auth.setSession({
-              access_token: data.access_token,
-              refresh_token: data.refresh_token,
-            });
-          } catch (sessionErr) {
-            console.log('[Login] setSession failed, using localStorage token:', sessionErr);
-          }
-        }
+      // ── Step 3: プリフェッチチェーン開始 & ユーザー情報取得 ───────
+      // /me（user + locations）と /calendar-data を連鎖的に先行取得する。
+      // startPrefetchChain は /me の Promise を返す → await して即座にユーザー情報取得。
+      // その間に /calendar-data のフェッチも裏で進んでいる。
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const meData = await startPrefetchChain(token, currentMonth);
 
-        onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
-        console.log(`[LoginPerf] login totalMs=${Date.now() - t0} hasRefreshToken=${!!data.refresh_token}`);
-      } else {
-        setError('ログインに失敗しました');
+      if (!meData?.user) {
+        setError('ユーザー情報の取得に失敗しました。もう一度お試しください。');
+        return;
       }
+
+      console.log(`[LoginPerf] login totalMs=${Date.now() - t0}`);
+      onLogin({ user: meData.user as unknown as User, locations: (meData.locations || []) as unknown as Location[] });
+
     } catch (err: unknown) {
-      console.error('[Login] Network error:', err);
+      console.error('[Login] Error:', err);
       setError('ネットワークエラーが発生しました');
     } finally {
       setLoading(false);
