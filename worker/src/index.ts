@@ -1,8 +1,33 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import * as bcrypt from 'bcryptjs';
 import { SignJWT, jwtVerify } from 'jose';
 import * as db from './db';
+
+// ─── Web Crypto password hashing (PBKDF2) ────────────────────────────────────
+// bcryptjs is not reliable in Cloudflare Workers; use native Web Crypto instead.
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' }, keyMaterial, 256);
+  const toHex = (buf: Uint8Array) => Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `pbkdf2:sha256:100000:${toHex(salt)}:${toHex(new Uint8Array(bits))}`;
+}
+
+async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  if (!hash.startsWith('pbkdf2:')) return false;
+  const parts = hash.split(':');
+  if (parts.length !== 5) return false;
+  const [, , iterStr, saltHex, expectedHex] = parts;
+  const iterations = parseInt(iterStr, 10);
+  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map(b => parseInt(b, 16)));
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, keyMaterial, 256);
+  const actualHex = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return actualHex === expectedHex;
+}
 
 type Bindings = {
   DB: D1Database;
@@ -67,12 +92,12 @@ app.post('/login', async (c) => {
   const loginpass = user.loginpass as string | null;
 
   if (passwordHash) {
-    valid = await bcrypt.compare(password, passwordHash);
+    valid = await verifyPassword(password, passwordHash);
   } else if (loginpass) {
     valid = password === loginpass;
     if (valid) {
-      // Upgrade to bcrypt hash on first login
-      const hash = await bcrypt.hash(password, 10);
+      // Upgrade to PBKDF2 hash on first login
+      const hash = await hashPassword(password);
       await db.updatePasswordHash(c.env.DB, user.user_id as string, hash);
     }
   }
@@ -111,10 +136,11 @@ function requireAdmin(handler: (c: any, user: Record<string, unknown>) => Respon
 
 app.get('/me', requireAuth(async (c, tokenUser) => {
   const userId = tokenUser.sub as string;
+  const role = tokenUser.role as string;
   const user = await db.getAppUser(c.env.DB, userId);
   if (!user) return c.json({ error: 'User not found' }, 404);
 
-  const locations = await db.getAccessibleLocations(c.env.DB, userId);
+  const locations = await db.getAccessibleLocations(c.env.DB, userId, role);
   return c.json({ user, locations });
 }));
 
@@ -138,14 +164,14 @@ app.post('/change-password', requireAuth(async (c, tokenUser) => {
   let valid = false;
 
   if (passwordHash) {
-    valid = await bcrypt.compare(current_password, passwordHash);
+    valid = await verifyPassword(current_password, passwordHash);
   } else if (loginpass) {
     valid = current_password === loginpass;
   }
 
   if (!valid) return c.json({ error: 'Current password incorrect' }, 400);
 
-  const newHash = await bcrypt.hash(new_password, 10);
+  const newHash = await hashPassword(new_password);
   await db.updatePasswordHash(c.env.DB, userId, newHash);
   await c.env.DB.prepare('UPDATE app_users SET must_change_password = 0 WHERE user_id = ?').bind(userId).run();
 
