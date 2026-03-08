@@ -124,13 +124,42 @@ export async function getUserLocationAccessAll(db: D1) {
 }
 
 // ========== Customers ==========
-// Actual schema: customer_id, customer_code, parent_name, parent_name_kana,
-// child_name, child_name_kana, children(JSON), phone, email, notes_internal, active_flag, etc.
+// Actual schema: customer_id, customer_code, external_customer_number,
+// parent_name, parent_name_kana, child_name, child_name_kana,
+// child_age_years, child_age_months, children(JSON),
+// phone, email, line_url, postal_code, address_text, notes_internal, active_flag
 // No location_id column.
-export async function getCustomers(db: D1, locationId?: string) {
-  // customers table has no location_id; locationId param is ignored
-  const { results } = await db.prepare('SELECT * FROM customers WHERE active_flag = 1 ORDER BY created_at DESC').all<Record<string, unknown>>();
-  return results.map(parseRow);
+export async function getCustomers(
+  db: D1,
+  options?: { locationId?: string; page?: number; pageSize?: number; search?: string },
+) {
+  const { page = 1, pageSize = 30, search } = options ?? {};
+  const offset = (page - 1) * pageSize;
+
+  let where = 'WHERE active_flag = 1';
+  const binds: unknown[] = [];
+  if (search) {
+    const like = `%${search}%`;
+    where += ` AND (parent_name LIKE ? OR parent_name_kana LIKE ? OR child_name LIKE ? OR child_name_kana LIKE ? OR customer_code LIKE ? OR external_customer_number LIKE ? OR phone LIKE ?)`;
+    binds.push(like, like, like, like, like, like, like);
+  }
+
+  const countRow = await db
+    .prepare(`SELECT COUNT(*) as cnt FROM customers ${where}`)
+    .bind(...binds)
+    .first<{ cnt: number }>();
+  const total = countRow?.cnt ?? 0;
+
+  const { results } = await db
+    .prepare(`SELECT * FROM customers ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    .bind(...binds, pageSize, offset)
+    .all<Record<string, unknown>>();
+
+  return {
+    customers: results.map(parseRow),
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
 }
 
 export async function getCustomersByIds(db: D1, ids: string[]) {
@@ -142,13 +171,17 @@ export async function getCustomersByIds(db: D1, ids: string[]) {
 
 export async function upsertCustomer(db: D1, c: Record<string, unknown>) {
   await db.prepare(`
-    INSERT INTO customers (customer_id, customer_code, parent_name, parent_name_kana, child_name, child_name_kana, children, phone, email, line_url, postal_code, address_text, notes_internal, active_flag, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO customers (customer_id, customer_code, external_customer_number, parent_name, parent_name_kana, child_name, child_name_kana, child_age_years, child_age_months, children, phone, email, line_url, postal_code, address_text, notes_internal, active_flag, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(customer_id) DO UPDATE SET
+      customer_code = excluded.customer_code,
+      external_customer_number = excluded.external_customer_number,
       parent_name = excluded.parent_name,
       parent_name_kana = excluded.parent_name_kana,
       child_name = excluded.child_name,
       child_name_kana = excluded.child_name_kana,
+      child_age_years = excluded.child_age_years,
+      child_age_months = excluded.child_age_months,
       children = excluded.children,
       phone = excluded.phone,
       email = excluded.email,
@@ -160,9 +193,11 @@ export async function upsertCustomer(db: D1, c: Record<string, unknown>) {
       updated_at = excluded.updated_at
   `).bind(
     c.customer_id, c.customer_code ?? null,
+    c.external_customer_number ?? null,
     c.parent_name ?? c.name ?? null,
     c.parent_name_kana ?? c.name_kana ?? null,
     c.child_name ?? null, c.child_name_kana ?? null,
+    c.child_age_years ?? null, c.child_age_months ?? null,
     typeof c.children === 'string' ? c.children : JSON.stringify(c.children ?? []),
     c.phone ?? null, c.email ?? null, c.line_url ?? null,
     c.postal_code ?? null, c.address_text ?? null,
@@ -227,6 +262,15 @@ export async function getReservations(db: D1, locationId?: string) {
   const { results } = await db.prepare(
     'SELECT * FROM reservations ORDER BY reservation_date_time DESC'
   ).all<Record<string, unknown>>();
+  return results.map(parseRow);
+}
+
+export async function getReservationsByCustomerIds(db: D1, customerIds: string[]) {
+  if (!customerIds.length) return [];
+  const placeholders = customerIds.map(() => '?').join(',');
+  const { results } = await db.prepare(
+    `SELECT * FROM reservations WHERE customer_id IN (${placeholders}) ORDER BY reservation_date_time DESC`
+  ).bind(...customerIds).all<Record<string, unknown>>();
   return results.map(parseRow);
 }
 
@@ -305,17 +349,34 @@ export async function getWorkOrders(db: D1, locationId?: string) {
   return results.map(parseRow);
 }
 
+export async function getWorkOrdersByReservationIds(db: D1, reservationIds: string[]) {
+  if (!reservationIds.length) return [];
+  const placeholders = reservationIds.map(() => '?').join(',');
+  const { results } = await db.prepare(
+    `SELECT * FROM work_orders WHERE reservation_id IN (${placeholders}) ORDER BY created_at DESC`
+  ).bind(...reservationIds).all<Record<string, unknown>>();
+  return results.map(parseRow);
+}
+
 export async function upsertWorkOrder(db: D1, wo: Record<string, unknown>) {
   await db.prepare(`
-    INSERT INTO work_orders (work_order_id, customer_id, reservation_id, product_type, status, due_date, notes_internal, status_comments, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO work_orders (work_order_id, customer_id, reservation_id, product_type, status, due_date, delivered_date, pickup_date, priority_order, notes_internal, photo_data_status, nameplate_name, coloring_type, frame_color, mount_color, status_comments, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(work_order_id) DO UPDATE SET
       customer_id = excluded.customer_id,
       reservation_id = excluded.reservation_id,
       product_type = excluded.product_type,
       status = excluded.status,
       due_date = excluded.due_date,
+      delivered_date = excluded.delivered_date,
+      pickup_date = excluded.pickup_date,
+      priority_order = excluded.priority_order,
       notes_internal = excluded.notes_internal,
+      photo_data_status = excluded.photo_data_status,
+      nameplate_name = excluded.nameplate_name,
+      coloring_type = excluded.coloring_type,
+      frame_color = excluded.frame_color,
+      mount_color = excluded.mount_color,
       status_comments = excluded.status_comments,
       updated_at = excluded.updated_at
   `).bind(
@@ -324,7 +385,15 @@ export async function upsertWorkOrder(db: D1, wo: Record<string, unknown>) {
     wo.product_type ?? wo.work_required ?? null,
     wo.status ?? '乾燥中',
     wo.due_date ?? wo.work_date ?? null,
+    wo.delivered_date ?? null,
+    wo.pickup_date ?? null,
+    wo.priority_order ?? null,
     wo.notes_internal ?? wo.memo ?? null,
+    wo.photo_data_status ?? 'not_set',
+    wo.nameplate_name ?? null,
+    wo.coloring_type ?? null,
+    wo.frame_color ?? null,
+    wo.mount_color ?? null,
     typeof wo.status_comments === 'string' ? wo.status_comments : JSON.stringify(wo.status_comments ?? {}),
     wo.created_at ?? new Date().toISOString(),
     new Date().toISOString(),

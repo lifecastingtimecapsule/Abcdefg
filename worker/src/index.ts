@@ -182,7 +182,7 @@ app.post('/change-password', requireAuth(async (c, tokenUser) => {
 
 app.get('/users', requireAdmin(async (c) => {
   const users = await db.getAllAppUsers(c.env.DB);
-  return c.json(users);
+  return c.json({ users });
 }));
 
 app.post('/users', requireAdmin(async (c) => {
@@ -204,7 +204,7 @@ app.put('/users/:id', requireAdmin(async (c) => {
 
 app.get('/locations', requireAuth(async (c) => {
   const locations = await db.getLocations(c.env.DB);
-  return c.json(locations);
+  return c.json({ locations });
 }));
 
 app.post('/locations', requireAdmin(async (c) => {
@@ -233,8 +233,11 @@ app.post('/user-location-access', requireAdmin(async (c) => {
 
 app.get('/customers', requireAuth(async (c) => {
   const locationId = c.req.query('location_id');
-  const customers = await db.getCustomers(c.env.DB, locationId);
-  return c.json(customers);
+  const page = parseInt(c.req.query('page') || '1', 10);
+  const pageSize = parseInt(c.req.query('pageSize') || '30', 10);
+  const search = c.req.query('search') || undefined;
+  const result = await db.getCustomers(c.env.DB, { locationId, page, pageSize, search });
+  return c.json(result);
 }));
 
 app.post('/customers', requireAuth(async (c) => {
@@ -251,11 +254,36 @@ app.put('/customers/:id', requireAuth(async (c) => {
   return c.json({ ok: true });
 }));
 
+app.delete('/customers/:id', requireAuth(async (c) => {
+  const customerId = c.req.param('id');
+  // Cascade: delete work orders for this customer's reservations, then reservations, then customer
+  const { results: reservations } = await c.env.DB.prepare(
+    'SELECT reservation_id FROM reservations WHERE customer_id = ?'
+  ).bind(customerId).all<{ reservation_id: string }>();
+  if (reservations.length > 0) {
+    const placeholders = reservations.map(() => '?').join(',');
+    const ids = reservations.map(r => r.reservation_id);
+    await c.env.DB.prepare(`DELETE FROM work_orders WHERE reservation_id IN (${placeholders})`).bind(...ids).run();
+    await c.env.DB.prepare(`DELETE FROM reservations WHERE reservation_id IN (${placeholders})`).bind(...ids).run();
+  }
+  await c.env.DB.prepare('DELETE FROM customers WHERE customer_id = ?').bind(customerId).run();
+  return c.json({ ok: true, message: '顧客を削除しました' });
+}));
+
+app.post('/customers/batch-fix-age', requireAdmin(async (c) => {
+  // Set child_age_years = 0 where child_age_months is set but child_age_years is NULL
+  const result = await c.env.DB.prepare(
+    'UPDATE customers SET child_age_years = 0 WHERE child_age_months IS NOT NULL AND child_age_years IS NULL'
+  ).run();
+  const updated = result.changes ?? 0;
+  return c.json({ ok: true, updated_count: updated, message: `${updated}件のデータを補完しました` });
+}));
+
 // ─── Menu Items ───────────────────────────────────────────────────────────────
 
 app.get('/menu-items', requireAuth(async (c) => {
   const items = await db.getMenuItems(c.env.DB);
-  return c.json(items);
+  return c.json({ menu_items: items });
 }));
 
 app.post('/menu-items', requireAdmin(async (c) => {
@@ -286,13 +314,19 @@ app.get('/reservations', requireAuth(async (c) => {
   const locationId = c.req.query('location_id');
   const startDate = c.req.query('start_date');
   const endDate = c.req.query('end_date');
+  const customerIdsParam = c.req.query('customer_ids');
 
+  if (customerIdsParam) {
+    const customerIds = customerIdsParam.split(',').filter(Boolean);
+    const rows = await db.getReservationsByCustomerIds(c.env.DB, customerIds);
+    return c.json({ reservations: rows });
+  }
   if (startDate && endDate) {
     const rows = await db.getReservationsByDateRange(c.env.DB, startDate, endDate, locationId);
-    return c.json(rows);
+    return c.json({ reservations: rows });
   }
   const rows = await db.getReservations(c.env.DB, locationId);
-  return c.json(rows);
+  return c.json({ reservations: rows });
 }));
 
 app.post('/reservations', requireAuth(async (c) => {
@@ -314,12 +348,51 @@ app.delete('/reservations/:id', requireAuth(async (c) => {
   return c.json({ ok: true });
 }));
 
+app.post('/reservations/batch-create-work-orders', requireAdmin(async (c) => {
+  const now = new Date().toISOString();
+  // Find past confirmed reservations without work orders
+  const { results: reservations } = await c.env.DB.prepare(`
+    SELECT r.* FROM reservations r
+    LEFT JOIN work_orders wo ON r.reservation_id = wo.reservation_id
+    WHERE r.status = 'confirmed'
+      AND r.reservation_date_time < ?
+      AND wo.work_order_id IS NULL
+  `).bind(now).all<Record<string, unknown>>();
+
+  let created = 0;
+  for (const r of reservations) {
+    const dueDate = new Date(r.reservation_date_time as string);
+    dueDate.setDate(dueDate.getDate() + 28);
+    await c.env.DB.prepare(`
+      INSERT INTO work_orders (work_order_id, customer_id, reservation_id, product_type, status, due_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      r.customer_id ?? null,
+      r.reservation_id,
+      r.work_required ?? 'ライフキャスティング',
+      '乾燥中',
+      dueDate.toISOString().split('T')[0],
+      now, now,
+    ).run();
+    created++;
+  }
+  return c.json({ ok: true, created_count: created, message: `${created}件の制作物を生成しました` });
+}));
+
 // ─── Work Orders ──────────────────────────────────────────────────────────────
 
 app.get('/work-orders', requireAuth(async (c) => {
   const locationId = c.req.query('location_id');
+  const reservationIdsParam = c.req.query('reservation_ids');
+
+  if (reservationIdsParam) {
+    const reservationIds = reservationIdsParam.split(',').filter(Boolean);
+    const rows = await db.getWorkOrdersByReservationIds(c.env.DB, reservationIds);
+    return c.json({ work_orders: rows });
+  }
   const rows = await db.getWorkOrders(c.env.DB, locationId);
-  return c.json(rows);
+  return c.json({ work_orders: rows });
 }));
 
 app.post('/work-orders', requireAuth(async (c) => {
@@ -333,6 +406,15 @@ app.put('/work-orders/:id', requireAuth(async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   body.work_order_id = c.req.param('id');
   await db.upsertWorkOrder(c.env.DB, body);
+  return c.json({ ok: true });
+}));
+
+app.post('/work-orders/reorder', requireAuth(async (c) => {
+  const { orders } = await c.req.json() as { orders: { work_order_id: string; priority_order: number }[] };
+  for (const o of orders) {
+    await c.env.DB.prepare('UPDATE work_orders SET priority_order = ? WHERE work_order_id = ?')
+      .bind(o.priority_order, o.work_order_id).run();
+  }
   return c.json({ ok: true });
 }));
 
@@ -388,17 +470,22 @@ app.post('/calendar/bulk', requireAuth(async (c) => {
   const lastDay = new Date(year, mon, 0).getDate();
   const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
 
-  const [reservations, settings, availability] = await Promise.all([
+  const [reservations, settings, availability, locations, menuItemsRaw, usersRaw] = await Promise.all([
     db.getReservationsByDateRange(c.env.DB, startDate, endDate, location_id),
     db.getReservationSettings(c.env.DB, location_id),
     db.getLocationAvailability(c.env.DB, location_id),
+    db.getLocations(c.env.DB),
+    db.getMenuItems(c.env.DB),
+    db.getAllAppUsers(c.env.DB),
   ]);
 
-  // Fetch unique customer IDs
   const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))];
   const customers = await db.getCustomersByIds(c.env.DB, customerIds as string[]);
 
-  return c.json({ reservations, settings, availability, customers });
+  const reservationIds = [...new Set(reservations.map((r: any) => r.reservation_id).filter(Boolean))];
+  const work_orders = await db.getWorkOrdersByReservationIds(c.env.DB, reservationIds as string[]);
+
+  return c.json({ reservations, settings, availability, customers, work_orders, locations, menu_items: menuItemsRaw, users: usersRaw });
 }));
 
 // ─── Calendar data (GET version for prefetch) ─────────────────────────────────
@@ -411,16 +498,22 @@ app.get('/calendar-data', requireAuth(async (c) => {
   const lastDay = new Date(year, mon, 0).getDate();
   const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
 
-  const [reservations, settings, availability] = await Promise.all([
+  const [reservations, settings, availability, locations, menuItemsRaw, usersRaw] = await Promise.all([
     db.getReservationsByDateRange(c.env.DB, startDate, endDate, locationId),
     db.getReservationSettings(c.env.DB, locationId),
     db.getLocationAvailability(c.env.DB, locationId),
+    db.getLocations(c.env.DB),
+    db.getMenuItems(c.env.DB),
+    db.getAllAppUsers(c.env.DB),
   ]);
 
   const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))];
   const customers = await db.getCustomersByIds(c.env.DB, customerIds as string[]);
 
-  return c.json({ reservations, settings, availability, customers });
+  const reservationIds = [...new Set(reservations.map((r: any) => r.reservation_id).filter(Boolean))];
+  const work_orders = await db.getWorkOrdersByReservationIds(c.env.DB, reservationIds as string[]);
+
+  return c.json({ reservations, settings, availability, customers, work_orders, locations, menu_items: menuItemsRaw, users: usersRaw });
 }));
 
 // ─── Public endpoints ─────────────────────────────────────────────────────────
