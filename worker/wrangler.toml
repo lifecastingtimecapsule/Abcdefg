@@ -1,0 +1,12 @@
+name = "amaretto-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "amaretto-db"
+database_id = "a76fc4ad-3e84-4a2f-a3be-7649a5d8d2ab"
+
+[vars]
+ENVIRONMENT = "production"

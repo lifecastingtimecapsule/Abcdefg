@@ -1,12 +1,8 @@
 import { useState } from 'react';
-import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
-import { createClient } from '../utils/supabase/client';
+import { functionsBaseUrl } from '../utils/supabase/info';
 import { startPrefetchChain } from '../utils/api';
 import { LogIn } from 'lucide-react';
 import { User, Location } from '../types';
-
-// Supabase Auth のメール形式: loginId + このサフィックス
-const AUTH_EMAIL_SUFFIX = '@app.local';
 
 interface LoginPageProps {
   onLogin: (data?: { user: User; locations: Location[] }) => void;
@@ -29,23 +25,20 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     const trimmedLoginId = loginId.trim();
 
     try {
-      // ── Step 1: Supabase Auth で直接ログイン ─────────────────────
-      // bcrypt + カスタム JWT から Supabase Auth（JWKS）への移行。
-      // signInWithPassword は Edge Function を経由せず直接 Supabase に認証する。
-      // これにより bcrypt の ~300ms オーバーヘッドが解消される。
-      const supabase = createClient();
-      const authEmail = `${trimmedLoginId}${AUTH_EMAIL_SUFFIX}`;
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password,
+      // ── Step 1: Cloudflare Worker /login でJWT取得 ───────────────
+      const loginRes = await fetch(`${functionsBaseUrl}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login_id: trimmedLoginId, password }),
       });
 
-      if (authError || !authData?.session?.access_token) {
-        setError(authError?.message || 'ログインIDまたはパスワードが正しくありません');
+      if (!loginRes.ok) {
+        setError('ログインIDまたはパスワードが正しくありません');
         return;
       }
 
-      const token = authData.session.access_token;
+      const { token } = await loginRes.json();
+      localStorage.setItem('access_token', token);
 
       // ── Step 2: login-notify を fire-and-forget で送信 ────────────
       // last_login_at 更新。失敗しても認証には影響しない。

@@ -22,13 +22,17 @@ export function invalidateTokenCache() {
   _tokenCache = null;
 }
 
-/** Supabase セッションを優先し、なければ access_token を返す（結果をキャッシュ） */
+/** localStorage の access_token（Worker JWT）を優先し、なければ Supabase セッションを返す（結果をキャッシュ） */
 export async function getAccessToken(): Promise<string | null> {
   if (_tokenCache && Date.now() < _tokenCache.expiresAt) {
     return _tokenCache.value;
   }
-  const { data } = await createClient().auth.getSession();
-  const token = data?.session?.access_token ?? localStorage.getItem('access_token') ?? null;
+  const localToken = localStorage.getItem('access_token');
+  let token: string | null = localToken;
+  if (!token) {
+    const { data } = await createClient().auth.getSession();
+    token = data?.session?.access_token ?? null;
+  }
   if (token) {
     _tokenCache = { value: token, expiresAt: Date.now() + 10_000 };
   }
