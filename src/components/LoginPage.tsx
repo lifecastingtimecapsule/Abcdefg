@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { publicAnonKey, functionsBaseUrl } from '../utils/supabase/info';
 import { createClient } from '../utils/supabase/client';
+import { prefetchCalendarData } from '../utils/api';
 import { LogIn } from 'lucide-react';
 
 interface LoginPageProps {
@@ -13,31 +14,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Edge Function のコールドスタートをログイン画面表示直後に消化する（最大3秒待ち）
-  useEffect(() => {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 3000);
-    fetch(`${functionsBaseUrl}/public/health`, {
-      signal: ac.signal,
-      headers: { Authorization: `Bearer ${publicAnonKey}` },
-    }).catch(() => {}).finally(() => clearTimeout(t));
-    return () => { ac.abort(); clearTimeout(t); };
-  }, []);
-
-  // ログインボタンが押される前に Edge をウォーム: ログインID入力時とパスワード欄フォーカス時
-  useEffect(() => {
-    if (!loginId) return;
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 2000);
-    fetch(`${functionsBaseUrl}/public/health`, { signal: ac.signal, headers: { Authorization: `Bearer ${publicAnonKey}` } }).catch(() => {}).finally(() => clearTimeout(t));
-    return () => { ac.abort(); clearTimeout(t); };
-  }, [loginId !== '']);
-
-  const warmupOnPasswordFocus = () => {
-    const ac = new AbortController();
-    setTimeout(() => ac.abort(), 3000);
-    fetch(`${functionsBaseUrl}/public/health`, { signal: ac.signal, headers: { Authorization: `Bearer ${publicAnonKey}` } }).catch(() => {});
-  };
+  // ウォームアップは App.tsx のモジュールレベルで1回だけ実行済み。
+  // 重複呼び出しは不要なためここでは行わない。
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +42,16 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
       if (data.access_token && data.user) {
         localStorage.setItem('access_token', data.access_token);
+
+        // ── プリフェッチ開始 ──────────────────────────────────────
+        // トークン取得直後にカレンダーデータ取得を開始。
+        // CalendarPage のマウント・useEffect の発火を待たず、
+        // React レンダリングと並走させることで直列遅延をなくす。
+        const now = new Date();
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        prefetchCalendarData(data.access_token, currentMonth);
+        // ─────────────────────────────────────────────────────────
+
         // Supabase Auth セッションとして保存（自動トークン更新が有効になる）
         if (data.refresh_token) {
           try {
@@ -75,13 +63,14 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             console.log('[Login] setSession failed, using localStorage token:', sessionErr);
           }
         }
+
         onLogin(data.user as { user_id: string; name: string; login_id: string; role: string });
         console.log(`[LoginPerf] login totalMs=${Date.now() - t0} hasRefreshToken=${!!data.refresh_token}`);
       } else {
         setError('ログインに失敗しました');
       }
     } catch (err: unknown) {
-      console.error('Login error:', err);
+      console.error('[Login] Network error:', err);
       setError('ネットワークエラーが発生しました');
     } finally {
       setLoading(false);
@@ -119,7 +108,6 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                onFocus={warmupOnPasswordFocus}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 placeholder="••••••••"
                 required

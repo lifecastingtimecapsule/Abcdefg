@@ -9,7 +9,7 @@ import { CustomersPage } from './components/CustomersPage';
 import { WorkOrdersPage } from './components/WorkOrdersPage';
 import { SalesIncentivesPage } from './components/SalesIncentivesPage';
 import { OperationsPage } from './components/OperationsPage';
-import { apiRequest, setUnauthorizedCallback } from './utils/api';
+import { apiRequest, setUnauthorizedCallback, invalidateTokenCache } from './utils/api';
 import { functionsBaseUrl, publicAnonKey } from './utils/supabase/info';
 import { createClient } from './utils/supabase/client';
 import { User, MeResponse } from './types';
@@ -126,6 +126,7 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
+    invalidateTokenCache();
     createClient().auth.signOut();
     setIsAuthenticated(false);
     setCurrentUser(null);

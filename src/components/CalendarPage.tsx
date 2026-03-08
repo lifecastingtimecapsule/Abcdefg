@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { apiRequest } from '../utils/api';
+import { apiRequest, consumeCalendarPrefetch } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
@@ -35,6 +35,69 @@ function getStatusColor(status: string) {
   return 'bg-slate-400 text-white';
 }
 
+// ────────────────────────────────────────────────────────────
+// スケルトン UI
+// ロード中でもカレンダーの骨格を表示し「空白の間」をなくす
+// ────────────────────────────────────────────────────────────
+function CalendarSkeleton({ year, month }: { year: number; month: number }) {
+  const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
+  // 予約が入っているように見せる固定パターン（列インデックスで決定）
+  const hasPlaceholder = (col: number, row: number) => (col + row * 3) % 5 === 0;
+
+  return (
+    <div className="animate-pulse">
+      {/* ヘッダー骨格 */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="h-7 w-28 bg-slate-200 rounded" />
+        <div className="flex items-center gap-2">
+          <div className="h-9 w-32 bg-slate-200 rounded-lg" />
+          <div className="h-9 w-20 bg-slate-200 rounded-lg" />
+        </div>
+      </div>
+
+      {/* カレンダーグリッド骨格 */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        {/* 曜日ヘッダー */}
+        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+          {WEEKDAYS_JA.map((day, idx) => (
+            <div
+              key={day}
+              className={`text-center py-2 text-sm font-semibold ${
+                idx === 0 ? 'text-red-400' : idx === 6 ? 'text-blue-400' : 'text-slate-400'
+              }`}
+            >
+              {day}
+            </div>
+          ))}
+        </div>
+
+        {/* 日付セル */}
+        {grid.map((row, rowIdx) => (
+          <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0">
+            {row.map((cellDate, colIdx) => (
+              <div
+                key={cellDate ? cellDate.toISOString().slice(0, 10) : `e-${rowIdx}-${colIdx}`}
+                className={`min-h-[100px] p-1 border-r border-slate-100 last:border-r-0 ${
+                  !cellDate ? 'bg-slate-50' : ''
+                }`}
+              >
+                {cellDate && (
+                  <>
+                    <div className="h-4 w-5 bg-slate-200 rounded mb-1.5" />
+                    {hasPlaceholder(colIdx, rowIdx) && (
+                      <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function CalendarPage({ userRole }: { userRole: string }) {
   const [reservations, setReservations] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
@@ -64,38 +127,75 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const loadCalendarData = async () => {
     try {
       setLoading(true);
-      let loaded = false;
-      try {
-        const data = await apiRequest<{
-          reservations: any[]; locations: any[]; menu_items: any[]; users: any[];
-        }>(`/calendar?month=${monthParam}`);
-        setReservations(data.reservations || []);
-        setLocations(data.locations || []);
-        setMenuItems(data.menu_items || []);
-        setUsers(data.users || []);
-        loaded = true;
-      } catch (_) {}
 
-      if (!loaded) {
-        const [resResult, locResult] = await Promise.allSettled([
+      // ── プリフェッチ結果を優先して使用 ──────────────────────
+      // ログイン直後なら /calendar はすでに進行中（または完了済み）。
+      // await すると即座に値が返るか、残りミリ秒だけ待つだけでよい。
+      const prefetched = consumeCalendarPrefetch(monthParam);
+      let calendarData: {
+        reservations: any[]; locations: any[]; menu_items: any[]; users: any[];
+      } | null = null;
+
+      if (prefetched) {
+        console.log('[CalendarPage] プリフェッチ結果を使用');
+        calendarData = await prefetched;
+      }
+
+      // プリフェッチがない、または失敗した場合は通常リクエスト
+      if (!calendarData) {
+        try {
+          calendarData = await apiRequest<{
+            reservations: any[]; locations: any[]; menu_items: any[]; users: any[];
+          }>(`/calendar?month=${monthParam}`);
+        } catch (primaryErr) {
+          console.warn('[CalendarPage] /calendar 失敗、フォールバックへ:', primaryErr);
+        }
+      }
+
+      if (calendarData) {
+        // ── 正常系：単一エンドポイントからすべてのデータを取得 ──
+        setReservations(calendarData.reservations || []);
+        setLocations(calendarData.locations || []);
+        setMenuItems(calendarData.menu_items || []);
+        setUsers(calendarData.users || []);
+      } else {
+        // ── フォールバック：個別エンドポイントを並列取得 ────────
+        // すべての結果を await してから setLoading(false) を呼ぶ（fire-and-forget を防ぐ）
+        console.log('[CalendarPage] フォールバック: 個別エンドポイントを並列取得');
+        const [resResult, locResult, menuResult, usersResult] = await Promise.allSettled([
           apiRequest(`/reservations?month=${monthParam}`),
           apiRequest('/locations'),
-        ]);
-        if (resResult.status === 'fulfilled') setReservations((resResult.value as any).reservations || []);
-        else toast.error('予約データの読み込みに失敗しました');
-        if (locResult.status === 'fulfilled') setLocations((locResult.value as any).locations || []);
-
-        Promise.allSettled([
           apiRequest('/menu-items'),
           apiRequest('/users'),
-        ]).then(([menu, u]) => {
-          if (menu.status === 'fulfilled' && (menu.value as any)?.menu_items) setMenuItems((menu.value as any).menu_items);
-          if (u.status === 'fulfilled' && (u.value as any)?.users) setUsers((u.value as any).users);
-        });
+        ]);
+
+        if (resResult.status === 'fulfilled') {
+          setReservations((resResult.value as any).reservations || []);
+        } else {
+          console.error('[CalendarPage] /reservations 失敗:', resResult.reason);
+          toast.error('予約データの読み込みに失敗しました');
+        }
+        if (locResult.status === 'fulfilled') {
+          setLocations((locResult.value as any).locations || []);
+        } else {
+          console.error('[CalendarPage] /locations 失敗:', locResult.reason);
+        }
+        if (menuResult.status === 'fulfilled' && (menuResult.value as any)?.menu_items) {
+          setMenuItems((menuResult.value as any).menu_items);
+        } else if (menuResult.status === 'rejected') {
+          console.warn('[CalendarPage] /menu-items 失敗:', menuResult.reason);
+        }
+        if (usersResult.status === 'fulfilled' && (usersResult.value as any)?.users) {
+          setUsers((usersResult.value as any).users);
+        } else if (usersResult.status === 'rejected') {
+          console.warn('[CalendarPage] /users 失敗:', usersResult.reason);
+        }
       }
     } catch (err: any) {
+      console.error('[CalendarPage] データ読み込み失敗:', err);
       toast.error('データの読み込みに失敗しました');
     } finally {
+      // すべての await が完了してから loading を false にする
       setLoading(false);
     }
   };
@@ -156,12 +256,11 @@ export function CalendarPage({ userRole }: { userRole: string }) {
   const nextMonth = () => setDate(new Date(year, month + 1, 1));
   const goToday = () => setDate(new Date());
 
+  // ── ロード中はスケルトン UI を表示 ──────────────────────────
+  // 単純なスピナーではなくカレンダー骨格を見せることで
+  // 「空白の間」の知覚を軽減する
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[320px]">
-        <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-500 border-t-transparent" />
-      </div>
-    );
+    return <CalendarSkeleton year={year} month={month} />;
   }
 
   return (
