@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { apiRequest, consumeCalendarPrefetch } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, ChevronLeft, ChevronRight, MapPin, Settings } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, MapPin, Settings, Layers } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
@@ -37,11 +37,13 @@ function getStatusColor(status: string) {
 
 function fmt2(n: number) { return String(n).padStart(2, '0'); }
 
-/** 営業時間からタイムスロット一覧を生成: h = start; h < end; h += 2 */
-function buildTimeSlots(startHour: number, endHour: number): string[] {
+/** 営業時間からタイムスロット一覧を生成: h = start; h < end; h += intervalHours */
+function buildTimeSlots(startHour: number, endHour: number, intervalHours: number = 2): string[] {
   const slots: string[] = [];
-  for (let h = startHour; h < endHour; h += 2) {
-    slots.push(`${fmt2(h)}:00`);
+  for (let h = startHour; h < endHour; h += intervalHours) {
+    const hInt = Math.floor(h);
+    const hMin = Math.round((h - hInt) * 60);
+    slots.push(`${fmt2(hInt)}:${fmt2(hMin)}`);
   }
   return slots;
 }
@@ -80,6 +82,250 @@ function getSlotsForDate(
   }
 
   return allSlots;
+}
+
+// ────────────────────────────────────────────────────────────
+// BulkSlotModal — 管理者用の一括スロット設定モーダル
+// ────────────────────────────────────────────────────────────
+interface BulkSlotModalProps {
+  currentYear: number;
+  currentMonth: number; // 0-indexed
+  timeSlots: string[];
+  availability: any;
+  selectedLocationId: string | null;
+  onSave: (updated: any) => void;
+  onClose: () => void;
+}
+
+const WEEKDAYS_JP = ['日', '月', '火', '水', '木', '金', '土'];
+
+function BulkSlotModal({
+  currentYear, currentMonth, timeSlots, availability, selectedLocationId, onSave, onClose,
+}: BulkSlotModalProps) {
+  const [targetYear, setTargetYear] = useState(currentYear);
+  const [targetMonth, setTargetMonth] = useState(currentMonth + 1); // 1-12
+  // デフォルト: 月〜金
+  const [selectedDows, setSelectedDows] = useState<boolean[]>([false, true, true, true, true, true, false]);
+  const [mode, setMode] = useState<'open' | 'closed' | 'custom'>('open');
+  const [customSlots, setCustomSlots] = useState<string[]>([...timeSlots]);
+  const [saving, setSaving] = useState(false);
+
+  // 対象日を算出
+  const affectedDates = useMemo(() => {
+    const dates: string[] = [];
+    const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(targetYear, targetMonth - 1, d);
+      if (selectedDows[dt.getDay()]) {
+        dates.push(`${targetYear}-${fmt2(targetMonth)}-${fmt2(d)}`);
+      }
+    }
+    return dates;
+  }, [targetYear, targetMonth, selectedDows]);
+
+  const toggleDow = (i: number) =>
+    setSelectedDows(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
+
+  const toggleCustomSlot = (slot: string) =>
+    setCustomSlots(prev =>
+      prev.includes(slot) ? prev.filter(s => s !== slot) : [...prev, slot].sort()
+    );
+
+  const handleApply = async () => {
+    if (affectedDates.length === 0) { toast.error('対象日がありません'); return; }
+    setSaving(true);
+    try {
+      const specialDates = parseSpecialDates(availability?.special_dates);
+      const newSpecialDates = { ...specialDates };
+
+      for (const dateKey of affectedDates) {
+        if (mode === 'closed') {
+          newSpecialDates[dateKey] = { closed: true };
+        } else if (mode === 'open') {
+          delete newSpecialDates[dateKey]; // デフォルトに戻す
+        } else {
+          // カスタム
+          const isDefault =
+            timeSlots.length === customSlots.length &&
+            timeSlots.every(s => customSlots.includes(s));
+          if (isDefault) {
+            delete newSpecialDates[dateKey];
+          } else {
+            newSpecialDates[dateKey] = { open_slots: customSlots };
+          }
+        }
+      }
+
+      const updatedAvailability = {
+        location_id: selectedLocationId,
+        regular_closed_days: availability?.regular_closed_days || [],
+        closed_dates: availability?.closed_dates || [],
+        business_hours_start: availability?.business_hours_start ?? '09:00',
+        business_hours_end: availability?.business_hours_end ?? '18:00',
+        custom_hours: availability?.custom_hours ?? null,
+        max_reservations_per_day: availability?.max_reservations_per_day ?? 5,
+        special_dates: newSpecialDates,
+      };
+
+      await apiRequest('/location-availability', {
+        method: 'PUT',
+        body: JSON.stringify(updatedAvailability),
+      });
+
+      onSave(updatedAvailability);
+      toast.success(`${affectedDates.length}日分の予約枠を更新しました`);
+    } catch (err: any) {
+      toast.error('保存に失敗しました: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const modeOptions = [
+    { id: 'open' as const, label: '全枠開放', activeClass: 'bg-green-600 text-white border-green-600' },
+    { id: 'closed' as const, label: '休業日', activeClass: 'bg-red-600 text-white border-red-600' },
+    { id: 'custom' as const, label: 'カスタム', activeClass: 'bg-blue-600 text-white border-blue-600' },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full p-6 overflow-y-auto"
+        style={{ maxWidth: '28rem', maxHeight: '90vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-base font-bold text-slate-900 mb-4">予約枠 一括設定</h2>
+
+        {/* 対象月 */}
+        <div className="mb-4">
+          <p className="text-xs font-medium text-slate-600 mb-1.5">対象月</p>
+          <div className="flex items-center gap-1">
+            <input
+              type="number" value={targetYear} min={2024} max={2030}
+              onChange={e => setTargetYear(Number(e.target.value))}
+              className="w-20 px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-center"
+            />
+            <span className="text-sm text-slate-600">年</span>
+            <select
+              value={targetMonth}
+              onChange={e => setTargetMonth(Number(e.target.value))}
+              className="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+            >
+              {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+                <option key={m} value={m}>{m}月</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* 曜日選択 */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs font-medium text-slate-600">対象曜日</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSelectedDows([false, true, true, true, true, true, false])}
+                className="text-xs text-blue-600 hover:text-blue-700"
+              >平日</button>
+              <button
+                onClick={() => setSelectedDows([true, false, false, false, false, false, true])}
+                className="text-xs text-blue-600 hover:text-blue-700"
+              >土日</button>
+              <button
+                onClick={() => setSelectedDows([true, true, true, true, true, true, true])}
+                className="text-xs text-blue-600 hover:text-blue-700"
+              >全日</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {WEEKDAYS_JP.map((d, i) => (
+              <button
+                key={i}
+                onClick={() => toggleDow(i)}
+                className={`py-2 rounded-lg text-sm font-medium border-2 transition ${
+                  selectedDows[i]
+                    ? i === 0 ? 'bg-red-500 text-white border-red-500'
+                      : i === 6 ? 'bg-blue-500 text-white border-blue-500'
+                      : 'bg-slate-700 text-white border-slate-700'
+                    : 'bg-white border-slate-200 text-slate-400'
+                }`}
+              >{d}</button>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500 mt-1">
+            {affectedDates.length === 0 ? '曜日を選択してください' : `→ ${targetYear}年${targetMonth}月の対象: ${affectedDates.length}日`}
+          </p>
+        </div>
+
+        {/* 設定内容 */}
+        <div className="mb-4">
+          <p className="text-xs font-medium text-slate-600 mb-1.5">設定内容</p>
+          <div className="grid grid-cols-3 gap-2">
+            {modeOptions.map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => setMode(opt.id)}
+                className={`py-2 rounded-lg text-sm font-medium border-2 transition ${
+                  mode === opt.id ? opt.activeClass : 'bg-white border-slate-200 text-slate-600'
+                }`}
+              >{opt.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* カスタム時のスロット選択 */}
+        {mode === 'custom' && (
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs font-medium text-slate-600">開放する時間帯</p>
+              <button
+                onClick={() => setCustomSlots(
+                  customSlots.length === timeSlots.length ? [] : [...timeSlots]
+                )}
+                className="text-xs text-blue-600 hover:text-blue-700"
+              >
+                {customSlots.length === timeSlots.length ? '全解除' : '全選択'}
+              </button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {timeSlots.map(slot => {
+                const selected = customSlots.includes(slot);
+                return (
+                  <button
+                    key={slot}
+                    onClick={() => toggleCustomSlot(slot)}
+                    className={`py-2 rounded-lg text-sm font-medium border-2 transition ${
+                      selected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >{slot}</button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-2">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-100 transition"
+          >キャンセル</button>
+          <button
+            onClick={handleApply}
+            disabled={saving || affectedDates.length === 0}
+            className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+            style={(saving || affectedDates.length === 0) ? { opacity: 0.5 } : undefined}
+          >
+            {saving ? '適用中...' : `${affectedDates.length}日に適用`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -323,6 +569,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
   const [slotModalDate, setSlotModalDate] = useState<string | null>(null);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   const [date, setDate] = useState(new Date());
 
@@ -431,10 +678,20 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
 
   /** 営業時間設定からタイムスロット一覧を算出 */
   const timeSlots = useMemo(() => {
-    const startH = Number(settings?.business_hours_start ?? 9);
-    const endH   = Number(settings?.business_hours_end   ?? 18);
-    return buildTimeSlots(startH, endH);
-  }, [settings]);
+    // business_hours_start/end は "09:00" 形式または数値
+    const parseHour = (v: any, def: number) => {
+      if (v === undefined || v === null) return def;
+      if (typeof v === 'number') return v;
+      const parts = String(v).split(':');
+      return parseInt(parts[0], 10) + (parseInt(parts[1] || '0', 10) / 60);
+    };
+    const startH = parseHour(settings?.business_hours_start ?? availability?.business_hours_start, 9);
+    const endH   = parseHour(settings?.business_hours_end   ?? availability?.business_hours_end,   18);
+    // スロット間隔: availability.custom_hours._slot_interval_hours から取得 (デフォルト 2時間)
+    const customH = availability?.custom_hours;
+    const intervalH = customH?._slot_interval_hours ? Number(customH._slot_interval_hours) : 2;
+    return buildTimeSlots(startH, endH, intervalH);
+  }, [settings, availability]);
 
   const eventsByDate = useMemo(() => {
     const map: Record<string, any[]> = {};
@@ -541,6 +798,16 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
               <MapPin size={14} className="text-slate-400" />
               {locations[0].name}
             </div>
+          )}
+          {userRole === 'admin' && (
+            <button
+              onClick={() => setBulkModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 transition text-sm font-medium"
+              title="予約枠を一括設定"
+            >
+              <Layers size={15} />
+              <span className="hidden sm:inline">一括設定</span>
+            </button>
           )}
           <button
             onClick={() => {
@@ -721,7 +988,20 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         />
       )}
 
-      {/* 予約枠管理モーダル（管理者のみ） */}
+      {/* 一括スロット設定モーダル（管理者のみ） */}
+      {bulkModalOpen && (
+        <BulkSlotModal
+          currentYear={year}
+          currentMonth={month}
+          timeSlots={timeSlots}
+          availability={availability}
+          selectedLocationId={selectedLocationId}
+          onSave={(updated) => { setAvailability(updated); setBulkModalOpen(false); }}
+          onClose={() => setBulkModalOpen(false)}
+        />
+      )}
+
+      {/* 個別スロット管理モーダル（管理者のみ） */}
       {slotModalDate && (
         <SlotManagementModal
           dateKey={slotModalDate}
