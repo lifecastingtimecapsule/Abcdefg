@@ -57,9 +57,9 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
   const hasPlaceholder = (col: number, row: number) => (col + row * 3) % 5 === 0;
 
   return (
-    <div className="animate-pulse lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
+    <div className="cal-root animate-pulse">
       {/* ヘッダー骨格 */}
-      <div className="flex items-center justify-between gap-3 mb-4 lg:flex-shrink-0">
+      <div className="cal-header flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 bg-slate-200 rounded-lg" />
           <div className="h-8 w-14 bg-slate-200 rounded-lg" />
@@ -73,13 +73,13 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
       </div>
 
       {/* カレンダーグリッド骨格 */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
+      <div className="cal-container bg-white rounded-xl border border-slate-200 overflow-hidden">
         {/* 曜日ヘッダー */}
-        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50 lg:flex-shrink-0">
+        <div className="cal-weekdays grid grid-cols-7 border-b border-slate-200 bg-slate-50">
           {WEEKDAYS_JA.map((day, idx) => (
             <div
               key={day}
-              className={`text-center py-2.5 text-sm font-semibold ${
+              className={`text-center py-2 text-xs font-semibold ${
                 idx === 0 ? 'text-red-400' : idx === 6 ? 'text-blue-400' : 'text-slate-400'
               }`}
             >
@@ -89,13 +89,13 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
         </div>
 
         {/* 日付セル */}
-        <div className="lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
+        <div className="cal-grid">
           {grid.map((row, rowIdx) => (
-            <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0 lg:flex-1">
+            <div key={rowIdx} className="cal-row grid grid-cols-7 border-b border-slate-100 last:border-b-0">
               {row.map((cellDate, colIdx) => (
                 <div
                   key={cellDate ? cellDate.toISOString().slice(0, 10) : `e-${rowIdx}-${colIdx}`}
-                  className={`min-h-[100px] lg:min-h-0 p-1.5 border-r border-slate-100 last:border-r-0 ${
+                  className={`cal-cell p-1 border-r border-slate-100 last:border-r-0 ${
                     !cellDate ? 'bg-slate-50' : ''
                   }`}
                 >
@@ -136,6 +136,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   );
   const [users, setUsers] = useState<User[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -166,6 +167,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
     setLocations(prev => calData.locations?.length ? calData.locations : prev);
     setMenuItems(calData.menu_items || []);
     setUsers(calData.users || []);
+    setCustomers(calData.customers || []);
     if (calData.work_orders) {
       setWorkOrders(calData.work_orders);
     }
@@ -266,21 +268,29 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
 
   const eventsByDate = useMemo(() => {
     const map: Record<string, any[]> = {};
+    const custMap = Object.fromEntries(customers.map((c: any) => [c.customer_id, c]));
+    const menuMap = Object.fromEntries(menuItems.map((m: any) => [m.menu_item_id, m]));
+    const userMap = Object.fromEntries(users.map((u: any) => [u.user_id, u]));
     reservations.forEach((r: any) => {
-      const customerName = r.customer_name ?? r.child_name ?? r.parent_name ?? '名称未設定';
+      const cust = custMap[r.customer_id];
+      const customerName = cust?.child_name || cust?.parent_name || r.customer_name || '名称未設定';
+      const menuName = menuMap[r.menu_item_id]?.name || '';
+      const staffName = userMap[r.staff_id_main]?.name || '';
       const start = new Date(r.reservation_date_time);
       const key = start.toISOString().slice(0, 10);
       if (!map[key]) map[key] = [];
       map[key].push({
         id: r.reservation_id,
         title: customerName,
+        menuName,
+        staffName,
         start,
         resource: r,
         status: r.status,
       });
     });
     return map;
-  }, [reservations]);
+  }, [reservations, customers, menuItems, users]);
 
   const handleSelectEvent = useCallback(async (event: any) => {
     try {
@@ -313,9 +323,9 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   const selectedLocation = locations.find(l => l.location_id === selectedLocationId);
 
   return (
-    <div className="lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
+    <div className="cal-root">
       {/* ヘッダー */}
-      <div className="flex items-center justify-between gap-3 mb-4 lg:flex-shrink-0">
+      <div className="cal-header flex items-center justify-between gap-3 mb-3">
         {/* 左: 月ナビゲーション */}
         <div className="flex items-center gap-1">
           <button
@@ -383,7 +393,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
       </div>
 
       {/* カレンダー */}
-      <div className="relative bg-white rounded-xl border border-slate-200 overflow-hidden lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
+      <div className="cal-container relative bg-white rounded-xl border border-slate-200 overflow-hidden">
         {detailLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/75 z-10">
             <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent" />
@@ -391,12 +401,12 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         )}
 
         {/* 曜日ヘッダー */}
-        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50 lg:flex-shrink-0">
+        <div className="cal-weekdays grid grid-cols-7 border-b border-slate-200 bg-slate-50">
           {WEEKDAYS_JA.map((day, idx) => (
             <div
               key={day}
-              className={`text-center py-2.5 text-sm font-semibold ${
-                idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-700'
+              className={`text-center py-2 text-xs font-semibold ${
+                idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-600'
               }`}
             >
               {day}
@@ -405,9 +415,9 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         </div>
 
         {/* 日付グリッド */}
-        <div className="lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
+        <div className="cal-grid">
         {monthGrid.map((row, rowIdx) => (
-          <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0 lg:flex-1">
+          <div key={rowIdx} className="cal-row grid grid-cols-7 border-b border-slate-100 last:border-b-0">
             {row.map((cellDate, colIdx) => {
               const key = cellDate ? cellDate.toISOString().slice(0, 10) : `empty-${rowIdx}-${colIdx}`;
               const events = cellDate ? (eventsByDate[key] || []) : [];
@@ -418,53 +428,63 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
               return (
                 <div
                   key={key}
-                  className={`min-h-[100px] lg:min-h-0 p-1.5 border-r border-slate-100 last:border-r-0 flex flex-col ${
-                    !cellDate ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/50 transition-colors'
+                  className={`cal-cell p-1 border-r border-slate-100 last:border-r-0 flex flex-col ${
+                    !cellDate ? 'bg-slate-50/60' : 'bg-white hover:bg-blue-50/20 transition-colors'
                   }`}
                 >
                   {cellDate && (
                     <>
                       {/* 日付行 */}
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center justify-between mb-0.5">
                         <span
-                          className={`text-sm font-semibold inline-flex items-center justify-center w-7 h-7 rounded-full ${
+                          className={`text-xs font-bold inline-flex items-center justify-center w-6 h-6 rounded-full flex-shrink-0 ${
                             isToday
                               ? 'bg-blue-600 text-white'
-                              : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-slate-800'
+                              : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-slate-700'
                           }`}
                         >
                           {cellDate.getDate()}
                         </span>
                         {/* 空き状況ラベル */}
-                        <span className={`text-[10px] ${avail!.labelClass}`}>
+                        <span className={`text-[9px] font-semibold ${avail!.labelClass}`}>
                           {remaining <= 0 ? '満' : `残${remaining}`}
                         </span>
                       </div>
 
                       {/* 予約タグ一覧 */}
-                      <div className="flex flex-col gap-0.5 flex-1">
+                      <div className="flex flex-col gap-px flex-1 min-h-0 overflow-hidden">
                         {events.map((ev: any) => {
                           const timeStr = `${fmt2(ev.start.getHours())}:${fmt2(ev.start.getMinutes())}`;
                           return (
                             <button
                               key={ev.id}
                               onClick={() => handleSelectEvent(ev)}
-                              className={`${getStatusColor(ev.status)} text-left text-xs px-1.5 py-1 rounded-md w-full hover:opacity-80 transition flex items-center gap-1 min-w-0`}
-                              title={`${timeStr} ${ev.title}`}
+                              className={`${getStatusColor(ev.status)} text-left px-1 py-0.5 rounded w-full hover:opacity-80 transition flex flex-col min-w-0`}
+                              title={`${timeStr} ${ev.title}${ev.menuName ? ' / ' + ev.menuName : ''}${ev.staffName ? ' 担:' + ev.staffName : ''}`}
                             >
-                              <span className="opacity-80 flex-shrink-0 font-mono">{timeStr}</span>
-                              <span className="truncate">{ev.title}</span>
+                              {/* 時刻 + 顧客名 */}
+                              <div className="flex items-center gap-0.5 min-w-0">
+                                <span className="text-[10px] font-mono opacity-90 flex-shrink-0 leading-tight">{timeStr}</span>
+                                <span className="truncate text-[11px] font-semibold leading-tight">{ev.title}</span>
+                              </div>
+                              {/* メニュー + 担当者 */}
+                              {(ev.menuName || ev.staffName) && (
+                                <div className="flex items-center gap-1 min-w-0 opacity-80">
+                                  {ev.menuName && <span className="truncate text-[10px] leading-tight">{ev.menuName}</span>}
+                                  {ev.staffName && <span className="text-[10px] leading-tight flex-shrink-0">担:{ev.staffName.charAt(0)}</span>}
+                                </div>
+                              )}
                             </button>
                           );
                         })}
                       </div>
 
                       {/* 空き枠ドットインジケーター */}
-                      <div className="flex items-center gap-0.5 mt-1.5 pt-1 border-t border-slate-100">
+                      <div className="flex items-center gap-px mt-0.5 pt-0.5 border-t border-slate-100">
                         {Array.from({ length: MAX_PER_DAY }).map((_, i) => (
                           <div
                             key={i}
-                            className={`h-1.5 flex-1 rounded-full transition-colors ${
+                            className={`h-1 flex-1 rounded-full transition-colors ${
                               i < events.length
                                 ? remaining <= 0
                                   ? 'bg-red-400'
@@ -483,8 +503,8 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
             })}
           </div>
         ))}
-        </div>
-      </div>
+        </div>{/* cal-grid */}
+      </div>{/* cal-container */}
 
       {modalOpen && (
         <ReservationModal

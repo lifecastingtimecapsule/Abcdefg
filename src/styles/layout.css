@@ -1,0 +1,77 @@
+/* ================================================================
+   Desktop calendar viewport-fill layout
+   These rules supplement the pre-built Tailwind CSS which does not
+   include the lg: responsive variants used in this project.
+   ================================================================ */
+
+/* ── Calendar cell: mobile minimum height ── */
+.cal-cell {
+  min-height: 100px;
+}
+
+/* ── Desktop (1024px+) viewport-fill chain ── */
+@media (min-width: 1024px) {
+
+  /* App shell outer */
+  .app-outer {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* App shell main content area */
+  .app-main {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;   /* allows other pages to scroll; calendar chain prevents overflow */
+    padding: 1.5rem;    /* p-6 on desktop */
+    padding-bottom: 1.5rem;
+  }
+
+  /* ── Calendar page layout chain ── */
+
+  /* Root wrapper of CalendarPage */
+  .cal-root {
+    flex: 1 1 0%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* Navigation header — fixed height, does not grow */
+  .cal-header {
+    flex-shrink: 0;
+  }
+
+  /* White rounded calendar container */
+  .cal-container {
+    flex: 1 1 0%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* Weekday label row (日月火...) — fixed height */
+  .cal-weekdays {
+    flex-shrink: 0;
+  }
+
+  /* Wrapper div that holds all the week rows */
+  .cal-grid {
+    flex: 1 1 0%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* Each week row — shares space equally */
+  .cal-row {
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+
+  /* Each day cell — can shrink freely on desktop */
+  .cal-cell {
+    min-height: 0;  /* overrides the 100px mobile default */
+  }
+}
