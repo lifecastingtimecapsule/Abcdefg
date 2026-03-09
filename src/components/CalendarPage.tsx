@@ -7,6 +7,7 @@ import { WorkOrderModal } from './WorkOrderModal';
 import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
 
 const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
+const MAX_PER_DAY = 5;
 
 function getMonthGrid(year: number, month: number): (Date | null)[][] {
   const first = new Date(year, month, 1);
@@ -30,10 +31,21 @@ function getMonthGrid(year: number, month: number): (Date | null)[][] {
 function getStatusColor(status: string) {
   if (status === 'confirmed') return 'bg-blue-500 text-white';
   if (status === 'tentative') return 'bg-amber-400 text-slate-900';
-  if (status === 'cancelled') return 'bg-red-500 text-white';
+  if (status === 'cancelled') return 'bg-red-400 text-white';
   if (status === 'completed') return 'bg-green-500 text-white';
   return 'bg-slate-400 text-white';
 }
+
+// 空き枠インジケーターの色
+function getAvailabilityStyle(count: number) {
+  const remaining = MAX_PER_DAY - count;
+  if (remaining <= 0) return { bar: 'bg-red-500', label: '満', labelClass: 'text-red-600 font-bold' };
+  if (remaining === 1) return { bar: 'bg-orange-400', label: `残${remaining}`, labelClass: 'text-orange-500 font-semibold' };
+  if (remaining <= 3) return { bar: 'bg-yellow-400', label: `残${remaining}`, labelClass: 'text-yellow-600' };
+  return { bar: 'bg-emerald-400', label: `残${remaining}`, labelClass: 'text-emerald-600' };
+}
+
+function fmt2(n: number) { return String(n).padStart(2, '0'); }
 
 // ────────────────────────────────────────────────────────────
 // スケルトン UI
@@ -77,7 +89,7 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
             {row.map((cellDate, colIdx) => (
               <div
                 key={cellDate ? cellDate.toISOString().slice(0, 10) : `e-${rowIdx}-${colIdx}`}
-                className={`min-h-[100px] p-1 border-r border-slate-100 last:border-r-0 ${
+                className={`min-h-[148px] p-1.5 border-r border-slate-100 last:border-r-0 ${
                   !cellDate ? 'bg-slate-50' : ''
                 }`}
               >
@@ -85,6 +97,9 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
                   <>
                     <div className="h-4 w-5 bg-slate-200 rounded mb-1.5" />
                     {hasPlaceholder(colIdx, rowIdx) && (
+                      <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
+                    )}
+                    {hasPlaceholder(colIdx + 1, rowIdx) && (
                       <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
                     )}
                   </>
@@ -293,48 +308,58 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   return (
     <div>
       {/* ヘッダー */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h1 className="text-xl font-bold text-slate-900">{year}年{month + 1}月</h1>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* ロケーションセレクター（複数ある場合のみ表示） */}
+      <div className="flex items-center justify-between gap-3 mb-4">
+        {/* 左: 月ナビゲーション */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={prevMonth}
+            className="p-2 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition"
+            aria-label="前月"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <button
+            onClick={goToday}
+            className="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition border border-slate-200"
+          >
+            今日
+          </button>
+          <button
+            onClick={nextMonth}
+            className="p-2 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition"
+            aria-label="次月"
+          >
+            <ChevronRight size={20} />
+          </button>
+          <h1 className="text-xl font-bold text-slate-900 ml-2 tabular-nums">
+            {year}年{month + 1}月
+          </h1>
+        </div>
+
+        {/* 右: ロケーション + 新規予約 */}
+        <div className="flex items-center gap-2">
+          {/* ロケーションセレクター */}
           {locations.length > 1 && (
-            <div className="flex items-center gap-1.5">
-              <MapPin size={15} className="text-slate-500 flex-shrink-0" />
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+              <MapPin size={14} className="text-slate-400 flex-shrink-0" />
               <select
                 value={selectedLocationId ?? ''}
                 onChange={(e) => setSelectedLocationId(e.target.value || null)}
-                className="text-sm border border-slate-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="text-sm text-slate-700 bg-transparent focus:outline-none pr-1"
               >
-                {userRole === 'admin' && (
-                  <option value="">全店舗</option>
-                )}
+                {userRole === 'admin' && <option value="">全店舗</option>}
                 {locations.map(loc => (
-                  <option key={loc.location_id} value={loc.location_id}>
-                    {loc.name}
-                  </option>
+                  <option key={loc.location_id} value={loc.location_id}>{loc.name}</option>
                 ))}
               </select>
             </div>
           )}
-          {/* ロケーションが1つだけの場合はラベル表示 */}
           {locations.length === 1 && (
-            <span className="flex items-center gap-1 text-sm text-slate-500">
-              <MapPin size={14} />
+            <div className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-600">
+              <MapPin size={14} className="text-slate-400" />
               {locations[0].name}
-            </span>
+            </div>
           )}
-
-          <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-            <button onClick={prevMonth} className="px-3 py-2 hover:bg-slate-100 transition" aria-label="前月">
-              <ChevronLeft size={18} />
-            </button>
-            <button onClick={goToday} className="px-3 py-2 hover:bg-slate-100 transition border-x border-slate-300 text-sm font-medium">
-              今日
-            </button>
-            <button onClick={nextMonth} className="px-3 py-2 hover:bg-slate-100 transition" aria-label="次月">
-              <ChevronRight size={18} />
-            </button>
-          </div>
           <button
             onClick={() => {
               setEditingReservation(null);
@@ -342,7 +367,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
               setReservationMode('edit');
               setModalOpen(true);
             }}
-            className="flex items-center gap-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium shadow-sm"
           >
             <Plus size={16} />
             新規予約
@@ -380,39 +405,67 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
               const events = cellDate ? (eventsByDate[key] || []) : [];
               const isToday = cellDate && new Date().toDateString() === cellDate.toDateString();
               const dow = cellDate?.getDay();
+              const avail = cellDate ? getAvailabilityStyle(events.length) : null;
+              const remaining = MAX_PER_DAY - events.length;
               return (
                 <div
                   key={key}
-                  className={`min-h-[100px] p-1 border-r border-slate-100 last:border-r-0 ${
-                    !cellDate ? 'bg-slate-50' : ''
+                  className={`min-h-[148px] p-1.5 border-r border-slate-100 last:border-r-0 flex flex-col ${
+                    !cellDate ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/50 transition-colors'
                   }`}
                 >
                   {cellDate && (
                     <>
-                      <div className="flex items-center justify-between px-0.5 mb-0.5">
+                      {/* 日付行 */}
+                      <div className="flex items-center justify-between mb-1">
                         <span
-                          className={`text-sm font-semibold inline-flex items-center justify-center ${
+                          className={`text-sm font-semibold inline-flex items-center justify-center w-7 h-7 rounded-full ${
                             isToday
-                              ? 'bg-blue-600 text-white w-7 h-7 rounded-full'
+                              ? 'bg-blue-600 text-white'
                               : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-slate-800'
                           }`}
                         >
                           {cellDate.getDate()}
                         </span>
-                        {events.length > 0 && (
-                          <span className="text-[10px] text-slate-400">{events.length}件</span>
-                        )}
+                        {/* 空き状況ラベル */}
+                        <span className={`text-[10px] ${avail!.labelClass}`}>
+                          {remaining <= 0 ? '満' : `残${remaining}`}
+                        </span>
                       </div>
-                      <div className="flex flex-col gap-0.5">
-                        {events.map((ev: any) => (
-                          <button
-                            key={ev.id}
-                            onClick={() => handleSelectEvent(ev)}
-                            className={`${getStatusColor(ev.status)} text-left text-xs px-1.5 py-0.5 rounded truncate w-full hover:opacity-80 transition`}
-                            title={ev.title}
-                          >
-                            {ev.title}
-                          </button>
+
+                      {/* 予約タグ一覧 */}
+                      <div className="flex flex-col gap-0.5 flex-1">
+                        {events.map((ev: any) => {
+                          const timeStr = `${fmt2(ev.start.getHours())}:${fmt2(ev.start.getMinutes())}`;
+                          return (
+                            <button
+                              key={ev.id}
+                              onClick={() => handleSelectEvent(ev)}
+                              className={`${getStatusColor(ev.status)} text-left text-xs px-1.5 py-1 rounded-md w-full hover:opacity-80 transition flex items-center gap-1 min-w-0`}
+                              title={`${timeStr} ${ev.title}`}
+                            >
+                              <span className="opacity-80 flex-shrink-0 font-mono">{timeStr}</span>
+                              <span className="truncate">{ev.title}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* 空き枠ドットインジケーター */}
+                      <div className="flex items-center gap-0.5 mt-1.5 pt-1 border-t border-slate-100">
+                        {Array.from({ length: MAX_PER_DAY }).map((_, i) => (
+                          <div
+                            key={i}
+                            className={`h-1.5 flex-1 rounded-full transition-colors ${
+                              i < events.length
+                                ? remaining <= 0
+                                  ? 'bg-red-400'
+                                  : remaining === 1
+                                  ? 'bg-orange-400'
+                                  : 'bg-blue-400'
+                                : 'bg-slate-200'
+                            }`}
+                          />
                         ))}
                       </div>
                     </>
