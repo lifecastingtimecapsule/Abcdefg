@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { apiRequest, consumeCalendarPrefetch } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, ChevronLeft, ChevronRight, MapPin, Settings, Layers } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, MapPin, Settings, Layers, X, Calendar } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
@@ -486,6 +486,207 @@ function SlotManagementModal({
 }
 
 // ────────────────────────────────────────────────────────────
+// DayDetailModal — 日付クリックで開く「その日の詳細」モーダル
+// ────────────────────────────────────────────────────────────
+const STATUS_LABEL: Record<string, string> = {
+  confirmed: '確定',
+  tentative: '仮予約',
+  cancelled: 'キャンセル',
+  completed: '完了',
+};
+
+interface DayDetailModalProps {
+  dateKey: string; // "YYYY-MM-DD"
+  events: any[];
+  timeSlots: string[];
+  availability: any;
+  userRole: string;
+  onSelectEvent: (ev: any) => void;
+  onNewReservation: (dateKey: string) => void;
+  onManageSlots: (dateKey: string) => void;
+  onClose: () => void;
+}
+
+function DayDetailModal({
+  dateKey, events, timeSlots, availability, userRole,
+  onSelectEvent, onNewReservation, onManageSlots, onClose,
+}: DayDetailModalProps) {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const dow = new Date(y, m - 1, d).getDay();
+  const dowLabel = ['日', '月', '火', '水', '木', '金', '土'][dow];
+  const dowColor = dow === 0 ? 'text-red-600' : dow === 6 ? 'text-blue-600' : 'text-slate-700';
+
+  const cellSlots = getSlotsForDate(dateKey, dow, timeSlots, availability);
+
+  // スロットごとの予約状況
+  const slotStatus = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    (cellSlots || []).forEach(slot => { map[slot] = []; });
+    events.forEach(ev => {
+      const slotH = ev.start.getHours();
+      const slotMin = ev.start.getMinutes();
+      const slotKey = `${fmt2(slotH)}:${fmt2(slotMin)}`;
+      if (map[slotKey] !== undefined) {
+        map[slotKey].push(ev);
+      } else {
+        // 最も近いスロットに割り当て
+        const closest = (cellSlots || []).find(s => parseInt(s) <= slotH) || (cellSlots || [])[0];
+        if (closest) {
+          if (!map[closest]) map[closest] = [];
+          map[closest].push(ev);
+        }
+      }
+    });
+    return map;
+  }, [cellSlots, events]);
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        style={{ maxWidth: '32rem', maxHeight: '90vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* ヘッダー */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-slate-100 flex-shrink-0">
+          <div>
+            <p className={`text-3xl font-bold ${dowColor} tabular-nums`}>
+              {m}月{d}日
+              <span className="text-xl ml-2 font-semibold">（{dowLabel}）</span>
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">{y}年</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {userRole === 'admin' && (
+              <button
+                onClick={() => { onManageSlots(dateKey); onClose(); }}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition text-xs font-medium"
+              >
+                <Settings className="w-3.5 h-3.5" />枠管理
+              </button>
+            )}
+            <button
+              onClick={() => onNewReservation(dateKey)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition text-xs font-medium"
+            >
+              <Plus className="w-3.5 h-3.5" />新規予約
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-700">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* スロット状況バー */}
+        {cellSlots === null ? (
+          <div className="px-5 py-3 bg-red-50 border-b border-red-100 flex-shrink-0">
+            <span className="text-sm font-medium text-red-600">🔴 休業日</span>
+          </div>
+        ) : cellSlots.length === 0 ? (
+          <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 flex-shrink-0">
+            <span className="text-sm text-slate-500">予約枠なし</span>
+          </div>
+        ) : (
+          <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 flex-shrink-0">
+            <p className="text-xs text-slate-500 mb-2">時間帯の空き状況</p>
+            <div className="flex gap-2 flex-wrap">
+              {cellSlots.map(slot => {
+                const slotEvents = slotStatus[slot] || [];
+                const filled = slotEvents.length > 0;
+                return (
+                  <div
+                    key={slot}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-mono font-medium border ${
+                      filled
+                        ? 'bg-blue-100 border-blue-300 text-blue-700'
+                        : 'bg-green-100 border-green-300 text-green-700'
+                    }`}
+                  >
+                    {slot}
+                    <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] ${
+                      filled ? 'bg-blue-600 text-white' : 'bg-green-500 text-white'
+                    }`}>
+                      {filled ? slotEvents.length : '○'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 予約一覧 */}
+        <div className="overflow-y-auto flex-1 min-h-0">
+          {events.length === 0 ? (
+            <div className="py-10 text-center text-slate-400">
+              <Calendar className="w-10 h-10 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">この日の予約はありません</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {[...events]
+                .sort((a, b) => a.start.getTime() - b.start.getTime())
+                .map(ev => {
+                  const timeStr = `${fmt2(ev.start.getHours())}:${fmt2(ev.start.getMinutes())}`;
+                  const statusLabel = STATUS_LABEL[ev.status] || ev.status;
+                  return (
+                    <button
+                      key={ev.id}
+                      onClick={() => { onSelectEvent(ev); onClose(); }}
+                      className="w-full text-left px-5 py-4 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="flex items-start gap-3">
+                        {/* 時刻 */}
+                        <div className="text-center flex-shrink-0 mt-0.5">
+                          <p className="text-lg font-bold tabular-nums text-slate-700 leading-none">{timeStr}</p>
+                        </div>
+                        {/* 内容 */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="text-base font-bold text-slate-900 truncate">
+                              {ev.title}
+                            </span>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(ev.status)}`}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                          {ev.menuName && (
+                            <p className="text-sm text-slate-500 truncate">📋 {ev.menuName}</p>
+                          )}
+                          {ev.staffName && (
+                            <p className="text-sm text-slate-500">👤 担当: {ev.staffName}</p>
+                          )}
+                          {ev.memo && (
+                            <p className="text-xs text-slate-400 mt-1 bg-slate-50 rounded px-2 py-1 border border-slate-200 line-clamp-2">
+                              📝 {ev.memo}
+                            </p>
+                          )}
+                        </div>
+                        {/* 矢印 */}
+                        <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0 mt-2" />
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+
+        {/* フッター */}
+        <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex-shrink-0">
+          <p className="text-xs text-slate-400 text-center">
+            {events.length}件の予約 {cellSlots !== null ? `/ ${cellSlots.length}スロット` : '/ 休業日'}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────
 // スケルトン UI（ロード中の骨格表示）
 // ────────────────────────────────────────────────────────────
 function CalendarSkeleton({ year, month }: { year: number; month: number }) {
@@ -570,6 +771,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
   const [slotModalDate, setSlotModalDate] = useState<string | null>(null);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
   const [date, setDate] = useState(new Date());
 
@@ -862,8 +1064,9 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
                   <div
                     key={key}
                     className={`cal-cell p-1 border-r border-slate-100 last:border-r-0 flex flex-col ${
-                      !cellDate ? 'bg-slate-50/60' : 'bg-white hover:bg-blue-50/20 transition-colors'
+                      !cellDate ? 'bg-slate-50/60' : 'bg-white hover:bg-blue-50/30 transition-colors cursor-pointer'
                     }`}
+                    onClick={() => cellDate && setSelectedDayKey(key)}
                   >
                     {cellDate && (
                       <>
@@ -895,7 +1098,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
                             return (
                               <button
                                 key={ev.id}
-                                onClick={() => handleSelectEvent(ev)}
+                                onClick={(e) => { e.stopPropagation(); handleSelectEvent(ev); }}
                                 className={`${getStatusColor(ev.status)} text-left px-1 py-0.5 rounded w-full hover:opacity-80 transition flex flex-col min-w-0`}
                                 title={`${timeStr} ${ev.title}${ev.menuName ? ' / ' + ev.menuName : ''}${ev.staffName ? ' 担:' + ev.staffName : ''}`}
                               >
@@ -1010,6 +1213,27 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
           selectedLocationId={selectedLocationId}
           onSave={(updated) => { setAvailability(updated); setSlotModalDate(null); }}
           onClose={() => setSlotModalDate(null)}
+        />
+      )}
+
+      {/* 日付詳細モーダル（日付セルクリックで開く） */}
+      {selectedDayKey && (
+        <DayDetailModal
+          dateKey={selectedDayKey}
+          events={eventsByDate[selectedDayKey] || []}
+          timeSlots={timeSlots}
+          availability={availability}
+          userRole={userRole}
+          onSelectEvent={handleSelectEvent}
+          onNewReservation={(dk) => {
+            setSelectedDayKey(null);
+            setEditingReservation(null);
+            setCustomersForModal([]);
+            setReservationMode('edit');
+            setModalOpen(true);
+          }}
+          onManageSlots={(dk) => { setSlotModalDate(dk); }}
+          onClose={() => setSelectedDayKey(null)}
         />
       )}
     </div>
