@@ -89,12 +89,10 @@ export async function getLocations(db: D1) {
 
 // ========== User Location Access ==========
 export async function getAccessibleLocations(db: D1, userId: string, role?: string) {
-  // Admin can access all locations
   if (role === 'admin') {
     const { results } = await db.prepare('SELECT * FROM locations ORDER BY location_id').all<Record<string, unknown>>();
     return results.map(parseRow);
   }
-  // Staff: return locations where a row exists in user_location_access
   const { results } = await db.prepare(`
     SELECT l.* FROM locations l
     JOIN user_location_access ula ON l.location_id = ula.location_id
@@ -218,23 +216,38 @@ export async function getMenuItems(db: D1) {
 
 export async function upsertMenuItem(db: D1, item: Record<string, unknown>) {
   await db.prepare(`
-    INSERT INTO menu_items (menu_item_id, name, description, base_price, duration_minutes, is_active, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO menu_items (menu_item_id, name, description, base_price, additional_unit_price, duration_minutes, is_active, discount_type, discount_value, discount_end_date, apply_discount_to_additional, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(menu_item_id) DO UPDATE SET
       name = excluded.name,
       description = excluded.description,
       base_price = excluded.base_price,
+      additional_unit_price = excluded.additional_unit_price,
       duration_minutes = excluded.duration_minutes,
       is_active = excluded.is_active,
+      discount_type = excluded.discount_type,
+      discount_value = excluded.discount_value,
+      discount_end_date = excluded.discount_end_date,
+      apply_discount_to_additional = excluded.apply_discount_to_additional,
       updated_at = excluded.updated_at
   `).bind(
     item.menu_item_id, item.name, item.description ?? null,
     item.base_price ?? item.price_yen ?? 0,
+    item.additional_unit_price ?? 0,
     item.duration_minutes ?? item.duration_min ?? 60,
     boolVal(item.is_active ?? item.active_flag ?? true),
+    item.discount_type ?? 'none',
+    item.discount_value ?? null,
+    item.discount_end_date ?? null,
+    boolVal(item.apply_discount_to_additional ?? false),
     item.created_at ?? new Date().toISOString(),
     new Date().toISOString(),
   ).run();
+}
+
+export async function deleteMenuItem(db: D1, menuItemId: string) {
+  await db.prepare('DELETE FROM location_menus WHERE menu_item_id = ?').bind(menuItemId).run();
+  await db.prepare('DELETE FROM menu_items WHERE menu_item_id = ?').bind(menuItemId).run();
 }
 
 // ========== Location Menus ==========
@@ -245,6 +258,32 @@ export async function getLocationMenus(db: D1, locationId?: string) {
   }
   const { results } = await db.prepare('SELECT * FROM location_menus').all<Record<string, unknown>>();
   return results.map(parseRow);
+}
+
+export async function getMenuItemLocationSettings(db: D1, menuItemId: string) {
+  const { results: locations } = await db.prepare('SELECT location_id FROM locations').all<{ location_id: string }>();
+  const { results: lm } = await db.prepare(
+    'SELECT location_id, enabled FROM location_menus WHERE menu_item_id = ?'
+  ).bind(menuItemId).all<{ location_id: string; enabled: number }>();
+
+  const enabledMap = new Map(lm.map(r => [r.location_id, r.enabled !== 0]));
+  const settings: Record<string, boolean> = {};
+  for (const loc of locations) {
+    // Default: enabled (true) unless explicitly disabled
+    settings[loc.location_id] = enabledMap.has(loc.location_id) ? enabledMap.get(loc.location_id)! : true;
+  }
+  return settings;
+}
+
+export async function toggleLocationMenu(db: D1, locationId: string, menuItemId: string, enabled: boolean) {
+  const now = new Date().toISOString();
+  await db.prepare(`
+    INSERT INTO location_menus (location_id, menu_item_id, enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(location_id, menu_item_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      updated_at = excluded.updated_at
+  `).bind(locationId, menuItemId, boolVal(enabled), now, now).run();
 }
 
 // ========== Reservations ==========
@@ -275,7 +314,6 @@ export async function getReservationsByCustomerIds(db: D1, customerIds: string[]
 }
 
 export async function getReservationsByDateRange(db: D1, startDate: string, endDate: string, locationId?: string) {
-  // reservation_date_time is stored as ISO datetime; use date() to extract date part
   if (locationId) {
     const { results } = await db.prepare(
       'SELECT * FROM reservations WHERE location_id = ? AND date(reservation_date_time) >= ? AND date(reservation_date_time) <= ? ORDER BY reservation_date_time'
@@ -289,7 +327,6 @@ export async function getReservationsByDateRange(db: D1, startDate: string, endD
 }
 
 export async function upsertReservation(db: D1, r: Record<string, unknown>) {
-  // Accept both old field names (reservation_date + start_time) and new (reservation_date_time)
   const dateTime = r.reservation_date_time as string
     ?? (r.reservation_date && r.start_time ? `${r.reservation_date}T${r.start_time}:00` : null)
     ?? r.reservation_date as string
@@ -335,7 +372,6 @@ export async function upsertReservation(db: D1, r: Record<string, unknown>) {
 // frame_color, mount_color, status_comments(JSON), updated_by_user_id,
 // created_at, updated_at
 export async function getWorkOrders(db: D1, locationId?: string) {
-  // work_orders has no location_id; join through reservations if needed
   if (locationId) {
     const { results } = await db.prepare(`
       SELECT wo.* FROM work_orders wo
@@ -401,8 +437,9 @@ export async function upsertWorkOrder(db: D1, wo: Record<string, unknown>) {
 }
 
 // ========== Reservation Settings ==========
-// Actual schema: reservation_settings_id (e.g. 'default'), allowed_days,
-// business_hours_start, business_hours_end, max_reservations_per_day, closed_dates, etc.
+// Actual schema: reservation_settings_id, allowed_days, business_hours_start,
+// business_hours_end, advance_reservation_days, max_reservation_days,
+// max_reservations_per_day, concurrent_reservations, closed_dates, custom_hours, updated_at
 export async function getReservationSettings(db: D1, locationId: string) {
   let row = locationId
     ? await db.prepare('SELECT * FROM reservation_settings WHERE reservation_settings_id = ?').bind(locationId).first<Record<string, unknown>>()
@@ -416,22 +453,30 @@ export async function getReservationSettings(db: D1, locationId: string) {
 export async function upsertReservationSettings(db: D1, s: Record<string, unknown>) {
   const id = (s.reservation_settings_id as string) || (s.location_id as string) || 'default';
   await db.prepare(`
-    INSERT INTO reservation_settings (reservation_settings_id, allowed_days, business_hours_start, business_hours_end, max_reservations_per_day, closed_dates, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO reservation_settings (reservation_settings_id, allowed_days, business_hours_start, business_hours_end, advance_reservation_days, max_reservation_days, max_reservations_per_day, concurrent_reservations, closed_dates, custom_hours, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(reservation_settings_id) DO UPDATE SET
       allowed_days = excluded.allowed_days,
       business_hours_start = excluded.business_hours_start,
       business_hours_end = excluded.business_hours_end,
+      advance_reservation_days = excluded.advance_reservation_days,
+      max_reservation_days = excluded.max_reservation_days,
       max_reservations_per_day = excluded.max_reservations_per_day,
+      concurrent_reservations = excluded.concurrent_reservations,
       closed_dates = excluded.closed_dates,
+      custom_hours = excluded.custom_hours,
       updated_at = excluded.updated_at
   `).bind(
     id,
     typeof s.allowed_days === 'string' ? s.allowed_days : JSON.stringify(s.allowed_days ?? [1,2,3,4,5,6]),
     s.business_hours_start ?? '09:00',
     s.business_hours_end ?? '18:00',
+    s.advance_reservation_days ?? 3,
+    s.max_reservation_days ?? 90,
     s.max_reservations_per_day ?? s.max_per_day ?? 10,
+    s.concurrent_reservations ?? 1,
     typeof s.closed_dates === 'string' ? s.closed_dates : JSON.stringify(s.closed_dates ?? []),
+    typeof s.custom_hours === 'string' ? s.custom_hours : JSON.stringify(s.custom_hours ?? {}),
     new Date().toISOString(),
   ).run();
 }
@@ -471,14 +516,42 @@ export async function upsertLocationAvailability(db: D1, a: Record<string, unkno
   ).run();
 }
 
+// ========== Shifts ==========
+// Schema: staff_id (PK), date (PK), shift_type, start_time, end_time, notes, updated_at, updated_by
+export async function getShifts(db: D1, yearMonth: string) {
+  const { results } = await db.prepare(
+    "SELECT * FROM shifts WHERE strftime('%Y-%m', date) = ? ORDER BY date, staff_id"
+  ).bind(yearMonth).all<Record<string, unknown>>();
+  return results.map(parseRow);
+}
+
+export async function upsertShift(db: D1, s: Record<string, unknown>) {
+  await db.prepare(`
+    INSERT INTO shifts (staff_id, date, shift_type, start_time, end_time, notes, updated_at, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(staff_id, date) DO UPDATE SET
+      shift_type = excluded.shift_type,
+      start_time = excluded.start_time,
+      end_time = excluded.end_time,
+      notes = excluded.notes,
+      updated_at = excluded.updated_at,
+      updated_by = excluded.updated_by
+  `).bind(
+    s.staff_id, s.date, s.shift_type ?? 'work',
+    s.start_time ?? null, s.end_time ?? null,
+    s.notes ?? null,
+    new Date().toISOString(),
+    s.updated_by ?? null,
+  ).run();
+}
+
+export async function deleteShift(db: D1, staffId: string, date: string) {
+  await db.prepare('DELETE FROM shifts WHERE staff_id = ? AND date = ?').bind(staffId, date).run();
+}
+
 // ========== Incentive Monthly ==========
-export async function getIncentiveMonthly(db: D1, yearMonth: string, locationId?: string) {
-  if (locationId) {
-    const { results } = await db.prepare(
-      'SELECT * FROM incentive_monthly WHERE year_month = ? AND location_id = ?'
-    ).bind(yearMonth, locationId).all<Record<string, unknown>>();
-    return results.map(parseRow);
-  }
+// Actual schema: user_id (PK), year_month (PK), manual_adjust_yen, locked_flag, locked_at, adjusted_by_user_id, updated_at
+export async function getIncentiveMonthly(db: D1, yearMonth: string) {
   const { results } = await db.prepare(
     'SELECT * FROM incentive_monthly WHERE year_month = ?'
   ).bind(yearMonth).all<Record<string, unknown>>();
@@ -487,8 +560,8 @@ export async function getIncentiveMonthly(db: D1, yearMonth: string, locationId?
 
 export async function upsertIncentiveMonthly(db: D1, row: Record<string, unknown>) {
   await db.prepare(`
-    INSERT INTO incentive_monthly (incentive_monthly_id, location_id, user_id, year_month, manual_adjust_yen, locked_flag, locked_at, adjusted_by_user_id, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO incentive_monthly (user_id, year_month, manual_adjust_yen, locked_flag, locked_at, adjusted_by_user_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, year_month) DO UPDATE SET
       manual_adjust_yen = excluded.manual_adjust_yen,
       locked_flag = excluded.locked_flag,
@@ -496,11 +569,349 @@ export async function upsertIncentiveMonthly(db: D1, row: Record<string, unknown
       adjusted_by_user_id = excluded.adjusted_by_user_id,
       updated_at = excluded.updated_at
   `).bind(
-    row.incentive_monthly_id ?? crypto.randomUUID(),
-    row.location_id, row.user_id, row.year_month, row.manual_adjust_yen ?? 0,
-    boolVal(row.locked_flag), row.locked_at ?? null,
-    row.adjusted_by_user_id ?? null, new Date().toISOString(),
+    row.user_id, row.year_month,
+    row.manual_adjust_yen ?? 0,
+    boolVal(row.locked_flag),
+    row.locked_at ?? null,
+    row.adjusted_by_user_id ?? null,
+    new Date().toISOString(),
   ).run();
+}
+
+// ========== Incentives (calculated from reservations) ==========
+export async function getIncentives(db: D1, yearMonth: string, userId?: string) {
+  let sql = `
+    SELECT
+      r.staff_id_main as user_id,
+      COUNT(CASE WHEN r.status = 'tentative' THEN 1 END) as count_pending,
+      COALESCE(SUM(CASE WHEN r.status = 'tentative' THEN COALESCE(m.base_price, 0) ELSE 0 END), 0) as amount_pending,
+      COUNT(CASE WHEN r.status = 'confirmed' THEN 1 END) as count_confirmed,
+      COALESCE(SUM(CASE WHEN r.status = 'confirmed' THEN COALESCE(m.base_price, 0) ELSE 0 END), 0) as amount_confirmed
+    FROM reservations r
+    LEFT JOIN menu_items m ON r.menu_item_id = m.menu_item_id
+    WHERE strftime('%Y-%m', r.reservation_date_time) = ?
+      AND r.staff_id_main IS NOT NULL
+  `;
+  const binds: unknown[] = [yearMonth];
+  if (userId) {
+    sql += ' AND r.staff_id_main = ?';
+    binds.push(userId);
+  }
+  sql += ' GROUP BY r.staff_id_main';
+
+  const { results } = await db.prepare(sql).bind(...binds).all<Record<string, unknown>>();
+
+  // Get manual adjustments and lock status from incentive_monthly
+  const monthly = await getIncentiveMonthly(db, yearMonth);
+  const monthlyMap = new Map(monthly.map((m: any) => [m.user_id as string, m]));
+
+  return results.map(row => {
+    const monthlyData = monthlyMap.get(row.user_id as string) || {} as any;
+    return {
+      user_id: row.user_id,
+      count_pending: row.count_pending,
+      amount_pending: row.amount_pending,
+      count_confirmed: row.count_confirmed,
+      amount_confirmed: row.amount_confirmed,
+      manual_adjust_yen: (monthlyData as any).manual_adjust_yen ?? 0,
+      locked_flag: Boolean((monthlyData as any).locked_flag),
+    };
+  });
+}
+
+export async function getIncentivesYearly(db: D1, year: string, userId?: string) {
+  let sql = `
+    SELECT
+      strftime('%Y-%m', r.reservation_date_time) as month,
+      r.staff_id_main as user_id,
+      COUNT(CASE WHEN r.status = 'confirmed' THEN 1 END) as count_confirmed,
+      COALESCE(SUM(CASE WHEN r.status = 'confirmed' THEN COALESCE(m.base_price, 0) ELSE 0 END), 0) as amount_confirmed,
+      COUNT(CASE WHEN r.status = 'tentative' THEN 1 END) as count_pending,
+      COALESCE(SUM(CASE WHEN r.status = 'tentative' THEN COALESCE(m.base_price, 0) ELSE 0 END), 0) as amount_pending
+    FROM reservations r
+    LEFT JOIN menu_items m ON r.menu_item_id = m.menu_item_id
+    WHERE strftime('%Y', r.reservation_date_time) = ?
+      AND r.staff_id_main IS NOT NULL
+  `;
+  const binds: unknown[] = [year];
+  if (userId) {
+    sql += ' AND r.staff_id_main = ?';
+    binds.push(userId);
+  }
+  sql += " GROUP BY strftime('%Y-%m', r.reservation_date_time), r.staff_id_main";
+
+  const { results } = await db.prepare(sql).bind(...binds).all<Record<string, unknown>>();
+
+  // Get yearly manual adjustments
+  const { results: monthly } = await db.prepare(
+    "SELECT * FROM incentive_monthly WHERE year_month LIKE ?"
+  ).bind(`${year}-%`).all<Record<string, unknown>>();
+
+  const totalIncentives = results.reduce((sum, r) => sum + ((r.amount_confirmed as number) || 0), 0);
+  const totalConfirmedCount = results.reduce((sum, r) => sum + ((r.count_confirmed as number) || 0), 0);
+  const totalPendingCount = results.reduce((sum, r) => sum + ((r.count_pending as number) || 0), 0);
+
+  // Monthly totals (across all staff)
+  const monthlyTotals: Record<string, { month: string; revenue: number; count: number }> = {};
+  for (const r of results) {
+    const m = r.month as string;
+    if (!monthlyTotals[m]) monthlyTotals[m] = { month: m, revenue: 0, count: 0 };
+    monthlyTotals[m].revenue += (r.amount_confirmed as number) || 0;
+    monthlyTotals[m].count += (r.count_confirmed as number) || 0;
+  }
+
+  // Staff yearly totals
+  const staffTotals: Record<string, { user_id: string; total: number; count: number; pendingCount: number; adjustTotal: number }> = {};
+  for (const r of results) {
+    const uid = r.user_id as string;
+    if (!staffTotals[uid]) staffTotals[uid] = { user_id: uid, total: 0, count: 0, pendingCount: 0, adjustTotal: 0 };
+    staffTotals[uid].total += (r.amount_confirmed as number) || 0;
+    staffTotals[uid].count += (r.count_confirmed as number) || 0;
+    staffTotals[uid].pendingCount += (r.count_pending as number) || 0;
+  }
+  // Add manual adjustments
+  for (const m of monthly) {
+    const uid = m.user_id as string;
+    if (staffTotals[uid]) {
+      staffTotals[uid].adjustTotal += (m.manual_adjust_yen as number) || 0;
+    }
+  }
+
+  return {
+    totalIncentives,
+    totalConfirmedCount,
+    totalPendingCount,
+    averageIncentive: totalConfirmedCount > 0 ? totalIncentives / totalConfirmedCount : 0,
+    monthlyData: Object.values(monthlyTotals).sort((a, b) => a.month.localeCompare(b.month)),
+    staffYearlyData: Object.values(staffTotals),
+  };
+}
+
+export async function getIncentivesRange(db: D1, start: string, end: string, userId?: string) {
+  // start and end are YYYY-MM format
+  let sql = `
+    SELECT
+      r.staff_id_main as user_id,
+      COUNT(CASE WHEN r.status = 'tentative' THEN 1 END) as count_pending,
+      COALESCE(SUM(CASE WHEN r.status = 'tentative' THEN COALESCE(m.base_price, 0) ELSE 0 END), 0) as amount_pending,
+      COUNT(CASE WHEN r.status = 'confirmed' THEN 1 END) as count_confirmed,
+      COALESCE(SUM(CASE WHEN r.status = 'confirmed' THEN COALESCE(m.base_price, 0) ELSE 0 END), 0) as amount_confirmed
+    FROM reservations r
+    LEFT JOIN menu_items m ON r.menu_item_id = m.menu_item_id
+    WHERE strftime('%Y-%m', r.reservation_date_time) >= ?
+      AND strftime('%Y-%m', r.reservation_date_time) <= ?
+      AND r.staff_id_main IS NOT NULL
+  `;
+  const binds: unknown[] = [start, end];
+  if (userId) {
+    sql += ' AND r.staff_id_main = ?';
+    binds.push(userId);
+  }
+  sql += ' GROUP BY r.staff_id_main';
+
+  const { results } = await db.prepare(sql).bind(...binds).all<Record<string, unknown>>();
+
+  // Get manual adjustments for the range
+  const { results: monthly } = await db.prepare(
+    'SELECT * FROM incentive_monthly WHERE year_month >= ? AND year_month <= ?'
+  ).bind(start, end).all<Record<string, unknown>>();
+  const monthlyMap = new Map<string, number>();
+  const lockMap = new Map<string, boolean>();
+  for (const m of monthly) {
+    const uid = m.user_id as string;
+    monthlyMap.set(uid, (monthlyMap.get(uid) || 0) + ((m.manual_adjust_yen as number) || 0));
+    if (m.locked_flag) lockMap.set(uid, true);
+  }
+
+  return results.map(row => ({
+    user_id: row.user_id,
+    count_pending: row.count_pending,
+    amount_pending: row.amount_pending,
+    count_confirmed: row.count_confirmed,
+    amount_confirmed: row.amount_confirmed,
+    manual_adjust_yen: monthlyMap.get(row.user_id as string) ?? 0,
+    locked_flag: lockMap.get(row.user_id as string) ?? false,
+  }));
+}
+
+// ========== Sales Analytics ==========
+export async function getSalesAnalytics(db: D1, startDate: string, endDate: string) {
+  const { results: reservations } = await db.prepare(`
+    SELECT r.reservation_id, r.status, r.reservation_date_time, r.additional_units,
+           r.customer_id, r.menu_item_id,
+           m.base_price, m.additional_unit_price,
+           c.child_age_years, c.child_age_months
+    FROM reservations r
+    LEFT JOIN menu_items m ON r.menu_item_id = m.menu_item_id
+    LEFT JOIN customers c ON r.customer_id = c.customer_id
+    WHERE date(r.reservation_date_time) >= ? AND date(r.reservation_date_time) <= ?
+    ORDER BY r.reservation_date_time
+  `).bind(startDate, endDate).all<Record<string, unknown>>();
+
+  let totalRevenue = 0;
+  let confirmedRevenue = 0;
+  let pendingRevenue = 0;
+  let cancelledCount = 0;
+  let rescheduledCount = 0;
+  let totalAdditionalUnits = 0;
+  let additionalUnitsCount = 0;
+  let activeCount = 0;
+
+  const dailyMap: Record<string, { date: string; revenue: number; count: number }> = {};
+  const ageGroupMap: Record<string, { ageGroup: string; revenue: number; count: number; additionalCount: number; totalAdditionalUnits: number }> = {};
+  const zeroAgeMonthsMap: Record<number, { months: number; label: string; revenue: number; count: number }> = {};
+
+  for (const r of reservations) {
+    if (r.status === 'cancelled') { cancelledCount++; continue; }
+    if (r.status === 'rescheduled') { rescheduledCount++; continue; }
+
+    const basePrice = (r.base_price as number) || 0;
+    const additionalUnits = Math.max(0, ((r.additional_units as number) || 1) - 1);
+    const addPrice = (r.additional_unit_price as number) || basePrice;
+    const revenue = basePrice + additionalUnits * addPrice;
+
+    totalRevenue += revenue;
+    activeCount++;
+
+    if (r.status === 'confirmed') {
+      confirmedRevenue += revenue;
+    } else {
+      pendingRevenue += revenue;
+    }
+
+    // Daily sales
+    const date = (r.reservation_date_time as string).split('T')[0];
+    if (!dailyMap[date]) dailyMap[date] = { date, revenue: 0, count: 0 };
+    dailyMap[date].revenue += revenue;
+    dailyMap[date].count++;
+
+    // Additional units stats
+    if (additionalUnits > 0) {
+      totalAdditionalUnits += additionalUnits;
+      additionalUnitsCount++;
+    }
+
+    // Age group
+    const years = r.child_age_years as number | null;
+    const months = r.child_age_months as number | null;
+    let ageGroup = '不明';
+    if (years !== null && years !== undefined) {
+      if (years === 0) ageGroup = '0歳';
+      else if (years === 1) ageGroup = '1歳';
+      else if (years === 2) ageGroup = '2歳';
+      else if (years === 3) ageGroup = '3歳';
+      else ageGroup = '4歳以上';
+    }
+
+    if (!ageGroupMap[ageGroup]) {
+      ageGroupMap[ageGroup] = { ageGroup, revenue: 0, count: 0, additionalCount: 0, totalAdditionalUnits: 0 };
+    }
+    ageGroupMap[ageGroup].revenue += revenue;
+    ageGroupMap[ageGroup].count++;
+    if (additionalUnits > 0) {
+      ageGroupMap[ageGroup].additionalCount++;
+      ageGroupMap[ageGroup].totalAdditionalUnits += additionalUnits;
+    }
+
+    // Zero age months breakdown
+    if (years === 0 && months !== null && months !== undefined) {
+      if (!zeroAgeMonthsMap[months]) {
+        zeroAgeMonthsMap[months] = { months, label: `${months}ヶ月`, revenue: 0, count: 0 };
+      }
+      zeroAgeMonthsMap[months].revenue += revenue;
+      zeroAgeMonthsMap[months].count++;
+    }
+  }
+
+  const confirmedCount = reservations.filter((r: any) => r.status === 'confirmed').length;
+
+  return {
+    totalRevenue,
+    totalReservations: reservations.length,
+    averageOrderValue: confirmedCount > 0 ? confirmedRevenue / confirmedCount : 0,
+    confirmedRevenue,
+    pendingRevenue,
+    cancelledCount,
+    rescheduledCount,
+    dailySales: Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date)),
+    additionalUnitsStats: {
+      totalUnits: totalAdditionalUnits,
+      reservationsCount: additionalUnitsCount,
+      averagePerReservation: activeCount > 0 ? totalAdditionalUnits / activeCount : 0,
+    },
+    ageGroupSales: Object.values(ageGroupMap).sort((a, b) => a.ageGroup.localeCompare(b.ageGroup)),
+    zeroAgeMonthsData: Object.values(zeroAgeMonthsMap).sort((a, b) => a.months - b.months),
+  };
+}
+
+// ========== Dashboard ==========
+export async function getDashboardData(db: D1) {
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+
+  const [
+    topWOResult,
+    todayResResult,
+    tentativeResResult,
+    customerCountRow,
+    activeWOCountRow,
+    upcomingResCountRow,
+    overdueWOCountRow,
+  ] = await Promise.all([
+    // Top 5 work orders (not completed), ordered by priority then due_date
+    db.prepare(`
+      SELECT wo.*, c.parent_name, c.child_name, c.external_customer_number
+      FROM work_orders wo
+      LEFT JOIN customers c ON wo.customer_id = c.customer_id
+      WHERE wo.status NOT IN ('完成', '受け取り済み', '引渡し済')
+      ORDER BY COALESCE(wo.priority_order, 999999) ASC, wo.due_date ASC
+      LIMIT 5
+    `).all<Record<string, unknown>>(),
+
+    // Today's reservations
+    db.prepare(`
+      SELECT r.*, c.parent_name, c.child_name, c.external_customer_number
+      FROM reservations r
+      LEFT JOIN customers c ON r.customer_id = c.customer_id
+      WHERE date(r.reservation_date_time) = ?
+      ORDER BY r.reservation_date_time
+    `).bind(todayStr).all<Record<string, unknown>>(),
+
+    // Tentative (standby) reservations - upcoming only
+    db.prepare(`
+      SELECT r.*, c.parent_name, c.child_name, c.external_customer_number
+      FROM reservations r
+      LEFT JOIN customers c ON r.customer_id = c.customer_id
+      WHERE r.status = 'tentative'
+      ORDER BY r.reservation_date_time
+    `).all<Record<string, unknown>>(),
+
+    db.prepare('SELECT COUNT(*) as cnt FROM customers WHERE active_flag = 1').first<{ cnt: number }>(),
+    db.prepare("SELECT COUNT(*) as cnt FROM work_orders WHERE status NOT IN ('完成', '受け取り済み', '引渡し済')").first<{ cnt: number }>(),
+    db.prepare("SELECT COUNT(*) as cnt FROM reservations WHERE date(reservation_date_time) >= ? AND status != 'cancelled'").bind(todayStr).first<{ cnt: number }>(),
+    db.prepare("SELECT COUNT(*) as cnt FROM work_orders WHERE due_date < ? AND status NOT IN ('完成', '受け取り済み', '引渡し済')").bind(todayStr).first<{ cnt: number }>(),
+  ]);
+
+  // Parse rows embedding customer as sub-object
+  const embedCustomer = (row: Record<string, unknown>) => {
+    const { parent_name, child_name, external_customer_number, ...rest } = row;
+    return {
+      ...parseRow(rest),
+      customer: { parent_name, child_name, external_customer_number },
+    };
+  };
+
+  return {
+    top_work_orders: topWOResult.results.map(embedCustomer),
+    today_reservations: todayResResult.results.map(embedCustomer),
+    tentative_reservations: tentativeResResult.results.map(embedCustomer),
+    stats: {
+      total_customers: customerCountRow?.cnt ?? 0,
+      active_work_orders: activeWOCountRow?.cnt ?? 0,
+      upcoming_reservations: upcomingResCountRow?.cnt ?? 0,
+    },
+    overdue_work_orders: overdueWOCountRow?.cnt ?? 0,
+  };
 }
 
 // ========== Audit Logs ==========

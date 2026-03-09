@@ -57,24 +57,29 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
   const hasPlaceholder = (col: number, row: number) => (col + row * 3) % 5 === 0;
 
   return (
-    <div className="animate-pulse">
+    <div className="animate-pulse lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
       {/* ヘッダー骨格 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="h-7 w-28 bg-slate-200 rounded" />
+      <div className="flex items-center justify-between gap-3 mb-4 lg:flex-shrink-0">
         <div className="flex items-center gap-2">
-          <div className="h-9 w-32 bg-slate-200 rounded-lg" />
-          <div className="h-9 w-20 bg-slate-200 rounded-lg" />
+          <div className="h-8 w-8 bg-slate-200 rounded-lg" />
+          <div className="h-8 w-14 bg-slate-200 rounded-lg" />
+          <div className="h-8 w-8 bg-slate-200 rounded-lg" />
+          <div className="h-7 w-28 bg-slate-200 rounded ml-2" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-9 w-28 bg-slate-200 rounded-lg" />
+          <div className="h-9 w-24 bg-slate-200 rounded-lg" />
         </div>
       </div>
 
       {/* カレンダーグリッド骨格 */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
         {/* 曜日ヘッダー */}
-        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50 lg:flex-shrink-0">
           {WEEKDAYS_JA.map((day, idx) => (
             <div
               key={day}
-              className={`text-center py-2 text-sm font-semibold ${
+              className={`text-center py-2.5 text-sm font-semibold ${
                 idx === 0 ? 'text-red-400' : idx === 6 ? 'text-blue-400' : 'text-slate-400'
               }`}
             >
@@ -84,30 +89,32 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
         </div>
 
         {/* 日付セル */}
-        {grid.map((row, rowIdx) => (
-          <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0">
-            {row.map((cellDate, colIdx) => (
-              <div
-                key={cellDate ? cellDate.toISOString().slice(0, 10) : `e-${rowIdx}-${colIdx}`}
-                className={`min-h-[148px] p-1.5 border-r border-slate-100 last:border-r-0 ${
-                  !cellDate ? 'bg-slate-50' : ''
-                }`}
-              >
-                {cellDate && (
-                  <>
-                    <div className="h-4 w-5 bg-slate-200 rounded mb-1.5" />
-                    {hasPlaceholder(colIdx, rowIdx) && (
-                      <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
-                    )}
-                    {hasPlaceholder(colIdx + 1, rowIdx) && (
-                      <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-        ))}
+        <div className="lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
+          {grid.map((row, rowIdx) => (
+            <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0 lg:flex-1">
+              {row.map((cellDate, colIdx) => (
+                <div
+                  key={cellDate ? cellDate.toISOString().slice(0, 10) : `e-${rowIdx}-${colIdx}`}
+                  className={`min-h-[100px] lg:min-h-0 p-1.5 border-r border-slate-100 last:border-r-0 ${
+                    !cellDate ? 'bg-slate-50' : ''
+                  }`}
+                >
+                  {cellDate && (
+                    <>
+                      <div className="h-4 w-5 bg-slate-200 rounded mb-1.5" />
+                      {hasPlaceholder(colIdx, rowIdx) && (
+                        <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
+                      )}
+                      {hasPlaceholder(colIdx + 1, rowIdx) && (
+                        <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -306,9 +313,9 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   const selectedLocation = locations.find(l => l.location_id === selectedLocationId);
 
   return (
-    <div>
+    <div className="lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
       {/* ヘッダー */}
-      <div className="flex items-center justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-3 mb-4 lg:flex-shrink-0">
         {/* 左: 月ナビゲーション */}
         <div className="flex items-center gap-1">
           <button
@@ -376,7 +383,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
       </div>
 
       {/* カレンダー */}
-      <div className="relative bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="relative bg-white rounded-xl border border-slate-200 overflow-hidden lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
         {detailLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/75 z-10">
             <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent" />
@@ -384,11 +391,11 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         )}
 
         {/* 曜日ヘッダー */}
-        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50 lg:flex-shrink-0">
           {WEEKDAYS_JA.map((day, idx) => (
             <div
               key={day}
-              className={`text-center py-2 text-sm font-semibold ${
+              className={`text-center py-2.5 text-sm font-semibold ${
                 idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-700'
               }`}
             >
@@ -398,8 +405,9 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         </div>
 
         {/* 日付グリッド */}
+        <div className="lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
         {monthGrid.map((row, rowIdx) => (
-          <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0">
+          <div key={rowIdx} className="grid grid-cols-7 border-b border-slate-100 last:border-b-0 lg:flex-1">
             {row.map((cellDate, colIdx) => {
               const key = cellDate ? cellDate.toISOString().slice(0, 10) : `empty-${rowIdx}-${colIdx}`;
               const events = cellDate ? (eventsByDate[key] || []) : [];
@@ -410,7 +418,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
               return (
                 <div
                   key={key}
-                  className={`min-h-[148px] p-1.5 border-r border-slate-100 last:border-r-0 flex flex-col ${
+                  className={`min-h-[100px] lg:min-h-0 p-1.5 border-r border-slate-100 last:border-r-0 flex flex-col ${
                     !cellDate ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/50 transition-colors'
                   }`}
                 >
@@ -475,6 +483,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
             })}
           </div>
         ))}
+        </div>
       </div>
 
       {modalOpen && (

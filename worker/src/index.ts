@@ -178,13 +178,31 @@ app.post('/change-password', requireAuth(async (c, tokenUser) => {
   return c.json({ ok: true });
 }));
 
-// ─── Users (admin) ───────────────────────────────────────────────────────────
+// ─── Users ───────────────────────────────────────────────────────────────────
 
 app.get('/users', requireAdmin(async (c) => {
   const users = await db.getAllAppUsers(c.env.DB);
   return c.json({ users });
 }));
 
+// POST /signup — create a new staff user (admin only)
+app.post('/signup', requireAdmin(async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (!body.user_id) body.user_id = crypto.randomUUID();
+  if (!body.login_id) return c.json({ error: 'login_id is required' }, 400);
+
+  // Hash the password if provided, else use initial password
+  const rawPassword = (body.password as string) || 'InitialPassword1!';
+  const hash = await hashPassword(rawPassword);
+  body.password_hash = hash;
+  body.must_change_password = true;
+  delete body.password; // don't store plain text
+
+  await db.createAppUser(c.env.DB, body);
+  return c.json({ user_id: body.user_id, ok: true });
+}));
+
+// POST /users — create user (legacy)
 app.post('/users', requireAdmin(async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   body.user_id = crypto.randomUUID();
@@ -193,11 +211,60 @@ app.post('/users', requireAdmin(async (c) => {
   return c.json({ user_id: body.user_id });
 }));
 
+// POST /users/update — update user info (admin only)
+app.post('/users/update', requireAdmin(async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (!body.user_id) return c.json({ error: 'user_id is required' }, 400);
+
+  const updates: string[] = [];
+  const binds: unknown[] = [];
+
+  if (body.name !== undefined) { updates.push('name = ?'); binds.push(body.name); }
+  if (body.role !== undefined) { updates.push('role = ?'); binds.push(body.role); }
+  if (body.active_flag !== undefined) { updates.push('active_flag = ?'); binds.push(body.active_flag ? 1 : 0); }
+  if (body.update_login_id) { updates.push('login_id = ?'); binds.push(body.update_login_id); }
+  if (body.update_password) {
+    const hash = await hashPassword(body.update_password as string);
+    updates.push('password_hash = ?');
+    updates.push('loginpass = NULL');
+    binds.push(hash);
+  }
+
+  if (updates.length > 0) {
+    binds.push(body.user_id);
+    await c.env.DB.prepare(`UPDATE app_users SET ${updates.join(', ')} WHERE user_id = ?`).bind(...binds).run();
+  }
+  return c.json({ ok: true });
+}));
+
 app.put('/users/:id', requireAdmin(async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   body.user_id = c.req.param('id');
   await db.upsertAppUser(c.env.DB, body);
   return c.json({ ok: true });
+}));
+
+// POST /admin/users/:id/reset-password
+app.post('/admin/users/:id/reset-password', requireAdmin(async (c) => {
+  const { new_password } = await c.req.json() as { new_password: string };
+  if (!new_password) return c.json({ error: 'new_password is required' }, 400);
+  const hash = await hashPassword(new_password);
+  await c.env.DB.prepare(
+    'UPDATE app_users SET password_hash = ?, loginpass = NULL, must_change_password = 1 WHERE user_id = ?'
+  ).bind(hash, c.req.param('id')).run();
+  return c.json({ ok: true });
+}));
+
+// POST /admin/issue-initial-passwords — reset all non-admin users to initial password
+app.post('/admin/issue-initial-passwords', requireAdmin(async (c) => {
+  const users = await db.getAllAppUsers(c.env.DB);
+  const staffUsers = users.filter((u: any) => u.role !== 'admin' && u.active_flag);
+  for (const u of staffUsers) {
+    await c.env.DB.prepare(
+      'UPDATE app_users SET loginpass = ?, password_hash = NULL, must_change_password = 1 WHERE user_id = ?'
+    ).bind('InitialPassword1!', u.user_id).run();
+  }
+  return c.json({ ok: true, count: staffUsers.length, message: `${staffUsers.length}人の初期パスワードを発行しました` });
 }));
 
 // ─── Locations ───────────────────────────────────────────────────────────────
@@ -256,7 +323,7 @@ app.put('/customers/:id', requireAuth(async (c) => {
 
 app.delete('/customers/:id', requireAuth(async (c) => {
   const customerId = c.req.param('id');
-  // Cascade: delete work orders for this customer's reservations, then reservations, then customer
+  // Cascade: delete work orders → reservations → customer
   const { results: reservations } = await c.env.DB.prepare(
     'SELECT reservation_id FROM reservations WHERE customer_id = ?'
   ).bind(customerId).all<{ reservation_id: string }>();
@@ -271,7 +338,6 @@ app.delete('/customers/:id', requireAuth(async (c) => {
 }));
 
 app.post('/customers/batch-fix-age', requireAdmin(async (c) => {
-  // Set child_age_years = 0 where child_age_months is set but child_age_years is NULL
   const result = await c.env.DB.prepare(
     'UPDATE customers SET child_age_years = 0 WHERE child_age_months IS NOT NULL AND child_age_years IS NULL'
   ).run();
@@ -297,6 +363,28 @@ app.put('/menu-items/:id', requireAdmin(async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   body.menu_item_id = c.req.param('id');
   await db.upsertMenuItem(c.env.DB, body);
+  return c.json({ ok: true });
+}));
+
+app.delete('/menu-items/:id', requireAdmin(async (c) => {
+  await db.deleteMenuItem(c.env.DB, c.req.param('id'));
+  return c.json({ ok: true });
+}));
+
+// GET /menu-items/:id/location-settings
+app.get('/menu-items/:id/location-settings', requireAuth(async (c) => {
+  const menuItemId = c.req.param('id');
+  const settings = await db.getMenuItemLocationSettings(c.env.DB, menuItemId);
+  return c.json({ location_settings: settings });
+}));
+
+// ─── Location Menu Toggle ─────────────────────────────────────────────────────
+
+app.post('/locations/:locationId/menus/:menuItemId/toggle', requireAdmin(async (c) => {
+  const locationId = c.req.param('locationId');
+  const menuItemId = c.req.param('menuItemId');
+  const { enabled } = await c.req.json() as { enabled: boolean };
+  await db.toggleLocationMenu(c.env.DB, locationId, menuItemId, enabled);
   return c.json({ ok: true });
 }));
 
@@ -350,7 +438,6 @@ app.delete('/reservations/:id', requireAuth(async (c) => {
 
 app.post('/reservations/batch-create-work-orders', requireAdmin(async (c) => {
   const now = new Date().toISOString();
-  // Find past confirmed reservations without work orders
   const { results: reservations } = await c.env.DB.prepare(`
     SELECT r.* FROM reservations r
     LEFT JOIN work_orders wo ON r.reservation_id = wo.reservation_id
@@ -418,12 +505,35 @@ app.post('/work-orders/reorder', requireAuth(async (c) => {
   return c.json({ ok: true });
 }));
 
+// ─── Shifts ───────────────────────────────────────────────────────────────────
+
+app.get('/shifts', requireAuth(async (c) => {
+  const yearMonth = c.req.query('year_month') || '';
+  const shifts = await db.getShifts(c.env.DB, yearMonth);
+  return c.json({ shifts });
+}));
+
+app.post('/shifts', requireAuth(async (c, tokenUser) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  body.updated_by = tokenUser.sub;
+  await db.upsertShift(c.env.DB, body);
+  return c.json({ ok: true });
+}));
+
+app.delete('/shifts', requireAuth(async (c) => {
+  const staffId = c.req.query('staff_id') || '';
+  const date = c.req.query('date') || '';
+  if (!staffId || !date) return c.json({ error: 'staff_id and date are required' }, 400);
+  await db.deleteShift(c.env.DB, staffId, date);
+  return c.json({ ok: true });
+}));
+
 // ─── Reservation Settings ─────────────────────────────────────────────────────
 
 app.get('/reservation-settings', requireAuth(async (c) => {
   const locationId = c.req.query('location_id') || '';
   const row = await db.getReservationSettings(c.env.DB, locationId);
-  return c.json(row ?? {});
+  return c.json({ settings: row ?? {} });
 }));
 
 app.put('/reservation-settings', requireAdmin(async (c) => {
@@ -434,24 +544,78 @@ app.put('/reservation-settings', requireAdmin(async (c) => {
 
 // ─── Location Availability ────────────────────────────────────────────────────
 
+// Path param version: GET /location-availability/:id
+app.get('/location-availability/:id', requireAuth(async (c) => {
+  const locationId = c.req.param('id');
+  const row = await db.getLocationAvailability(c.env.DB, locationId);
+  return c.json({ availability: row ?? null });
+}));
+
+// Query param version: GET /location-availability?location_id=xxx
 app.get('/location-availability', requireAuth(async (c) => {
   const locationId = c.req.query('location_id') || '';
   const row = await db.getLocationAvailability(c.env.DB, locationId);
-  return c.json(row ?? {});
+  return c.json({ availability: row ?? null });
 }));
 
+// PUT for update
 app.put('/location-availability', requireAdmin(async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   await db.upsertLocationAvailability(c.env.DB, body);
   return c.json({ ok: true });
 }));
 
-// ─── Incentive Monthly ────────────────────────────────────────────────────────
+// POST alias (some components use POST)
+app.post('/location-availability', requireAdmin(async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  await db.upsertLocationAvailability(c.env.DB, body);
+  return c.json({ ok: true });
+}));
+
+// ─── Incentives ───────────────────────────────────────────────────────────────
+
+app.get('/incentives/yearly', requireAuth(async (c, tokenUser) => {
+  const year = c.req.query('year') || new Date().getFullYear().toString();
+  const isAdmin = tokenUser.role === 'admin';
+  const userId = isAdmin ? undefined : (tokenUser.sub as string);
+  const data = await db.getIncentivesYearly(c.env.DB, year, userId);
+  return c.json(data);
+}));
+
+app.get('/incentives/range', requireAuth(async (c, tokenUser) => {
+  const start = c.req.query('start') || '';
+  const end = c.req.query('end') || '';
+  const isAdmin = tokenUser.role === 'admin';
+  const userId = isAdmin ? undefined : (tokenUser.sub as string);
+  const incentives = await db.getIncentivesRange(c.env.DB, start, end, userId);
+  return c.json({ incentives });
+}));
+
+app.get('/incentives', requireAuth(async (c, tokenUser) => {
+  const yearMonth = c.req.query('year_month') || new Date().toISOString().slice(0, 7);
+  const isAdmin = tokenUser.role === 'admin';
+  const userId = isAdmin ? undefined : (tokenUser.sub as string);
+  const incentives = await db.getIncentives(c.env.DB, yearMonth, userId);
+  return c.json({ incentives });
+}));
+
+app.post('/incentives/lock', requireAdmin(async (c, tokenUser) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  body.adjusted_by_user_id = tokenUser.sub;
+  if (body.locked_flag) {
+    body.locked_at = new Date().toISOString();
+  } else {
+    body.locked_at = null;
+  }
+  await db.upsertIncentiveMonthly(c.env.DB, body);
+  return c.json({ ok: true });
+}));
+
+// ─── Incentive Monthly (legacy internal endpoint) ─────────────────────────────
 
 app.get('/incentive-monthly', requireAdmin(async (c) => {
   const yearMonth = c.req.query('year_month') || '';
-  const locationId = c.req.query('location_id');
-  const rows = await db.getIncentiveMonthly(c.env.DB, yearMonth, locationId);
+  const rows = await db.getIncentiveMonthly(c.env.DB, yearMonth);
   return c.json(rows);
 }));
 
@@ -459,6 +623,71 @@ app.post('/incentive-monthly', requireAdmin(async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   await db.upsertIncentiveMonthly(c.env.DB, body);
   return c.json({ ok: true });
+}));
+
+// ─── Sales Analytics ──────────────────────────────────────────────────────────
+
+app.get('/sales-analytics', requireAuth(async (c) => {
+  const startDate = c.req.query('startDate') || '';
+  const endDate = c.req.query('endDate') || '';
+  if (!startDate || !endDate) return c.json({ error: 'startDate and endDate are required' }, 400);
+  const data = await db.getSalesAnalytics(c.env.DB, startDate, endDate);
+  return c.json(data);
+}));
+
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+
+app.get('/dashboard', requireAuth(async (c) => {
+  const month = c.req.query('month') || new Date().toISOString().slice(0, 7);
+  const withLists = c.req.query('with_lists') === '1';
+
+  const dashData = await db.getDashboardData(c.env.DB);
+
+  if (withLists) {
+    const [yearNum, monNum] = month.split('-').map(Number);
+    const startDate = `${month}-01`;
+    const lastDay = new Date(yearNum, monNum, 0).getDate();
+    const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+    const [locations, menuItems, users, reservations] = await Promise.all([
+      db.getLocations(c.env.DB),
+      db.getMenuItems(c.env.DB),
+      db.getAllAppUsers(c.env.DB),
+      db.getReservationsByDateRange(c.env.DB, startDate, endDate),
+    ]);
+
+    const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))] as string[];
+    const customers = await db.getCustomersByIds(c.env.DB, customerIds);
+
+    return c.json({
+      ...dashData,
+      locations,
+      menu_items: menuItems,
+      users,
+      reservations,
+      customers,
+    });
+  }
+
+  return c.json(dashData);
+}));
+
+// ─── Integrity Check ──────────────────────────────────────────────────────────
+
+app.post('/integrity-check', requireAdmin(async (c) => {
+  const [orphanedRes, orphanedWO] = await Promise.all([
+    c.env.DB.prepare(
+      'SELECT COUNT(*) as cnt FROM reservations WHERE customer_id IS NOT NULL AND customer_id NOT IN (SELECT customer_id FROM customers)'
+    ).first<{ cnt: number }>(),
+    c.env.DB.prepare(
+      'SELECT COUNT(*) as cnt FROM work_orders WHERE reservation_id IS NOT NULL AND reservation_id NOT IN (SELECT reservation_id FROM reservations)'
+    ).first<{ cnt: number }>(),
+  ]);
+  return c.json({
+    ok: true,
+    orphaned_reservations: orphanedRes?.cnt ?? 0,
+    orphaned_work_orders: orphanedWO?.cnt ?? 0,
+  });
 }));
 
 // ─── Calendar bulk fetch ──────────────────────────────────────────────────────
@@ -479,11 +708,11 @@ app.post('/calendar/bulk', requireAuth(async (c) => {
     db.getAllAppUsers(c.env.DB),
   ]);
 
-  const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))];
-  const customers = await db.getCustomersByIds(c.env.DB, customerIds as string[]);
+  const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))] as string[];
+  const customers = await db.getCustomersByIds(c.env.DB, customerIds);
 
-  const reservationIds = [...new Set(reservations.map((r: any) => r.reservation_id).filter(Boolean))];
-  const work_orders = await db.getWorkOrdersByReservationIds(c.env.DB, reservationIds as string[]);
+  const reservationIds = [...new Set(reservations.map((r: any) => r.reservation_id).filter(Boolean))] as string[];
+  const work_orders = await db.getWorkOrdersByReservationIds(c.env.DB, reservationIds);
 
   return c.json({ reservations, settings, availability, customers, work_orders, locations, menu_items: menuItemsRaw, users: usersRaw });
 }));
@@ -507,11 +736,11 @@ app.get('/calendar-data', requireAuth(async (c) => {
     db.getAllAppUsers(c.env.DB),
   ]);
 
-  const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))];
-  const customers = await db.getCustomersByIds(c.env.DB, customerIds as string[]);
+  const customerIds = [...new Set(reservations.map((r: any) => r.customer_id).filter(Boolean))] as string[];
+  const customers = await db.getCustomersByIds(c.env.DB, customerIds);
 
-  const reservationIds = [...new Set(reservations.map((r: any) => r.reservation_id).filter(Boolean))];
-  const work_orders = await db.getWorkOrdersByReservationIds(c.env.DB, reservationIds as string[]);
+  const reservationIds = [...new Set(reservations.map((r: any) => r.reservation_id).filter(Boolean))] as string[];
+  const work_orders = await db.getWorkOrdersByReservationIds(c.env.DB, reservationIds);
 
   return c.json({ reservations, settings, availability, customers, work_orders, locations, menu_items: menuItemsRaw, users: usersRaw });
 }));
@@ -539,7 +768,7 @@ app.get('/public/reservations/by-date', async (c) => {
   const locationId = c.req.query('location_id') || '';
   const date = c.req.query('date') || '';
   const { results } = await c.env.DB.prepare(
-    'SELECT * FROM reservations WHERE location_id = ? AND reservation_date = ? ORDER BY start_time'
+    'SELECT * FROM reservations WHERE location_id = ? AND date(reservation_date_time) = ? ORDER BY reservation_date_time'
   ).bind(locationId, date).all<Record<string, unknown>>();
   return c.json(results);
 });
