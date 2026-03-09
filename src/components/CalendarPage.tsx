@@ -1,13 +1,12 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { apiRequest, consumeCalendarPrefetch } from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Plus, ChevronLeft, ChevronRight, MapPin } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, MapPin, Settings } from 'lucide-react';
 import { ReservationModal } from './ReservationModal';
 import { WorkOrderModal } from './WorkOrderModal';
 import { Reservation, Customer, Location, User, MenuItem, WorkOrder } from '../types';
 
 const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
-const MAX_PER_DAY = 5;
 
 function getMonthGrid(year: number, month: number): (Date | null)[][] {
   const first = new Date(year, month, 1);
@@ -36,29 +35,219 @@ function getStatusColor(status: string) {
   return 'bg-slate-400 text-white';
 }
 
-// 空き枠インジケーターの色
-function getAvailabilityStyle(count: number) {
-  const remaining = MAX_PER_DAY - count;
-  if (remaining <= 0) return { bar: 'bg-red-500', label: '満', labelClass: 'text-red-600 font-bold' };
-  if (remaining === 1) return { bar: 'bg-orange-400', label: `残${remaining}`, labelClass: 'text-orange-500 font-semibold' };
-  if (remaining <= 3) return { bar: 'bg-yellow-400', label: `残${remaining}`, labelClass: 'text-yellow-600' };
-  return { bar: 'bg-emerald-400', label: `残${remaining}`, labelClass: 'text-emerald-600' };
-}
-
 function fmt2(n: number) { return String(n).padStart(2, '0'); }
 
+/** 営業時間からタイムスロット一覧を生成: h = start; h < end; h += 2 */
+function buildTimeSlots(startHour: number, endHour: number): string[] {
+  const slots: string[] = [];
+  for (let h = startHour; h < endHour; h += 2) {
+    slots.push(`${fmt2(h)}:00`);
+  }
+  return slots;
+}
+
+/** special_dates を安全にパースしてオブジェクトで返す */
+function parseSpecialDates(sd: any): Record<string, any> {
+  if (!sd) return {};
+  if (typeof sd === 'string') { try { return JSON.parse(sd); } catch { return {}; } }
+  return sd as Record<string, any>;
+}
+
+/**
+ * 特定日の開放スロット一覧を返す
+ * - null  → 休業日
+ * - [...] → 開放スロットのリスト（空配列 = スロットなし）
+ */
+function getSlotsForDate(
+  dateKey: string,
+  weekday: number,
+  allSlots: string[],
+  availability: any | null,
+): string[] | null {
+  if (!availability) return allSlots;
+
+  const regularClosed: number[] = (availability.regular_closed_days || []).map(Number);
+  if (regularClosed.includes(weekday)) return null;
+
+  const closedDates: string[] = availability.closed_dates || [];
+  if (closedDates.includes(dateKey)) return null;
+
+  const specialDates = parseSpecialDates(availability.special_dates);
+  const special = specialDates[dateKey];
+  if (special) {
+    if (special.closed) return null;
+    if (Array.isArray(special.open_slots)) return special.open_slots as string[];
+  }
+
+  return allSlots;
+}
+
 // ────────────────────────────────────────────────────────────
-// スケルトン UI
-// ロード中でもカレンダーの骨格を表示し「空白の間」をなくす
+// SlotManagementModal — 管理者用の予約枠管理モーダル
+// ────────────────────────────────────────────────────────────
+interface SlotManagementModalProps {
+  dateKey: string;
+  allSlots: string[];
+  availability: any;
+  selectedLocationId: string | null;
+  onSave: (updated: any) => void;
+  onClose: () => void;
+}
+
+function SlotManagementModal({
+  dateKey, allSlots, availability, selectedLocationId, onSave, onClose,
+}: SlotManagementModalProps) {
+  const specialDates = parseSpecialDates(availability?.special_dates);
+  const special = specialDates[dateKey];
+
+  const [isClosed, setIsClosed] = useState<boolean>(special?.closed === true);
+  const [openSlots, setOpenSlots] = useState<string[]>(
+    special?.open_slots ? [...special.open_slots]
+      : special?.closed ? []
+      : [...allSlots]
+  );
+  const [saving, setSaving] = useState(false);
+
+  const [y, m, d] = dateKey.split('-');
+  const dateDisplay = `${y}年${parseInt(m)}月${parseInt(d)}日`;
+
+  const toggleSlot = (slot: string) => {
+    setOpenSlots(prev =>
+      prev.includes(slot) ? prev.filter(s => s !== slot) : [...prev, slot].sort()
+    );
+  };
+
+  const allSelected = allSlots.length > 0 && allSlots.every(s => openSlots.includes(s));
+  const toggleAll = () => setOpenSlots(allSelected ? [] : [...allSlots]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const newSpecialDates = { ...specialDates };
+
+      if (isClosed) {
+        newSpecialDates[dateKey] = { closed: true };
+      } else {
+        const isDefault = allSlots.length === openSlots.length &&
+          allSlots.every(s => openSlots.includes(s));
+        if (isDefault) {
+          delete newSpecialDates[dateKey]; // デフォルトに戻す
+        } else {
+          newSpecialDates[dateKey] = { open_slots: openSlots };
+        }
+      }
+
+      const updatedAvailability = {
+        location_id: selectedLocationId,
+        regular_closed_days: availability?.regular_closed_days || [],
+        closed_dates: availability?.closed_dates || [],
+        business_hours_start: availability?.business_hours_start ?? 9,
+        business_hours_end: availability?.business_hours_end ?? 18,
+        custom_hours: availability?.custom_hours ?? null,
+        max_reservations_per_day: availability?.max_reservations_per_day ?? 5,
+        special_dates: newSpecialDates,
+      };
+
+      await apiRequest('/location-availability', {
+        method: 'PUT',
+        body: JSON.stringify(updatedAvailability),
+      });
+
+      onSave(updatedAvailability);
+      toast.success('予約枠を保存しました');
+    } catch (err: any) {
+      toast.error('保存に失敗しました: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full p-6"
+        style={{ maxWidth: '22rem' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-base font-bold text-slate-900 mb-0.5">予約枠管理</h2>
+        <p className="text-sm text-slate-500 mb-4">{dateDisplay}</p>
+
+        {/* 休業日チェック */}
+        <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isClosed}
+            onChange={e => setIsClosed(e.target.checked)}
+            className="w-4 h-4"
+          />
+          <span className="text-sm font-medium text-slate-700">この日を休業日にする</span>
+        </label>
+
+        {!isClosed && (
+          <>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-slate-500">開放する時間帯を選択</p>
+              <button
+                onClick={toggleAll}
+                className="text-xs text-blue-600 hover:text-blue-700 transition"
+              >
+                {allSelected ? '全解除' : '全選択'}
+              </button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {allSlots.map(slot => {
+                const selected = openSlots.includes(slot);
+                return (
+                  <button
+                    key={slot}
+                    onClick={() => toggleSlot(slot)}
+                    className={`py-2 rounded-lg text-sm font-medium transition border-2 ${
+                      selected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {slot}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-100 transition"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+            style={saving ? { opacity: 0.5 } : undefined}
+          >
+            {saving ? '保存中...' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────
+// スケルトン UI（ロード中の骨格表示）
 // ────────────────────────────────────────────────────────────
 function CalendarSkeleton({ year, month }: { year: number; month: number }) {
   const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
-  // 予約が入っているように見せる固定パターン（列インデックスで決定）
   const hasPlaceholder = (col: number, row: number) => (col + row * 3) % 5 === 0;
 
   return (
     <div className="cal-root animate-pulse">
-      {/* ヘッダー骨格 */}
       <div className="cal-header flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 bg-slate-200 rounded-lg" />
@@ -71,43 +260,27 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
           <div className="h-9 w-24 bg-slate-200 rounded-lg" />
         </div>
       </div>
-
-      {/* カレンダーグリッド骨格 */}
       <div className="cal-container bg-white rounded-xl border border-slate-200 overflow-hidden">
-        {/* 曜日ヘッダー */}
         <div className="cal-weekdays grid grid-cols-7 border-b border-slate-200 bg-slate-50">
           {WEEKDAYS_JA.map((day, idx) => (
-            <div
-              key={day}
-              className={`text-center py-2 text-xs font-semibold ${
-                idx === 0 ? 'text-red-400' : idx === 6 ? 'text-blue-400' : 'text-slate-400'
-              }`}
-            >
-              {day}
-            </div>
+            <div key={day} className={`text-center py-2 text-xs font-semibold ${
+              idx === 0 ? 'text-red-400' : idx === 6 ? 'text-blue-400' : 'text-slate-400'
+            }`}>{day}</div>
           ))}
         </div>
-
-        {/* 日付セル */}
         <div className="cal-grid">
           {grid.map((row, rowIdx) => (
             <div key={rowIdx} className="cal-row grid grid-cols-7 border-b border-slate-100 last:border-b-0">
               {row.map((cellDate, colIdx) => (
                 <div
                   key={cellDate ? cellDate.toISOString().slice(0, 10) : `e-${rowIdx}-${colIdx}`}
-                  className={`cal-cell p-1 border-r border-slate-100 last:border-r-0 ${
-                    !cellDate ? 'bg-slate-50' : ''
-                  }`}
+                  className={`cal-cell p-1 border-r border-slate-100 last:border-r-0 ${!cellDate ? 'bg-slate-50' : ''}`}
                 >
                   {cellDate && (
                     <>
                       <div className="h-4 w-5 bg-slate-200 rounded mb-1.5" />
-                      {hasPlaceholder(colIdx, rowIdx) && (
-                        <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
-                      )}
-                      {hasPlaceholder(colIdx + 1, rowIdx) && (
-                        <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />
-                      )}
+                      {hasPlaceholder(colIdx, rowIdx) && <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />}
+                      {hasPlaceholder(colIdx + 1, rowIdx) && <div className="h-5 w-full bg-slate-200 rounded mb-0.5" />}
                     </>
                   )}
                 </div>
@@ -120,9 +293,11 @@ function CalendarSkeleton({ year, month }: { year: number; month: number }) {
   );
 }
 
+// ────────────────────────────────────────────────────────────
+// CalendarPage
+// ────────────────────────────────────────────────────────────
 interface CalendarPageProps {
   userRole: string;
-  /** App.tsx から受け取るアクセス可能ロケーション一覧（ページリフレッシュ時に使用） */
   initialLocations?: Location[];
 }
 
@@ -137,6 +312,8 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   const [users, setUsers] = useState<User[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [settings, setSettings] = useState<any>(null);
+  const [availability, setAvailability] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -145,48 +322,41 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
   const [reservationMode, setReservationMode] = useState<'view' | 'edit'>('edit');
+  const [slotModalDate, setSlotModalDate] = useState<string | null>(null);
 
   const [date, setDate] = useState(new Date());
 
   const year = date.getFullYear();
   const month = date.getMonth();
-  const monthParam = useMemo(() => {
-    return `${year}-${String(month + 1).padStart(2, '0')}`;
-  }, [year, month]);
+  const monthParam = useMemo(
+    () => `${year}-${String(month + 1).padStart(2, '0')}`,
+    [year, month]
+  );
 
-  // selectedLocationId を ref で追跡することで、loadCalendarData 内で
-  // クロージャの古い値に依存せず常に最新値を参照できる
   const selectedLocationIdRef = useRef<string | null>(selectedLocationId);
-  useEffect(() => {
-    selectedLocationIdRef.current = selectedLocationId;
-  }, [selectedLocationId]);
+  useEffect(() => { selectedLocationIdRef.current = selectedLocationId; }, [selectedLocationId]);
 
-  // カレンダーデータを適用するヘルパー
   const applyCalendarData = useCallback((calData: any) => {
     setReservations(calData.reservations || []);
     setLocations(prev => calData.locations?.length ? calData.locations : prev);
     setMenuItems(calData.menu_items || []);
     setUsers(calData.users || []);
     setCustomers(calData.customers || []);
-    if (calData.work_orders) {
-      setWorkOrders(calData.work_orders);
-    }
+    if (calData.work_orders) setWorkOrders(calData.work_orders);
+    if (calData.settings) setSettings(calData.settings);
+    if (calData.availability !== undefined) setAvailability(calData.availability);
   }, []);
 
   const loadCalendarData = useCallback(async (locationIdOverride?: string | null) => {
     setLoading(true);
     try {
-      // ── プリフェッチ結果を優先して使用 ────────────────────────────
-      // ログイン直後なら /calendar-data はすでに進行中（または完了済み）。
+      // プリフェッチ結果を優先して使用
       const prefetched = consumeCalendarPrefetch(monthParam);
-
       if (prefetched) {
         console.log('[CalendarPage] プリフェッチ結果を使用');
         const result = await prefetched;
         if (result) {
           const { meData, calendarData } = result;
-          // プリフェッチが initialLocations なしに実行された場合（ログイン直後）、
-          // meData から locations を補完する
           const locs = (meData.locations as Location[]);
           if (locs?.length > 0) {
             setLocations(locs);
@@ -201,12 +371,8 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         }
       }
 
-      // ── プリフェッチなし: 通常リクエスト ────────────────────────
-      // location_id を決定する
+      // 通常リクエスト
       let locId = locationIdOverride !== undefined ? locationIdOverride : selectedLocationIdRef.current;
-
-      // locations がまだ空の場合（稀: 初回リフレッシュで initialLocations が未渡し）、
-      // /me を呼んでロケーション一覧を取得する
       if (!locId && locations.length === 0) {
         console.log('[CalendarPage] /me でロケーション取得');
         try {
@@ -224,13 +390,13 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
       const locationParam = locId ? `&location_id=${locId}` : '';
       const calData = await apiRequest(`/calendar-data?month=${monthParam}${locationParam}`);
       applyCalendarData(calData);
-
     } catch (err: any) {
       console.error('[CalendarPage] データ読み込み失敗:', err);
       toast.error('データの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthParam, applyCalendarData]);
 
   // 月が変わったら再取得
@@ -239,13 +405,10 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthParam]);
 
-  // ロケーション切り替え時に再取得（初回マウント時は monthParam の effect に任せる）
+  // ロケーション切り替え時に再取得（初回マウントはスキップ）
   const isFirstMountRef = useRef(true);
   useEffect(() => {
-    if (isFirstMountRef.current) {
-      isFirstMountRef.current = false;
-      return;
-    }
+    if (isFirstMountRef.current) { isFirstMountRef.current = false; return; }
     loadCalendarData(selectedLocationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLocationId]);
@@ -265,6 +428,13 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
     setEditingReservation(null);
     await loadCalendarData();
   };
+
+  /** 営業時間設定からタイムスロット一覧を算出 */
+  const timeSlots = useMemo(() => {
+    const startH = Number(settings?.business_hours_start ?? 9);
+    const endH   = Number(settings?.business_hours_end   ?? 18);
+    return buildTimeSlots(startH, endH);
+  }, [settings]);
 
   const eventsByDate = useMemo(() => {
     const map: Record<string, any[]> = {};
@@ -287,6 +457,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         start,
         resource: r,
         status: r.status,
+        memo: r.notes_staff || '',
       });
     });
     return map;
@@ -312,21 +483,16 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
 
   const prevMonth = () => setDate(new Date(year, month - 1, 1));
   const nextMonth = () => setDate(new Date(year, month + 1, 1));
-  const goToday = () => setDate(new Date());
+  const goToday  = () => setDate(new Date());
 
-  // ── ロード中はスケルトン UI を表示 ──────────────────────────
-  if (loading) {
-    return <CalendarSkeleton year={year} month={month} />;
-  }
-
-  // 現在選択中のロケーション名
-  const selectedLocation = locations.find(l => l.location_id === selectedLocationId);
+  // ── ロード中はスケルトン UI ────────────────────────────────
+  if (loading) return <CalendarSkeleton year={year} month={month} />;
 
   return (
     <div className="cal-root">
       {/* ヘッダー */}
       <div className="cal-header flex items-center justify-between gap-3 mb-3">
-        {/* 左: 月ナビゲーション */}
+        {/* 月ナビゲーション */}
         <div className="flex items-center gap-1">
           <button
             onClick={prevMonth}
@@ -353,9 +519,8 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
           </h1>
         </div>
 
-        {/* 右: ロケーション + 新規予約 */}
+        {/* ロケーション + 新規予約 */}
         <div className="flex items-center gap-2">
-          {/* ロケーションセレクター */}
           {locations.length > 1 && (
             <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
               <MapPin size={14} className="text-slate-400 flex-shrink-0" />
@@ -392,7 +557,7 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         </div>
       </div>
 
-      {/* カレンダー */}
+      {/* カレンダー本体 */}
       <div className="cal-container relative bg-white rounded-xl border border-slate-200 overflow-hidden">
         {detailLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/75 z-10">
@@ -403,109 +568,129 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
         {/* 曜日ヘッダー */}
         <div className="cal-weekdays grid grid-cols-7 border-b border-slate-200 bg-slate-50">
           {WEEKDAYS_JA.map((day, idx) => (
-            <div
-              key={day}
-              className={`text-center py-2 text-xs font-semibold ${
-                idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-600'
-              }`}
-            >
-              {day}
-            </div>
+            <div key={day} className={`text-center py-2 text-xs font-semibold ${
+              idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-600'
+            }`}>{day}</div>
           ))}
         </div>
 
         {/* 日付グリッド */}
         <div className="cal-grid">
-        {monthGrid.map((row, rowIdx) => (
-          <div key={rowIdx} className="cal-row grid grid-cols-7 border-b border-slate-100 last:border-b-0">
-            {row.map((cellDate, colIdx) => {
-              const key = cellDate ? cellDate.toISOString().slice(0, 10) : `empty-${rowIdx}-${colIdx}`;
-              const events = cellDate ? (eventsByDate[key] || []) : [];
-              const isToday = cellDate && new Date().toDateString() === cellDate.toDateString();
-              const dow = cellDate?.getDay();
-              const avail = cellDate ? getAvailabilityStyle(events.length) : null;
-              const remaining = MAX_PER_DAY - events.length;
-              return (
-                <div
-                  key={key}
-                  className={`cal-cell p-1 border-r border-slate-100 last:border-r-0 flex flex-col ${
-                    !cellDate ? 'bg-slate-50/60' : 'bg-white hover:bg-blue-50/20 transition-colors'
-                  }`}
-                >
-                  {cellDate && (
-                    <>
-                      {/* 日付行 */}
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span
-                          className={`text-xs font-bold inline-flex items-center justify-center w-6 h-6 rounded-full flex-shrink-0 ${
-                            isToday
-                              ? 'bg-blue-600 text-white'
-                              : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-slate-700'
-                          }`}
-                        >
-                          {cellDate.getDate()}
-                        </span>
-                        {/* 空き状況ラベル */}
-                        <span className={`text-[9px] font-semibold ${avail!.labelClass}`}>
-                          {remaining <= 0 ? '満' : `残${remaining}`}
-                        </span>
-                      </div>
+          {monthGrid.map((row, rowIdx) => (
+            <div key={rowIdx} className="cal-row grid grid-cols-7 border-b border-slate-100 last:border-b-0">
+              {row.map((cellDate, colIdx) => {
+                const key = cellDate
+                  ? cellDate.toISOString().slice(0, 10)
+                  : `empty-${rowIdx}-${colIdx}`;
+                const events = cellDate ? (eventsByDate[key] || []) : [];
+                const isToday = cellDate && new Date().toDateString() === cellDate.toDateString();
+                const dow = cellDate?.getDay();
 
-                      {/* 予約タグ一覧 */}
-                      <div className="flex flex-col gap-px flex-1 min-h-0 overflow-hidden">
-                        {events.map((ev: any) => {
-                          const timeStr = `${fmt2(ev.start.getHours())}:${fmt2(ev.start.getMinutes())}`;
-                          return (
+                // 当日の開放スロット（null = 休業日）
+                const cellSlots = cellDate
+                  ? getSlotsForDate(key, dow!, timeSlots, availability)
+                  : null;
+
+                return (
+                  <div
+                    key={key}
+                    className={`cal-cell p-1 border-r border-slate-100 last:border-r-0 flex flex-col ${
+                      !cellDate ? 'bg-slate-50/60' : 'bg-white hover:bg-blue-50/20 transition-colors'
+                    }`}
+                  >
+                    {cellDate && (
+                      <>
+                        {/* 日付 + 歯車ボタン（管理者のみ） */}
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className={`text-xs font-bold inline-flex items-center justify-center w-6 h-6 rounded-full flex-shrink-0 ${
+                            isToday        ? 'bg-blue-600 text-white'
+                              : dow === 0  ? 'text-red-500'
+                              : dow === 6  ? 'text-blue-500'
+                              : 'text-slate-700'
+                          }`}>
+                            {cellDate.getDate()}
+                          </span>
+                          {userRole === 'admin' && (
                             <button
-                              key={ev.id}
-                              onClick={() => handleSelectEvent(ev)}
-                              className={`${getStatusColor(ev.status)} text-left px-1 py-0.5 rounded w-full hover:opacity-80 transition flex flex-col min-w-0`}
-                              title={`${timeStr} ${ev.title}${ev.menuName ? ' / ' + ev.menuName : ''}${ev.staffName ? ' 担:' + ev.staffName : ''}`}
+                              className="gear-btn"
+                              onClick={(e) => { e.stopPropagation(); setSlotModalDate(key); }}
+                              title="予約枠を管理"
                             >
-                              {/* 時刻 + 顧客名 */}
-                              <div className="flex items-center gap-0.5 min-w-0">
-                                <span className="text-[10px] font-mono opacity-90 flex-shrink-0 leading-tight">{timeStr}</span>
-                                <span className="truncate text-[11px] font-semibold leading-tight">{ev.title}</span>
-                              </div>
-                              {/* メニュー + 担当者 */}
-                              {(ev.menuName || ev.staffName) && (
-                                <div className="flex items-center gap-1 min-w-0 opacity-80">
-                                  {ev.menuName && <span className="truncate text-[10px] leading-tight">{ev.menuName}</span>}
-                                  {ev.staffName && <span className="text-[10px] leading-tight flex-shrink-0">担:{ev.staffName.charAt(0)}</span>}
-                                </div>
-                              )}
+                              <Settings className="w-3 h-3" />
                             </button>
-                          );
-                        })}
-                      </div>
+                          )}
+                        </div>
 
-                      {/* 空き枠ドットインジケーター */}
-                      <div className="flex items-center gap-px mt-0.5 pt-0.5 border-t border-slate-100">
-                        {Array.from({ length: MAX_PER_DAY }).map((_, i) => (
-                          <div
-                            key={i}
-                            className={`h-1 flex-1 rounded-full transition-colors ${
-                              i < events.length
-                                ? remaining <= 0
-                                  ? 'bg-red-400'
-                                  : remaining === 1
-                                  ? 'bg-orange-400'
-                                  : 'bg-blue-400'
-                                : 'bg-slate-200'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-        </div>{/* cal-grid */}
-      </div>{/* cal-container */}
+                        {/* 予約タグ一覧（メモ含む・自動伸縮） */}
+                        <div className="cal-events">
+                          {events.map((ev: any) => {
+                            const timeStr = `${fmt2(ev.start.getHours())}:${fmt2(ev.start.getMinutes())}`;
+                            return (
+                              <button
+                                key={ev.id}
+                                onClick={() => handleSelectEvent(ev)}
+                                className={`${getStatusColor(ev.status)} text-left px-1 py-0.5 rounded w-full hover:opacity-80 transition flex flex-col min-w-0`}
+                                title={`${timeStr} ${ev.title}${ev.menuName ? ' / ' + ev.menuName : ''}${ev.staffName ? ' 担:' + ev.staffName : ''}`}
+                              >
+                                {/* 時刻 + 顧客名 */}
+                                <div className="flex items-center gap-0.5 min-w-0">
+                                  <span className="text-[10px] font-mono opacity-90 flex-shrink-0 leading-tight">{timeStr}</span>
+                                  <span className="truncate text-[11px] font-semibold leading-tight">{ev.title}</span>
+                                </div>
+                                {/* メニュー + 担当者 */}
+                                {(ev.menuName || ev.staffName) && (
+                                  <div className="flex items-center gap-1 min-w-0 opacity-80">
+                                    {ev.menuName && <span className="truncate text-[10px] leading-tight">{ev.menuName}</span>}
+                                    {ev.staffName && <span className="text-[10px] leading-tight flex-shrink-0">担:{ev.staffName.charAt(0)}</span>}
+                                  </div>
+                                )}
+                                {/* スタッフメモ（長い場合は自動展開） */}
+                                {ev.memo && <div className="res-memo">{ev.memo}</div>}
+                              </button>
+                            );
+                          })}
+                        </div>
 
+                        {/* タイムスロットバー */}
+                        <div className="slot-bar">
+                          {cellSlots === null ? (
+                            /* 休業日 */
+                            <span style={{ fontSize: '9px', color: '#94a3b8', width: '100%', textAlign: 'center', lineHeight: '14px' }}>
+                              休
+                            </span>
+                          ) : cellSlots.length === 0 ? (
+                            /* スロットなし（特殊設定） */
+                            <span style={{ fontSize: '9px', color: '#94a3b8', width: '100%', textAlign: 'center', lineHeight: '14px' }}>
+                              ―
+                            </span>
+                          ) : (
+                            cellSlots.map(slot => {
+                              const slotH = parseInt(slot.split(':')[0], 10);
+                              const slotFilled = events.some(ev =>
+                                ev.start.getHours() >= slotH && ev.start.getHours() < slotH + 2
+                              );
+                              return (
+                                <div key={slot} className="slot-block">
+                                  <div className={`slot-block-bar ${slotFilled ? 'slot-filled' : 'slot-open'}`} />
+                                  <span className={`slot-block-label ${slotFilled ? 'slot-label-filled' : 'slot-label-open'}`}>
+                                    {slot.slice(0, 2)}
+                                  </span>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 予約詳細モーダル */}
       {modalOpen && (
         <ReservationModal
           reservation={editingReservation}
@@ -515,14 +700,12 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
           menuItems={menuItems}
           mode={reservationMode}
           onSave={handleSave}
-          onClose={() => {
-            setModalOpen(false);
-            setEditingReservation(null);
-          }}
+          onClose={() => { setModalOpen(false); setEditingReservation(null); }}
           onDelete={handleDelete}
         />
       )}
 
+      {/* 作品モーダル */}
       {workOrderModalOpen && (
         <WorkOrderModal
           workOrder={editingWorkOrder}
@@ -534,10 +717,19 @@ export function CalendarPage({ userRole, initialLocations = [] }: CalendarPagePr
             setEditingWorkOrder(null);
             loadCalendarData();
           }}
-          onClose={() => {
-            setWorkOrderModalOpen(false);
-            setEditingWorkOrder(null);
-          }}
+          onClose={() => { setWorkOrderModalOpen(false); setEditingWorkOrder(null); }}
+        />
+      )}
+
+      {/* 予約枠管理モーダル（管理者のみ） */}
+      {slotModalDate && (
+        <SlotManagementModal
+          dateKey={slotModalDate}
+          allSlots={timeSlots}
+          availability={availability}
+          selectedLocationId={selectedLocationId}
+          onSave={(updated) => { setAvailability(updated); setSlotModalDate(null); }}
+          onClose={() => setSlotModalDate(null)}
         />
       )}
     </div>
