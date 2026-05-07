@@ -3,6 +3,7 @@ import { Calendar, Clock, Mail, Phone, MapPin, User, Baby, ChevronLeft, ChevronR
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import logo from 'figma:asset/a8152f31015da512619ad73332adfaa84771e5bc.png';
+import heroImage from '../assets/hero.png';
 
 interface MenuItem {
   menu_item_id: string;
@@ -519,6 +520,13 @@ export function PublicReservationPage() {
         {/* ヒーローセクション */}
         {step === 1 && (
           <div className="text-center mb-12 md:mb-20">
+            <div className="mb-8 md:mb-12 overflow-hidden rounded-2xl" style={{ maxHeight: '480px' }}>
+              <img
+                src={heroImage}
+                alt="大切なひとときを、カタチに"
+                style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
+              />
+            </div>
             <h2 className="mb-4" style={{ fontFamily: "'Noto Serif JP', serif", color: '#2C2C2C', fontSize: '2rem', lineHeight: '1.4' }}>
               大切な想い出を、<br className="md:hidden" />カタチに残す
             </h2>
